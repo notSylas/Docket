@@ -58,8 +58,13 @@ def make_read_evidence_tool(*, resolver: EvidenceResolver) -> BaseTool:
     """Build a `read_evidence` tool bound to a specific `EvidenceResolver`.
 
     Replaces the spike's hardcoded fake string with a real
-    `resolver.resolve()` call. Returns JSON: ``{"text", "citation_label",
-    "source_display_name", "heading"}``.
+    `resolver.resolve()` call. Returns JSON: ``{"chunk_id", "text",
+    "citation_label", "source_display_name", "heading"}``. `chunk_id` is
+    included (in addition to the fields the model needs to see) so that a
+    caller reconstructing citations from the agent's tool-call trace after
+    the fact (see `QueryService`'s agent branch) has a real chunk_id to
+    resolve per successful call, without having to thread it back out via
+    some side channel.
 
     If `chunk_id` doesn't exist (the model invented or mistyped one --
     plausible, since chunk_ids are opaque hashes it only ever saw as
@@ -73,14 +78,15 @@ def make_read_evidence_tool(*, resolver: EvidenceResolver) -> BaseTool:
     @tool
     def read_evidence(chunk_id: str) -> str:
         """Read the full text of a specific evidence chunk by its id (as
-        returned by search_knowledge). Returns JSON with the chunk's text,
-        citation_label, source_display_name, and heading."""
+        returned by search_knowledge). Returns JSON with the chunk's id,
+        text, citation_label, source_display_name, and heading."""
         try:
             resolved = resolver.resolve(chunk_id)
         except ChunkNotFoundError:
             return json.dumps({"error": f"chunk not found: {chunk_id}"})
         return json.dumps(
             {
+                "chunk_id": resolved.chunk_id,
                 "text": resolved.text,
                 "citation_label": resolved.citation_label,
                 "source_display_name": resolved.source_display_name,

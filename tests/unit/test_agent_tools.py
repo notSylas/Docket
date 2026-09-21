@@ -196,6 +196,7 @@ def test_read_evidence_returns_real_resolved_content(built: dict) -> None:
     raw = read_evidence.invoke({"chunk_id": built["chunk_id"]})
     payload = json.loads(raw)
 
+    assert payload["chunk_id"] == built["chunk_id"]
     assert payload["text"] == CHUNK_TEXT
     assert payload["citation_label"] == f"[report.pdf #{built['chunk_id'][:12]}]"
     assert payload["source_display_name"] == "report.pdf"

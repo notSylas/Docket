@@ -129,10 +129,11 @@ def query(question: str = typer.Argument(..., help="Question to ask over ingeste
         table=table,
         gateway=context.gateway,
         resolver=context.resolver,
+        settings=context.settings,
     )
     result = query_service.ask(question)
 
-    typer.echo(result.answer)
+    typer.echo(f"[{result.mode}] {result.answer}")
     if result.citations:
         typer.echo("\nCitations:")
         for citation in result.citations:
