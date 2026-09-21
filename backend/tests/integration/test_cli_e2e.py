@@ -22,7 +22,7 @@ from attest.cli.main import app
 
 pytestmark = pytest.mark.integration
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 SAMPLE_DOCX = REPO_ROOT / "Docs" / "01_Work_Intelligence_PRD_v1.0.docx"
 
 runner = CliRunner()

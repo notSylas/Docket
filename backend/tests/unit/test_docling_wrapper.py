@@ -14,7 +14,7 @@ import pytest
 
 from attest.parsing.docling_wrapper import DoclingParser, ParseError, ParsedDocument
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 DOCS_DIR = REPO_ROOT / "Docs"
 SAMPLE_DOCX = DOCS_DIR / "01_Work_Intelligence_PRD_v1.0.docx"
 
