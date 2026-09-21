@@ -1,0 +1,4 @@
+docling
+lancedb
+ollama
+pyarrow

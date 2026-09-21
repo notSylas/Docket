@@ -1,0 +1,8 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+spike/.lancedb/
+spike/*.sqlite3
+spike/*.db
+spike/.docling_cache/
