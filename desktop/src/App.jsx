@@ -1,50 +1,74 @@
 import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+import SourcesScreen from "./screens/SourcesScreen";
+import QueryScreen from "./screens/QueryScreen";
+import CitationExplorerScreen from "./screens/CitationExplorerScreen";
+import SettingsScreen from "./screens/SettingsScreen";
+
+const NAV_ITEMS = [
+  { id: "sources", label: "Sources", icon: "\u{1F4C1}" }, // folder
+  { id: "query", label: "Query", icon: "\u{1F4AC}" }, // speech balloon
+  { id: "citations", label: "Citations", icon: "\u{1F50D}" }, // magnifying glass
+  { id: "settings", label: "Settings", icon: "\u{2699}\u{FE0F}" }, // gear
+];
 
 function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+  const [activeScreen, setActiveScreen] = useState("sources");
+  // Lifted so clicking a CitationChip in QueryScreen can navigate to the
+  // Citation Explorer with that citation pre-selected/expanded.
+  const [selectedCitation, setSelectedCitation] = useState(null);
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
-  }
+  const navigateToCitation = (citation) => {
+    setSelectedCitation(citation);
+    setActiveScreen("citations");
+  };
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
+    <div className="flex h-screen w-screen overflow-hidden bg-slate-100 text-slate-900">
+      <aside className="flex w-56 shrink-0 flex-col border-r border-slate-200 bg-white">
+        <div className="flex items-center gap-2 px-5 py-5">
+          <span className="flex h-7 w-7 items-center justify-center rounded-md bg-slate-900 text-sm font-bold text-white">
+            A
+          </span>
+          <span className="text-base font-semibold text-slate-900">Attest</span>
+        </div>
 
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
+        <nav className="flex-1 space-y-1 px-3">
+          {NAV_ITEMS.map((item) => {
+            const isActive = activeScreen === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setActiveScreen(item.id)}
+                className={`flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                  isActive
+                    ? "bg-slate-900 text-white"
+                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                }`}
+              >
+                <span aria-hidden="true">{item.icon}</span>
+                {item.label}
+              </button>
+            );
+          })}
+        </nav>
 
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+        <div className="border-t border-slate-200 px-5 py-4 text-xs text-slate-400">
+          Local-first, evidence-backed
+          <br />
+          UI preview &middot; mock data only
+        </div>
+      </aside>
+
+      <main className="flex-1 overflow-y-auto px-8 py-8">
+        {activeScreen === "sources" && <SourcesScreen />}
+        {activeScreen === "query" && <QueryScreen onSelectCitation={navigateToCitation} />}
+        {activeScreen === "citations" && (
+          <CitationExplorerScreen selectedCitation={selectedCitation} />
+        )}
+        {activeScreen === "settings" && <SettingsScreen />}
+      </main>
+    </div>
   );
 }
 
