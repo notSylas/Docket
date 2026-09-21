@@ -1,8 +1,17 @@
 .venv/
 venv/
+.claude/
 __pycache__/
 *.pyc
 spike/.lancedb/
 spike/*.sqlite3
 spike/*.db
 spike/.docling_cache/
+spike/test_pdfs/
+spike/sidecar/build/
+spike/sidecar/dist/
+spike/sidecar/*.spec
+spike/packaging/node_modules/
+spike/packaging/dist/
+spike/packaging/src-tauri/target/
+spike/packaging/src-tauri/binaries/
