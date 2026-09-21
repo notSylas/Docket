@@ -5,26 +5,35 @@ Corpus: the 6 Work Intelligence design docs (`Docs/*.docx`, 204 chunks after ing
 
 ## Model Performance
 
-Ran `bench_model.py` against **qwen3:14b** (qwen3:30b was still downloading — a slow
-connection made the 19GB pull impractical to wait on for this spike; re-run this
-benchmark against qwen3:30b once it finishes to compare).
+Ran `bench_model.py` against both **qwen3:14b** and, once its 19GB download finished,
+**qwen3:30b** (the actual TDD-named model, Qwen3-30B-A3B).
 
-| Prompt | Wall time | Tokens | tok/s | VRAM used |
-|---|---|---|---|---|
-| short_factual | 10.19s | 347 | 51.06 | ~11.4GB / 16GB |
-| long_context (with citation instructions) | 6.08s | 302 | 50.61 | ~11.4GB / 16GB |
+| Model | Prompt | Wall time | Tokens | tok/s | VRAM used |
+|---|---|---|---|---|---|
+| qwen3:14b | short_factual | 10.19s | 347 | 51.06 | ~11.4GB / 17.1GB |
+| qwen3:14b | long_context | 6.08s | 302 | 50.61 | ~11.4GB / 17.1GB |
+| qwen3:30b | short_factual | 16.87s | 763 | **72.68** | **16.78GB / 17.1GB** |
+| qwen3:30b | long_context | 10.13s | 739 | **74.62** | **16.79GB / 17.1GB** |
 
-- GPU: AMD discrete GPU, 16GB VRAM, ROCm-accelerated via Ollama — worked out of the box,
-  no CPU fallback needed.
-- ~51 tok/s is comfortably fast for interactive use (a few seconds per answer).
-- qwen3:14b fits in ~11.4GB, leaving headroom. qwen3:30b (MoE, ~3B active params) is
-  expected to fit too given the "A3B" active-parameter design, but this is unverified —
-  **follow-up needed** once the download completes.
+- GPU: AMD discrete GPU, 17.1GB VRAM, ROCm-accelerated via Ollama — worked out of the
+  box, no CPU fallback needed, for both models.
+- **qwen3:30b is faster than qwen3:14b** (72-75 vs ~51 tok/s) — expected, since as an
+  MoE model only ~3B params activate per token despite 30B total. Both are comfortably
+  fast for interactive use.
+- **qwen3:30b leaves only ~300MB of VRAM headroom** (16.78GB used of 17.1GB total) on
+  this machine. That is a real finding, not a pass: it fits today, but there is
+  essentially no margin for a larger context window, concurrent embedding calls during
+  ingestion, or any other GPU consumer running at the same time. A slightly smaller
+  quantization or a different VRAM budget on other hardware could tip this into OOM.
+  **This directly interacts with the self-identified "resource contention" risk in the
+  PRD — it's not a hypothetical, it's already tight on this exact machine.**
 
-**Verdict: local inference is fast enough and fits comfortably in this machine's
-resources at the 14B tier.** No resource-contention or unusable-desktop issues observed
-during a single-query workload (concurrent ingestion+query load not yet tested — still a
-Tier 3 item).
+**Verdict: local inference is fast on both model tiers, but qwen3:30b's VRAM margin is
+thin enough to need explicit handling** (e.g. capping context length, serializing
+generation and embedding calls, or offering the 14B tier as a safer default on
+16GB-class GPUs). This is the first Tier 1 finding that suggests a concrete design
+decision, not just a validation checkmark. Concurrent ingestion+query load still not
+tested — still a Tier 3 item, and now a higher-priority one given the thin VRAM margin.
 
 ## Retrieval Quality
 
@@ -76,11 +85,14 @@ chunking, no reranking, a small 0.6B embedding model). The architecture as desig
 sound approach at small scale.
 
 **Follow-ups before treating this as fully proven:**
-1. Re-run the model benchmark against qwen3:30b once downloaded, to confirm it fits VRAM and check whether answer quality improves over 14b.
+1. ~~Re-run the model benchmark against qwen3:30b once downloaded~~ — done, see updated
+   Model Performance section above. It's faster than 14b but leaves very little VRAM
+   headroom (~300MB) on this 17.1GB GPU — needs a design decision, not just a checkmark.
 2. Test at a larger, more realistic corpus size (hundreds of documents, not 6) — recall behavior and chunk-size tuning matter more at scale.
 3. Fix the citation formatting via a stricter prompt/output schema.
-4. Test resource contention (ingestion running concurrently with a query) — not yet exercised.
+4. Test resource contention (ingestion running concurrently with a query) — not yet exercised, and now higher priority given qwen3:30b's thin VRAM margin.
 5. Consider testing the reranker to see if it improves precision on ambiguous questions like Q4.
+6. Re-run the 12-question retrieval eval against qwen3:30b to see if answer quality/citation cleanliness improves over 14b enough to justify the VRAM risk.
 
 No findings here suggest the SAD/TDD architecture needs to change. The main
 adjustment is tactical: chunking strategy needs real tuning, not a redesign.
