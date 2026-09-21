@@ -8,7 +8,7 @@ import time
 
 import ollama
 
-MODEL = sys.argv[1] if len(sys.argv) > 1 else "qwen3:30b"
+MODEL = sys.argv[1] if len(sys.argv) > 1 else "qwen3:14b"
 
 PROMPTS = {
     "short_factual": "In one sentence, what is a vector database used for?",

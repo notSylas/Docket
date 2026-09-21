@@ -172,12 +172,40 @@ passwordless sudo, so this also served as a real first-run experience check.
   `sudo apt install -y libdbus-1-dev libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev pkg-config`
   (`pkg-config` already present here, listed for completeness on a fresh machine).
 
-**Verdict:** The packaging approach itself is sound — sidecar bundling with PyInstaller
-is fast and produces a clean standalone binary, and the Tauri scaffold builds its
-frontend without issue. The only blocker is standard Linux desktop build dependencies,
-which is a one-time `apt install` on any dev/build machine (and presumably already
-handled in whatever CI/packaging environment ships the real releases) — not a finding
-against the architecture. **Follow-up:** re-run `cargo tauri build --no-bundle` after
-installing the system libs to confirm a full successful build and test the sidecar
-actually launches from within the Tauri app (IPC between the React frontend and the
-Python sidecar was not exercised in this spike — only that the binary itself runs).
+**Update — full build + real sidecar spawn test completed.**
+
+Once the system libs were installed (`libdbus-1-dev`, `libwebkit2gtk-4.1-dev`,
+`libxdo-dev`, `libssl-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`,
+`libsqlite3-dev`, `libsoup-3.0-dev`, `pkg-config`), `cargo tauri build --no-bundle`
+succeeded cleanly (~1-1.5 min compile). Two notes from the apt install: it initially hit
+404s on `libsqlite3-dev` and `libsoup-3.0-dev` from a stale mirror index — resolved with
+`apt-get update` and a retry, not a real unavailability.
+
+The first successful build only proved the sidecar binary was *bundled* — the generated
+Rust scaffold never actually called it. To test the thing that actually matters (does
+the desktop app spawn the Python process and get its output back), `tauri-plugin-shell`
+was added, the sidecar was declared as an explicitly allow-listed executable in
+`capabilities/default.json`, and `src-tauri/src/lib.rs` was updated to spawn the sidecar
+on app startup and read its stdout via the plugin's async event channel.
+
+Running the built binary directly (a real X11 display was available):
+
+```
+SIDECAR_STDOUT: python-sidecar-ok
+SIDECAR_SPAWN_TEST: PASS
+```
+
+The Tauri shell correctly spawned the PyInstaller-bundled Python sidecar as a
+subprocess and captured its stdout through the plugin's IPC channel, with no interpreter
+or venv present on the system path — confirming the actual mechanic the whole
+desktop-app/Python-backend architecture depends on.
+
+**Verdict: packaging is fully validated, not just plausible.** Toolchain setup (Rust,
+Node, Tauri CLI) works cleanly in user space; the only real blocker was standard Linux
+build libraries, a one-time `apt install`; the PyInstaller sidecar bundles fast and runs
+standalone; and — the part that actually mattered — Tauri's shell plugin can spawn and
+communicate with that sidecar from within a running desktop app. No findings here
+suggest a change to the SAD/TDD's Tauri + Python sidecar architecture. Remaining
+follow-up: this tested one-shot stdout capture: real usage needs a proper
+long-running IPC contract (streaming request/response, e.g. mapped over stdin/stdout or
+a local socket) between the frontend and the Python backend, not yet exercised here.
