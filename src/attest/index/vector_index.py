@@ -51,6 +51,15 @@ class LanceIndexWriter:
             # there is no dedicated "table not found" exception type.
             return None
 
+    @property
+    def table(self):
+        """Public accessor for the underlying LanceDB table object (or
+        `None` if it hasn't been created yet -- e.g. before any chunks have
+        been indexed). Needed by callers outside this module (e.g. the CLI,
+        wiring a table into `attest.retrieval.hybrid.hybrid_search` via
+        `QueryService`) that shouldn't reach into the `_open_table` internal."""
+        return self._open_table()
+
     def upsert(
         self, records: Sequence[ChunkRecord], embeddings: Sequence[list[float]] | None
     ) -> None:

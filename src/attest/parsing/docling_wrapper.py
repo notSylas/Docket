@@ -57,6 +57,19 @@ class DoclingParser:
 
         return getattr(docling, "__version__", "unknown")
 
+    @property
+    def parser_name(self) -> str:
+        """The parser identity to record on `EvidenceVersion` rows -- exposed
+        so callers (e.g. the ingestion pipeline) can pass it to
+        `EvidenceManager.ingest_file` before parsing happens (bytes are
+        stored, and their EvidenceVersion recorded, independently of whether
+        parsing subsequently succeeds)."""
+        return self._parser_name
+
+    @property
+    def parser_version(self) -> str:
+        return self._parser_version
+
     def parse(self, source_id: str, path: Path) -> ParsedDocument:
         """Run Docling's ``DocumentConverter`` on ``path`` and export markdown.
 

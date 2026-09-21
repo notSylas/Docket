@@ -139,6 +139,12 @@ class EvidenceVersion(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: _new_id("ev"))
     source_id: Mapped[str] = mapped_column(ForeignKey("sources.id"), nullable=False, index=True)
+    # Which file within the source this version is for -- nullable for
+    # backward compatibility with pre-CP8 rows/tests that only ever tracked
+    # one file per source (see migration 0002's docstring for why this
+    # exists: without it, "current version" can't be scoped per file for a
+    # multi-file "local_folder" source).
+    file_path: Mapped[str | None] = mapped_column(String, nullable=True)
     content_hash: Mapped[str] = mapped_column(String, nullable=False, index=True)
     byte_size: Mapped[int] = mapped_column(Integer, nullable=False)
     mime_type: Mapped[str | None] = mapped_column(String, nullable=True)

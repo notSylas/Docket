@@ -31,10 +31,21 @@ class EvidenceManager:
         self.store = store
         self.session_factory = session_factory
 
-    def _current_version(self, session: Session, source_id: str) -> EvidenceVersion | None:
+    def _current_version(
+        self, session: Session, source_id: str, file_path: str
+    ) -> EvidenceVersion | None:
+        # Scoped by (source_id, file_path), not source_id alone: a
+        # "local_folder" source (CP8) can hold many files, each with its own
+        # independent version lineage. Also match legacy rows written before
+        # `file_path` existed (NULL) when `file_path` happens to match -- see
+        # migration 0002's docstring. In practice this only matters for a
+        # source that has never recorded a file_path before; once
+        # `ingest_file` runs once for a given path, that path's rows always
+        # carry it from then on.
         stmt = select(EvidenceVersion).where(
             EvidenceVersion.source_id == source_id,
             EvidenceVersion.is_current.is_(True),
+            EvidenceVersion.file_path == file_path,
         )
         return session.execute(stmt).scalar_one_or_none()
 
@@ -49,9 +60,10 @@ class EvidenceManager:
         path = Path(path)
         data = path.read_bytes()
         content_hash = hashlib.sha256(data).hexdigest()
+        file_path = str(path)
 
         with self.session_factory() as session:
-            current = self._current_version(session, source_id)
+            current = self._current_version(session, source_id, file_path)
 
             if current is not None and current.content_hash == content_hash:
                 # Unchanged rescan: idempotent no-op, return the existing row.
@@ -74,6 +86,7 @@ class EvidenceManager:
 
             evidence_version = EvidenceVersion(
                 source_id=source_id,
+                file_path=file_path,
                 content_hash=content_hash,
                 byte_size=len(data),
                 mime_type=mime_type,

@@ -19,7 +19,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
-from attest.db.models import Chunk, Source
+from attest.db.models import Chunk, EvidenceVersion, Source
 
 
 @dataclass(frozen=True)
@@ -61,9 +61,10 @@ def _citation_label(source_display_name: str, chunk_id: str) -> str:
 class EvidenceResolver:
     """Resolves chunk_ids into citation-ready `ResolvedEvidence`.
 
-    Reads from the same `chunks` table CP5's index writers ingest into
-    (via the ORM, joining `Source` for a display name) -- this class only
-    reads, it never writes.
+    Reads from the same `chunks` table CP5's index writers ingest into (via
+    the ORM, joining `Source` and `EvidenceVersion` for a display name --
+    the chunk's own file when known, else the source's path, see
+    `resolve_many`) -- this class only reads, it never writes.
     """
 
     def __init__(self, session_factory: sessionmaker):
@@ -85,19 +86,27 @@ class EvidenceResolver:
 
         with self._session_factory() as session:
             rows = session.execute(
-                select(Chunk, Source)
+                select(Chunk, Source, EvidenceVersion)
                 .join(Source, Chunk.source_id == Source.id)
+                .join(EvidenceVersion, Chunk.evidence_version_id == EvidenceVersion.id)
                 .where(Chunk.id.in_(chunk_ids))
             ).all()
 
-        by_id = {chunk.id: (chunk, source) for chunk, source in rows}
+        by_id = {chunk.id: (chunk, source, ev) for chunk, source, ev in rows}
 
         resolved: list[ResolvedEvidence] = []
         for chunk_id in chunk_ids:
             if chunk_id not in by_id:
                 raise ChunkNotFoundError(chunk_id)
-            chunk, source = by_id[chunk_id]
-            source_display_name = Path(source.path).name
+            chunk, source, evidence_version = by_id[chunk_id]
+            # Prefer the chunk's own file (CP8's multi-file "local_folder"
+            # sources put several files under one Source row, each tracked
+            # via EvidenceVersion.file_path -- see migration
+            # 0002_evidence_version_file_path); fall back to Source.path for
+            # pre-CP8 rows where a source mapped to exactly one file and
+            # file_path was never recorded.
+            display_path = evidence_version.file_path or source.path
+            source_display_name = Path(display_path).name
             resolved.append(
                 ResolvedEvidence(
                     chunk_id=chunk.id,
