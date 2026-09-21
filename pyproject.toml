@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "attest"
+version = "0.1.0"
+description = "Local-first, evidence-backed work intelligence assistant"
+requires-python = ">=3.12"
+dependencies = [
+    "docling",
+    "lancedb",
+    "ollama",
+    "pyarrow",
+    "langgraph",
+    "langchain-ollama",
+    "sqlalchemy>=2.0",
+    "alembic",
+    "pydantic>=2.0",
+    "pydantic-settings",
+    "typer",
+    "watchfiles",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "pytest-mock",
+]
+
+[project.scripts]
+attest = "attest.cli.main:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/attest"]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: requires a running Ollama instance with qwen3:14b and qwen3-embedding:0.6b pulled",
+]
+testpaths = ["tests"]

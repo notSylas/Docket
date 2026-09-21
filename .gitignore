@@ -15,3 +15,7 @@ spike/packaging/node_modules/
 spike/packaging/dist/
 spike/packaging/src-tauri/target/
 spike/packaging/src-tauri/binaries/
+src/attest.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
