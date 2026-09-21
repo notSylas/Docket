@@ -2,3 +2,9 @@ docling
 lancedb
 ollama
 pyarrow
+reportlab
+pyinstaller
+langgraph
+langchain-ollama
+deepagents
+psutil

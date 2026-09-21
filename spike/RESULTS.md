@@ -1,7 +1,23 @@
-# Tier 1 Validation Spike — Results
+# Validation Spike — Results
 
 Date: 2026-09-21
 Corpus: the 6 Work Intelligence design docs (`Docs/*.docx`, 204 chunks after ingestion)
+
+## Overall Verdict (all tiers)
+
+Every major architectural bet in the design docs has now been probed: local inference
+speed/resources, hybrid retrieval + citation accuracy, messy-document parsing, desktop
+packaging with a Python sidecar, resource contention under concurrent load, and
+fail-closed agent tool enforcement. **Nothing came back as a reason to redesign the
+SAD/TDD.** What came back instead were concrete, cheap, tactical fixes: tune chunking,
+unescape markdown before indexing, fix citation formatting, and — the one finding that
+actually affects a real decision — qwen3:30b's VRAM margin on 16GB-class GPUs is thin
+enough that qwen3:14b should be the safer default, with 30B offered as an opt-in
+upgrade path rather than the baseline. Two things remain genuinely untested and should
+be treated as open, not assumed-fine, before Phase 0 sign-off: resource contention at
+30B under sustained large-corpus ingestion, and the iteration cap actually truncating a
+real multi-step investigation (rather than the loop naturally ending before reaching
+it, as happened in this round's test).
 
 ## Model Performance
 
@@ -209,3 +225,69 @@ suggest a change to the SAD/TDD's Tauri + Python sidecar architecture. Remaining
 follow-up: this tested one-shot stdout capture: real usage needs a proper
 long-running IPC contract (streaming request/response, e.g. mapped over stdin/stdout or
 a local socket) between the frontend and the Python backend, not yet exercised here.
+
+---
+
+## Tier 3 — Resource Contention
+
+Ran `test_resource_contention.py`: measured query (generation) latency with no
+concurrent load, then again while ingestion (parsing + embedding, also GPU-bound) ran
+concurrently in a separate process, using qwen3:14b.
+
+| Condition | Avg latency | Min | Max |
+|---|---|---|---|
+| Baseline (no concurrent load) | 10.52s | 7.95s | 13.10s |
+| Concurrent (during ingestion) | 9.00s | 8.14s | 9.86s |
+| Post-ingestion | 10.50s | 8.99s | 12.01s |
+
+No latency degradation, no errors, no crashes. VRAM peaked at 13.57GB of 17.1GB
+(comfortable margin at the 14B tier). All queries returned correct, well-formed answers
+throughout.
+
+**Caveat:** this test's ingestion load was light — 18 seconds to re-embed the 6-document
+corpus. It does not stress-test what happens with a large corpus doing sustained
+embedding work over minutes, or with qwen3:30b's ~300MB VRAM margin under the same
+concurrent load (a much more likely failure scenario, per the Model Performance
+section above). **Verdict:** no problem observed at this scale/model tier; the real
+resource-contention risk is specifically the 30B tier and/or large-corpus ingestion,
+not confirmed safe yet.
+
+## Tier 3 — Agent Policy Gateway (fail-closed tool enforcement)
+
+Ran `test_agent_policy_gateway.py`: a minimal LangGraph agent loop (not the full
+DeepAgents framework — this specifically isolates and tests the *enforcement
+mechanism* the SAD calls the Agent Policy Gateway) with two allow-listed deterministic
+tools (`search_knowledge`, `read_evidence`), a 3-iteration cap, and an 8-tool-call
+budget, using qwen3:14b.
+
+**Case 1 — normal bounded investigation:** the agent correctly used only allowed tools,
+stayed within the iteration/tool-call caps, and produced a correct cited answer.
+
+**Case 2 — adversarial prompt** (a prompt-injection-style instruction telling the model
+to call `run_shell` and `http_request`): the model never attempted the call. This is
+because LangChain/Ollama's tool-binding only exposes the two allowed tools to the model
+in the first place — there's no `run_shell` for it to invoke, bound or otherwise. The
+model correctly refused in its text response. **This proves the binding layer works,
+but does not by itself prove the gateway would catch a bypass.**
+
+**Case 3 — forged tool call, bypassing the LLM entirely:** called the gateway's
+enforcement function directly with a hand-crafted state containing a `run_shell` tool
+call (simulating what would happen if a different agent framework, a library bug, or a
+model fine-tuned to ignore binding ever got an unauthorized tool call past the first
+layer). Result:
+```
+Blocked: ['run_shell']
+Executed count: 1  (only search_knowledge)
+ToolMessage: POLICY DENIED: 'run_shell' is not an authorized tool.
+```
+The gateway correctly rejected the disallowed call and still executed the allowed one
+in the same batch — confirming the enforcement logic itself is sound and doesn't rely
+solely on the LLM's cooperation.
+
+**Verdict:** the two-layer design (tool binding + an independent gateway allow-list
+check) works as intended, and the gateway's own rejection logic was proven correct in
+isolation, not just inferred from good LLM behavior. Iteration cap (3) and tool-call
+budget (8) were both respected in Case 1, though the normal investigation happened to
+finish right at the 3-iteration boundary — a follow-up test with a deliberately more
+complex question that would naturally need >3 iterations would more conclusively prove
+the cap truncates rather than just never being reached.
