@@ -270,6 +270,85 @@ def test_fast_path_result_reports_fast_mode(
 
 
 # ---------------------------------------------------------------------------
+# Explicit `mode=` parameter on `ask()` -- bypasses the classifier entirely.
+# ---------------------------------------------------------------------------
+
+
+def test_explicit_mode_fast_skips_classifier_even_for_agent_phrasing(
+    migrated_sqlite_engine: Engine, tmp_path: Path, built: dict
+) -> None:
+    """A question phrased to trigger the heuristic classifier's AGENT
+    routing (e.g. "compare") must still run the fast path when `mode=FAST`
+    is passed explicitly -- proving `ask()` doesn't even consult
+    `self._classifier` when `mode` is given (not just that it happens to
+    agree with it)."""
+    gateway = FakeInferenceGateway()
+    table = _index_chunk(migrated_sqlite_engine, tmp_path, gateway, built)
+    label = f"[report.pdf #{built['chunk_id'][:12]}]"
+    gateway.canned_response = f"RRF fuses ranked lists {label}."
+
+    service = _service(migrated_sqlite_engine, table, gateway, built)
+    result = service.ask(f"Compare {CHUNK_TEXT}", mode=QueryMode.FAST)
+
+    assert result.mode == QueryMode.FAST.value
+    # Fast path calls gateway.generate() -- proves _ask_fast actually ran,
+    # not just that the returned mode label says FAST.
+    assert len(gateway.generate_calls) == 1
+
+
+def test_explicit_mode_agent_routes_to_agent_even_for_plain_phrasing(
+    migrated_sqlite_engine: Engine, tmp_path: Path, built: dict
+) -> None:
+    """A plain single-fact-lookup question (would normally classify FAST)
+    must still run the agent path when `mode=AGENT` is passed explicitly,
+    using the injected fake agent rather than the default
+    `HeuristicQueryClassifier` (never constructed/consulted here -- no
+    `classifier=` is passed to `QueryService` at all)."""
+    gateway = FakeInferenceGateway()
+    table = _index_chunk(migrated_sqlite_engine, tmp_path, gateway, built)
+    resolver = EvidenceResolver(built["session_factory"])
+    label = f"[report.pdf #{built['chunk_id'][:12]}]"
+
+    final_messages = [
+        AIMessage(
+            content="",
+            tool_calls=[
+                {"name": "read_evidence", "args": {"chunk_id": built["chunk_id"]}, "id": "call_1"}
+            ],
+        ),
+        ToolMessage(
+            content=json.dumps(
+                {
+                    "chunk_id": built["chunk_id"],
+                    "text": CHUNK_TEXT,
+                    "citation_label": label,
+                    "source_display_name": "report.pdf",
+                    "heading": "Introduction",
+                }
+            ),
+            tool_call_id="call_1",
+        ),
+        AIMessage(content=f"RRF fuses ranked lists {label}."),
+    ]
+    fake_agent = _FakeAgent(final_messages)
+
+    service = QueryService(
+        engine=migrated_sqlite_engine,
+        table=table,
+        gateway=gateway,
+        resolver=resolver,
+        agent=fake_agent,
+    )
+
+    result = service.ask(CHUNK_TEXT, mode=QueryMode.AGENT)
+
+    assert result.mode == QueryMode.AGENT.value
+    assert len(fake_agent.invoke_calls) == 1
+    # Agent path never calls gateway.generate() -- proves _ask_agent ran.
+    assert len(gateway.generate_calls) == 0
+
+
+# ---------------------------------------------------------------------------
 # `_citations_from_agent_messages` -- pure, no LangGraph/LLM involved.
 # ---------------------------------------------------------------------------
 

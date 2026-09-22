@@ -188,8 +188,19 @@ class QueryService:
             )
         return self._agent
 
-    def ask(self, question: str) -> QueryResult:
-        mode = self._classifier.classify(question)
+    def ask(self, question: str, mode: QueryMode | None = None) -> QueryResult:
+        """Answer `question`, routing to FAST or AGENT.
+
+        `mode`, when given, skips `self._classifier.classify(question)`
+        entirely and routes directly -- for callers (e.g. the desktop
+        sidecar's `query.ask` op) that want to let the caller force a mode
+        explicitly rather than rely on `HeuristicQueryClassifier`'s
+        phrasing-based guess. When omitted (the default), behavior is
+        unchanged from before this parameter existed: the question is
+        classified and routed based on that result.
+        """
+        if mode is None:
+            mode = self._classifier.classify(question)
         if mode == QueryMode.AGENT:
             return self._ask_agent(question)
         return self._ask_fast(question)
