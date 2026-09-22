@@ -25,8 +25,22 @@ export default defineConfig(() => ({
         }
       : undefined,
     watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // 3. tell Vite to ignore watching `src-tauri` and the sidecar's
+      // Python venvs/build output -- `.build-venv` in particular bundles
+      // torch (tens of thousands of files), which blows past the OS's
+      // inotify watch limit (ENOSPC) if Vite tries to watch it.
+      //
+      // A glob-string `ignored` (e.g. "**/sidecar/.build-venv/**") does
+      // NOT reliably prune directory recursion in Vite's bundled watcher
+      // (confirmed empirically during the IPC-wiring checkpoint: the dev
+      // server still crashed with ENOSPC while walking `.build-venv` even
+      // with that glob configured) -- a predicate function is what
+      // actually stops it from descending into these directories at all.
+      ignored: (path) =>
+        /[/\\]src-tauri[/\\]/.test(path) ||
+        /[/\\]sidecar[/\\]\.build-venv([/\\]|$)/.test(path) ||
+        /[/\\]sidecar[/\\]build([/\\]|$)/.test(path) ||
+        /[/\\]sidecar[/\\]dist([/\\]|$)/.test(path),
     },
   },
 }));

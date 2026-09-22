@@ -23,6 +23,7 @@ Two deliberate choices:
 
 from __future__ import annotations
 
+import sys
 from functools import cached_property
 from pathlib import Path
 
@@ -45,7 +46,21 @@ from attest.parsing.recipes import DEFAULT_SPLITTER, ChunkRecipe
 from attest.retrieval.resolver import EvidenceResolver
 from attest.sources.manager import SourceManager
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+    # Running as a PyInstaller-frozen binary: `__file__`-based nesting no
+    # longer matches the editable-install source layout below (the frozen
+    # bundle has no `src/` prefix, so `parents[3]` would overshoot outside
+    # the bundle entirely -- confirmed empirically during a de-risking
+    # spike). `sys._MEIPASS` is the bundle's extraction root, and the
+    # sidecar's `.spec` bundles `alembic.ini` and the migrations folder at
+    # the same relative paths this module expects from REPO_ROOT in dev
+    # (REPO_ROOT/alembic.ini, REPO_ROOT/src/attest/db/migrations) -- see
+    # desktop/sidecar/app-sidecar-*.spec's `datas`.
+    REPO_ROOT = Path(sys._MEIPASS)  # type: ignore[attr-defined]
+else:
+    # Editable-install source layout: backend/src/attest/cli/context.py is
+    # 3 directories under the project root (src, attest, cli).
+    REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _alembic_config(sqlite_path: Path) -> Config:

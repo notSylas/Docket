@@ -109,12 +109,63 @@ async fn ping_sidecar(state: tauri::State<'_, SidecarState>) -> Result<Value, St
     call_sidecar(&state, "ping", serde_json::json!({})).await
 }
 
+/// Real backend-op wrappers -- one per op the sidecar's dispatch table
+/// exposes (see `desktop/sidecar/server.py::build_dispatch_table`).
+
+#[tauri::command]
+async fn list_sources(state: tauri::State<'_, SidecarState>) -> Result<Value, String> {
+    call_sidecar(&state, "sources.list", serde_json::json!({})).await
+}
+
+#[tauri::command]
+async fn add_source(state: tauri::State<'_, SidecarState>, path: String) -> Result<Value, String> {
+    call_sidecar(&state, "sources.add", serde_json::json!({"path": path})).await
+}
+
+#[tauri::command]
+async fn ingest_source(
+    state: tauri::State<'_, SidecarState>,
+    source_id: String,
+) -> Result<Value, String> {
+    call_sidecar(&state, "sources.ingest", serde_json::json!({"source_id": source_id})).await
+}
+
+#[tauri::command]
+async fn revoke_source(
+    state: tauri::State<'_, SidecarState>,
+    source_id: String,
+) -> Result<Value, String> {
+    call_sidecar(&state, "sources.revoke", serde_json::json!({"source_id": source_id})).await
+}
+
+#[tauri::command]
+async fn ask_question(
+    state: tauri::State<'_, SidecarState>,
+    question: String,
+    mode: Option<String>,
+) -> Result<Value, String> {
+    let mut params = serde_json::json!({"question": question});
+    if let Some(m) = mode {
+        params["mode"] = serde_json::Value::String(m);
+    }
+    call_sidecar(&state, "query.ask", params).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet, echo_test, ping_sidecar])
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            echo_test,
+            ping_sidecar,
+            list_sources,
+            add_source,
+            ingest_source,
+            revoke_source,
+            ask_question
+        ])
         .setup(|app| {
             // Managed before the stdout-reading task below ever tries to
             // fetch it via `app_handle.state::<SidecarState>()`.

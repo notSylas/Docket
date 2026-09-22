@@ -10,7 +10,8 @@ spike/.docling_cache/
 spike/test_pdfs/
 desktop/sidecar/build/
 desktop/sidecar/dist/
-desktop/sidecar/*.spec
+desktop/sidecar/_pyinstaller_spike*
+desktop/sidecar/.build-venv/
 desktop/node_modules/
 desktop/dist/
 desktop/src-tauri/target/
