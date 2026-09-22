@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 #
 # PyInstaller spec for the REAL desktop sidecar (main.py + server.py, wired
-# to the full `attest` backend: docling, lancedb, langgraph, alembic, ...).
+# to the full `docket` backend: docling, lancedb, langgraph, alembic, ...).
 # Rewritten for the IPC-wiring checkpoint from the earlier stub-only spec
 # (which froze the old 7-line ping/echo `main.py`).
 #
@@ -60,15 +60,15 @@
 #    exists as a real directory alongside `docx/templates/`.
 #
 # `alembic.ini` and the migrations folder are bundled as `datas` at the
-# same relative layout `attest.cli.context.REPO_ROOT` expects (see that
+# same relative layout `docket.cli.context.REPO_ROOT` expects (see that
 # module's frozen-aware `REPO_ROOT` branch): `alembic.ini` at the bundle
-# root, migrations at `src/attest/db/migrations` under the bundle root.
+# root, migrations at `src/docket/db/migrations` under the bundle root.
 
 from PyInstaller.utils.hooks import collect_data_files, copy_metadata
 
 datas = [
     ('../../backend/alembic.ini', '.'),
-    ('../../backend/src/attest/db/migrations', 'src/attest/db/migrations'),
+    ('../../backend/src/docket/db/migrations', 'src/docket/db/migrations'),
 ]
 datas += copy_metadata('docling')
 datas += copy_metadata('docling-slim')

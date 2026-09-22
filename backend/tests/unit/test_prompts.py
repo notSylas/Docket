@@ -1,14 +1,14 @@
-"""Unit tests for `attest.query.prompts` (pure functions -- no DB/gateway
+"""Unit tests for `docket.query.prompts` (pure functions -- no DB/gateway
 needed, hand-built `ResolvedEvidence` lists only)."""
 
 from __future__ import annotations
 
-from attest.query.prompts import (
+from docket.query.prompts import (
     ABSTENTION_PHRASE,
     build_context_block,
     validate_citations,
 )
-from attest.retrieval.resolver import ResolvedEvidence
+from docket.retrieval.resolver import ResolvedEvidence
 
 
 def _evidence(chunk_id: str, text: str, citation_label: str) -> ResolvedEvidence:

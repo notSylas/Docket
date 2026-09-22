@@ -1,4 +1,4 @@
-"""Unit tests for `attest.retrieval.resolver.EvidenceResolver`."""
+"""Unit tests for `docket.retrieval.resolver.EvidenceResolver`."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ import pytest
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-from attest.db.engine import get_engine, get_session_factory
-from attest.db.identity import compute_chunk_id, compute_recipe_id
-from attest.db.models import (
+from docket.db.engine import get_engine, get_session_factory
+from docket.db.identity import compute_chunk_id, compute_recipe_id
+from docket.db.models import (
     AuthorizedSource,
     Base,
     Chunk,
@@ -22,12 +22,12 @@ from attest.db.models import (
     SourceStatus,
     Workspace,
 )
-from attest.retrieval.resolver import ChunkNotFoundError, EvidenceResolver, ResolvedEvidence
+from docket.retrieval.resolver import ChunkNotFoundError, EvidenceResolver, ResolvedEvidence
 
 
 @pytest.fixture()
 def session(tmp_path: Path) -> Session:
-    engine = get_engine(tmp_path / "attest.sqlite3")
+    engine = get_engine(tmp_path / "docket.sqlite3")
     Base.metadata.create_all(engine)
     factory = get_session_factory(engine)
     with factory() as sess:

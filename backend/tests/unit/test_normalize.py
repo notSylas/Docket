@@ -1,8 +1,8 @@
-"""Tests for attest.parsing.normalize.unescape_markdown."""
+"""Tests for docket.parsing.normalize.unescape_markdown."""
 
 from __future__ import annotations
 
-from attest.parsing.normalize import unescape_markdown
+from docket.parsing.normalize import unescape_markdown
 
 
 def test_unescapes_snake_case_identifier() -> None:

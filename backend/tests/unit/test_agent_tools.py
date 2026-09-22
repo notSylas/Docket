@@ -1,4 +1,4 @@
-"""Unit tests for `attest.agent.tools` -- the real `search_knowledge`/
+"""Unit tests for `docket.agent.tools` -- the real `search_knowledge`/
 `read_evidence` tool factories.
 
 These prove the tools call real `hybrid_search`/`EvidenceResolver` code
@@ -20,10 +20,10 @@ from pathlib import Path
 import pytest
 from sqlalchemy import Engine
 
-from attest.agent.tools import make_read_evidence_tool, make_search_knowledge_tool
-from attest.db.engine import get_session_factory
-from attest.db.identity import compute_chunk_id, compute_recipe_id
-from attest.db.models import (
+from docket.agent.tools import make_read_evidence_tool, make_search_knowledge_tool
+from docket.db.engine import get_session_factory
+from docket.db.identity import compute_chunk_id, compute_recipe_id
+from docket.db.models import (
     AuthorizedSource,
     Chunk,
     ChunkRecipe,
@@ -33,11 +33,11 @@ from attest.db.models import (
     SourceStatus,
     Workspace,
 )
-from attest.index.base import ChunkRecord
-from attest.index.fts_index import FtsIndexWriter
-from attest.index.vector_index import LanceIndexWriter
-from attest.inference.gateway import FakeInferenceGateway
-from attest.retrieval.resolver import EvidenceResolver
+from docket.index.base import ChunkRecord
+from docket.index.fts_index import FtsIndexWriter
+from docket.index.vector_index import LanceIndexWriter
+from docket.inference.gateway import FakeInferenceGateway
+from docket.retrieval.resolver import EvidenceResolver
 
 CHUNK_TEXT = "Reciprocal Rank Fusion combines multiple ranked search results into one."
 

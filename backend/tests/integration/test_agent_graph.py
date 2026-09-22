@@ -1,4 +1,4 @@
-"""Integration tests for `attest.agent.graph.build_investigation_agent` --
+"""Integration tests for `docket.agent.graph.build_investigation_agent` --
 the bounded agent loop wired to REAL `search_knowledge`/`read_evidence`
 tools, run against a real Ollama chat model.
 
@@ -29,11 +29,11 @@ import pytest
 from langchain_core.messages import HumanMessage, SystemMessage
 from sqlalchemy import Engine
 
-from attest.agent.graph import build_investigation_agent
-from attest.config import settings
-from attest.db.engine import get_session_factory
-from attest.db.identity import compute_chunk_id, compute_recipe_id
-from attest.db.models import (
+from docket.agent.graph import build_investigation_agent
+from docket.config import settings
+from docket.db.engine import get_session_factory
+from docket.db.identity import compute_chunk_id, compute_recipe_id
+from docket.db.models import (
     AuthorizedSource,
     Chunk,
     ChunkRecipe,
@@ -43,11 +43,11 @@ from attest.db.models import (
     SourceStatus,
     Workspace,
 )
-from attest.index.base import ChunkRecord
-from attest.index.fts_index import FtsIndexWriter
-from attest.index.vector_index import LanceIndexWriter
-from attest.inference.gateway import FakeInferenceGateway
-from attest.retrieval.resolver import EvidenceResolver
+from docket.index.base import ChunkRecord
+from docket.index.fts_index import FtsIndexWriter
+from docket.index.vector_index import LanceIndexWriter
+from docket.inference.gateway import FakeInferenceGateway
+from docket.retrieval.resolver import EvidenceResolver
 
 pytestmark = pytest.mark.integration
 

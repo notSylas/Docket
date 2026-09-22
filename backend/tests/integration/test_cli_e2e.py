@@ -1,5 +1,5 @@
-"""End-to-end CLI test: `attest sources add` -> `attest ingest` ->
-`attest query`, against a real Ollama server (the one place in this
+"""End-to-end CLI test: `docket sources add` -> `docket ingest` ->
+`docket query`, against a real Ollama server (the one place in this
 checkpoint real Ollama is used -- everywhere else uses
 `FakeInferenceGateway`). Replaces the validation spike's manual,
 CLI-driven verification (`spike/ingest.py` + `spike/query.py`, run by hand)
@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from attest.cli.main import app
+from docket.cli.main import app
 
 pytestmark = pytest.mark.integration
 
@@ -30,8 +30,8 @@ runner = CliRunner()
 
 @pytest.mark.skipif(not SAMPLE_DOCX.exists(), reason="sample docx not present in Docs/")
 def test_cli_add_ingest_query_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    data_dir = tmp_path / "attest_data"
-    monkeypatch.setenv("ATTEST_DATA_DIR", str(data_dir))
+    data_dir = tmp_path / "docket_data"
+    monkeypatch.setenv("DOCKET_DATA_DIR", str(data_dir))
 
     source_folder = tmp_path / "source_docs"
     source_folder.mkdir()
@@ -61,7 +61,7 @@ def test_cli_add_ingest_query_end_to_end(tmp_path: Path, monkeypatch: pytest.Mon
     # A real, grounded answer: mentions the product's own defining language...
     assert "evidence" in output.lower()
     # ...and is actually cited back to the ingested document, using the
-    # centralized citation format from `attest.retrieval.resolver`
+    # centralized citation format from `docket.retrieval.resolver`
     # ("[filename #chunk_id_prefix]").
     assert SAMPLE_DOCX.name in output
     assert "Citations:" in output

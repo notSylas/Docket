@@ -5,8 +5,8 @@ from __future__ import annotations
 import ollama
 import pytest
 
-from attest.config import settings
-from attest.inference.gateway import (
+from docket.config import settings
+from docket.inference.gateway import (
     FakeInferenceGateway,
     InferenceGateway,
     InferenceUnavailableError,
@@ -87,7 +87,7 @@ def test_ollama_gateway_explicit_args_override_settings() -> None:
 
 def test_generate_wraps_connection_failure(mocker) -> None:
     mocker.patch(
-        "attest.inference.gateway._ollama.generate",
+        "docket.inference.gateway._ollama.generate",
         side_effect=ConnectionError("Failed to connect to Ollama."),
     )
     gateway = OllamaGateway()
@@ -97,7 +97,7 @@ def test_generate_wraps_connection_failure(mocker) -> None:
 
 def test_embed_wraps_connection_failure(mocker) -> None:
     mocker.patch(
-        "attest.inference.gateway._ollama.embed",
+        "docket.inference.gateway._ollama.embed",
         side_effect=ConnectionError("Failed to connect to Ollama."),
     )
     gateway = OllamaGateway()
@@ -107,11 +107,11 @@ def test_embed_wraps_connection_failure(mocker) -> None:
 
 def test_generate_wraps_model_not_found(mocker) -> None:
     mocker.patch(
-        "attest.inference.gateway._ollama.generate",
+        "docket.inference.gateway._ollama.generate",
         side_effect=ollama.ResponseError("model 'nope:1b' not found", 404),
     )
     gateway = OllamaGateway(gen_model="nope:1b")
-    from attest.inference.gateway import ModelNotFoundError
+    from docket.inference.gateway import ModelNotFoundError
 
     with pytest.raises(ModelNotFoundError):
         gateway.generate(system="sys", prompt="hello")
@@ -119,7 +119,7 @@ def test_generate_wraps_model_not_found(mocker) -> None:
 
 def test_generate_does_not_leak_raw_ollama_exception(mocker) -> None:
     mocker.patch(
-        "attest.inference.gateway._ollama.generate",
+        "docket.inference.gateway._ollama.generate",
         side_effect=ollama.ResponseError("some server error", 500),
     )
     gateway = OllamaGateway()
@@ -153,7 +153,7 @@ def test_real_ollama_generate_returns_nonempty_string(ollama_available) -> None:
 
 @pytest.mark.integration
 def test_real_ollama_model_not_found_is_typed(ollama_available) -> None:
-    from attest.inference.gateway import ModelNotFoundError
+    from docket.inference.gateway import ModelNotFoundError
 
     gateway = OllamaGateway(gen_model="definitely-not-a-real-model:latest")
     with pytest.raises(ModelNotFoundError):

@@ -1,4 +1,4 @@
-"""Unit tests for `attest.query.classifier.HeuristicQueryClassifier`.
+"""Unit tests for `docket.query.classifier.HeuristicQueryClassifier`.
 
 Pure function, no I/O, no Ollama needed -- just phrasing -> `QueryMode`.
 """
@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from attest.query.classifier import HeuristicQueryClassifier, QueryMode
+from docket.query.classifier import HeuristicQueryClassifier, QueryMode
 
 classifier = HeuristicQueryClassifier()
 

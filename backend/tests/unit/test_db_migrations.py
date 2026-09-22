@@ -16,14 +16,14 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 def _alembic_config(sqlite_path: Path) -> Config:
     config = Config(str(REPO_ROOT / "alembic.ini"))
     config.set_main_option(
-        "script_location", str(REPO_ROOT / "src" / "attest" / "db" / "migrations")
+        "script_location", str(REPO_ROOT / "src" / "docket" / "db" / "migrations")
     )
     config.set_main_option("sqlalchemy.url", f"sqlite:///{sqlite_path}")
     return config
 
 
 def test_migration_upgrades_cleanly_to_head(tmp_path: Path) -> None:
-    sqlite_path = tmp_path / "attest.sqlite3"
+    sqlite_path = tmp_path / "docket.sqlite3"
     config = _alembic_config(sqlite_path)
 
     command.upgrade(config, "head")
@@ -48,7 +48,7 @@ def test_migration_upgrades_cleanly_to_head(tmp_path: Path) -> None:
 
 
 def test_migration_downgrade_drops_everything(tmp_path: Path) -> None:
-    sqlite_path = tmp_path / "attest.sqlite3"
+    sqlite_path = tmp_path / "docket.sqlite3"
     config = _alembic_config(sqlite_path)
 
     command.upgrade(config, "head")
@@ -63,7 +63,7 @@ def test_migration_downgrade_drops_everything(tmp_path: Path) -> None:
 
 
 def test_fts_chunks_table_created_and_queryable(tmp_path: Path) -> None:
-    sqlite_path = tmp_path / "attest.sqlite3"
+    sqlite_path = tmp_path / "docket.sqlite3"
     config = _alembic_config(sqlite_path)
 
     command.upgrade(config, "head")
@@ -91,7 +91,7 @@ def test_migration_enables_foreign_keys_pragma_is_settable(tmp_path: Path) -> No
     """Sanity check that the migrated schema's FKs are enforceable (the app
     engine turns this pragma on itself; here we just prove the schema
     supports it once the pragma is set)."""
-    sqlite_path = tmp_path / "attest.sqlite3"
+    sqlite_path = tmp_path / "docket.sqlite3"
     config = _alembic_config(sqlite_path)
     command.upgrade(config, "head")
 

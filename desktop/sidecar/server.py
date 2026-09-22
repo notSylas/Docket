@@ -1,7 +1,7 @@
 """Real dispatch logic for the desktop sidecar's JSON-line wire protocol.
 
 Mirrors the backend CLI's own thin-`main.py` / logic-lives-elsewhere split
-(`attest.cli.main` is a thin Typer shell over `attest.cli.context
+(`docket.cli.main` is a thin Typer shell over `docket.cli.context
 .build_context()`): `main.py` here is the thin stdin/stdout loop, this
 module holds the actual op -> backend-call dispatch table and the
 request/response envelope logic. Kept import-light and I/O-free by design
@@ -34,11 +34,11 @@ import traceback
 from pathlib import Path
 from typing import Any, Callable
 
-from attest.inference.gateway import InferenceError
-from attest.ingestion.pipeline import SourceNotActiveError
-from attest.query.classifier import QueryMode
-from attest.query.service import QueryService
-from attest.sources.manager import SourceNotFoundError
+from docket.inference.gateway import InferenceError
+from docket.ingestion.pipeline import SourceNotActiveError
+from docket.query.classifier import QueryMode
+from docket.query.service import QueryService
+from docket.sources.manager import SourceNotFoundError
 
 Handler = Callable[[dict], dict]
 
@@ -58,11 +58,11 @@ class NoContentIndexedError(Exception):
 
     Why this needs an explicit check rather than just letting `QueryService`
     run and see what happens: `QueryService._ask_fast` unconditionally calls
-    `attest.retrieval.hybrid.hybrid_search`, which calls `vector_search`,
+    `docket.retrieval.hybrid.hybrid_search`, which calls `vector_search`,
     which calls `table.search(...)` with no `None` guard -- handing it a
     `None` table raises a raw `AttributeError` ("'NoneType' object has no
     attribute 'search'"), not a clean, named condition. The CLI
-    (`attest.cli.main.query`) already checks `table is None` and refuses
+    (`docket.cli.main.query`) already checks `table is None` and refuses
     before ever constructing a `QueryService`; this mirrors that exact
     check so the sidecar reports the same expected condition cleanly
     instead of it surfacing as an `InternalError` with a confusing

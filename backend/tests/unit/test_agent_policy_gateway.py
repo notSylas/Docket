@@ -1,4 +1,4 @@
-"""Unit tests for `attest.agent.policy_gateway.make_policy_gateway`.
+"""Unit tests for `docket.agent.policy_gateway.make_policy_gateway`.
 
 Ported almost directly from `spike/test_agent_policy_gateway.py`'s Case 3 --
 see `spike/RESULTS.md`'s "Tier 3 — Agent Policy Gateway" section. These are
@@ -14,7 +14,7 @@ from __future__ import annotations
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
 
-from attest.agent.policy_gateway import make_policy_gateway
+from docket.agent.policy_gateway import make_policy_gateway
 
 
 @tool

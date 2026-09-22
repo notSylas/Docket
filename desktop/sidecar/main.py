@@ -2,7 +2,7 @@
 each to the backend via `server.dispatch`, writes one JSON response line
 per request to stdout. Speaks the exact same wire protocol as
 `_echo_test.py` (see that file's docstring for the shape) but backed by the
-real `attest` package instead of a `ping`/`echo` stub.
+real `docket` package instead of a `ping`/`echo` stub.
 
 Import wiring: run as a plain script (`python main.py`) from this
 directory, not as an installed package -- `sidecar/` doesn't need to be
@@ -16,7 +16,7 @@ PyInstaller entrypoint sitting next to `server.py` -- a relative import
 package (an `__init__.py`, and *not* being invoked as `__main__` via a bare
 script path) which adds friction for no benefit here.
 
-stdout hygiene: importing `attest.*` and building `AppContext` transitively
+stdout hygiene: importing `docket.*` and building `AppContext` transitively
 pulls in docling/lancedb/langchain, and something in that chain has, in
 practice, been known to print stray diagnostic output straight to real
 stdout. Since stdout is the wire protocol's only channel back to the Rust
@@ -57,7 +57,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 def main() -> None:
     with contextlib.redirect_stdout(sys.stderr):
         import server as sidecar_server
-        from attest.cli.context import build_context
+        from docket.cli.context import build_context
 
         context = build_context()
 

@@ -16,7 +16,7 @@ desktop/node_modules/
 desktop/dist/
 desktop/src-tauri/target/
 desktop/src-tauri/binaries/
-backend/src/attest.egg-info/
+backend/src/docket.egg-info/
 .pytest_cache/
 .coverage
 htmlcov/

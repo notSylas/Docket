@@ -1,4 +1,4 @@
-"""Tests for attest.parsing.docling_wrapper.DoclingParser.
+"""Tests for docket.parsing.docling_wrapper.DoclingParser.
 
 No Ollama/GPU dependency here -- everything runs locally through Docling's
 own models, so nothing in this file needs the ``integration`` marker. The
@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from attest.parsing.docling_wrapper import DoclingParser, ParseError, ParsedDocument
+from docket.parsing.docling_wrapper import DoclingParser, ParseError, ParsedDocument
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DOCS_DIR = REPO_ROOT / "Docs"

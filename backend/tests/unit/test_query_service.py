@@ -1,4 +1,4 @@
-"""Unit tests for `attest.query.service.QueryService`.
+"""Unit tests for `docket.query.service.QueryService`.
 
 Uses `FakeInferenceGateway` throughout -- no Ollama/GPU dependency. The
 retrieval side is real (a `migrated_sqlite_engine` SQLite DB with CP1's
@@ -19,9 +19,9 @@ from langchain_core.messages import AIMessage, ToolMessage
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-from attest.db.engine import get_session_factory
-from attest.db.identity import compute_chunk_id, compute_recipe_id
-from attest.db.models import (
+from docket.db.engine import get_session_factory
+from docket.db.identity import compute_chunk_id, compute_recipe_id
+from docket.db.models import (
     AuthorizedSource,
     Chunk,
     ChunkRecipe,
@@ -31,14 +31,14 @@ from attest.db.models import (
     SourceStatus,
     Workspace,
 )
-from attest.index.base import ChunkRecord
-from attest.index.fts_index import FtsIndexWriter
-from attest.index.vector_index import LanceIndexWriter
-from attest.inference.gateway import FakeInferenceGateway
-from attest.query.classifier import QueryMode
-from attest.query.prompts import ABSTENTION_PHRASE
-from attest.query.service import QueryService, _citations_from_agent_messages
-from attest.retrieval.resolver import EvidenceResolver, ResolvedEvidence
+from docket.index.base import ChunkRecord
+from docket.index.fts_index import FtsIndexWriter
+from docket.index.vector_index import LanceIndexWriter
+from docket.inference.gateway import FakeInferenceGateway
+from docket.query.classifier import QueryMode
+from docket.query.prompts import ABSTENTION_PHRASE
+from docket.query.service import QueryService, _citations_from_agent_messages
+from docket.retrieval.resolver import EvidenceResolver, ResolvedEvidence
 
 CHUNK_TEXT = "Reciprocal Rank Fusion combines multiple ranked search results into one."
 

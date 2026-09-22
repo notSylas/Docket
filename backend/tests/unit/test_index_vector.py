@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from attest.index.base import ChunkRecord
-from attest.index.vector_index import LanceIndexWriter
+from docket.index.base import ChunkRecord
+from docket.index.vector_index import LanceIndexWriter
 
 
 def _record(chunk_id: str, text: str, source_id: str = "src_1") -> ChunkRecord:

@@ -7,15 +7,15 @@ from pathlib import Path
 import pytest
 from sqlalchemy.orm import Session, sessionmaker
 
-from attest.db.engine import get_engine, get_session_factory
-from attest.db.models import Base, EvidenceVersion, Source, SourceStatus, Workspace
-from attest.evidence.manager import EvidenceManager
-from attest.evidence.store import ContentAddressedStore
+from docket.db.engine import get_engine, get_session_factory
+from docket.db.models import Base, EvidenceVersion, Source, SourceStatus, Workspace
+from docket.evidence.manager import EvidenceManager
+from docket.evidence.store import ContentAddressedStore
 
 
 @pytest.fixture()
 def session_factory(tmp_path: Path) -> sessionmaker:
-    engine = get_engine(tmp_path / "attest.sqlite3")
+    engine = get_engine(tmp_path / "docket.sqlite3")
     Base.metadata.create_all(engine)
     factory = get_session_factory(engine)
     yield factory
@@ -41,7 +41,7 @@ def _make_source(session_factory: sessionmaker, *, path: str = "/docs/report.txt
         session.add(workspace)
         session.flush()
 
-        from attest.db.models import AuthorizedSource
+        from docket.db.models import AuthorizedSource
 
         authorized_source = AuthorizedSource(workspace_id=workspace.id, scope_path="/docs")
         session.add(authorized_source)

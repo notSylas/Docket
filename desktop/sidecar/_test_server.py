@@ -1,12 +1,12 @@
 """Standalone verification harness for the sidecar's real dispatch logic
 (`server.py` + `main.py`), run against a REAL `python main.py` subprocess --
 no Tauri, no PyInstaller, no mocked backend. This is the checkpoint's most
-important verification: it proves the entire real `attest` backend is
+important verification: it proves the entire real `docket` backend is
 reachable and correct through the exact JSON-line wire protocol the Rust
 bridge speaks, standalone, before any Rust/PyInstaller complexity is
 layered on top.
 
-Requires the backend venv active (`attest` importable via `sys.executable`)
+Requires the backend venv active (`docket` importable via `sys.executable`)
 and, for the `query.ask` steps, a reachable Ollama with `qwen3:14b` +
 `qwen3-embedding:0.6b` pulled -- same requirement as `backend/tests
 /integration/test_cli_e2e.py`, which this harness's ingest+query flow
@@ -55,7 +55,7 @@ class Sidecar:
     JSON-line request/response protocol."""
 
     def __init__(self, data_dir: Path) -> None:
-        env = {**os.environ, "ATTEST_DATA_DIR": str(data_dir)}
+        env = {**os.environ, "DOCKET_DATA_DIR": str(data_dir)}
         self.proc = subprocess.Popen(
             [sys.executable, "main.py"],
             cwd=str(SIDECAR_DIR),
@@ -103,8 +103,8 @@ class Sidecar:
 
 
 def test_sidecar_end_to_end(tmp_path: Path | None = None) -> None:
-    tmp_root = Path(tempfile.mkdtemp(prefix="attest_sidecar_test_")) if tmp_path is None else tmp_path
-    data_dir = tmp_root / "attest_data"
+    tmp_root = Path(tempfile.mkdtemp(prefix="docket_sidecar_test_")) if tmp_path is None else tmp_path
+    data_dir = tmp_root / "docket_data"
     source_folder = tmp_root / "source_docs"
     source_folder.mkdir(parents=True)
 

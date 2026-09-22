@@ -1,4 +1,4 @@
-"""Tests for attest.parsing.chunker (split_into_units, chunk_document)."""
+"""Tests for docket.parsing.chunker (split_into_units, chunk_document)."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ import hashlib
 
 import pytest
 
-from attest.parsing.chunker import chunk_document, split_into_units
-from attest.parsing.recipes import ChunkRecipe
+from docket.parsing.chunker import chunk_document, split_into_units
+from docket.parsing.recipes import ChunkRecipe
 
 
 def _sha256(text: str) -> str:

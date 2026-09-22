@@ -12,11 +12,11 @@ from pathlib import Path
 
 from sqlalchemy import Engine
 
-from attest.index.base import ChunkRecord
-from attest.index.fts_index import FtsIndexWriter
-from attest.index.manager import IndexManager
-from attest.index.vector_index import LanceIndexWriter
-from attest.inference.gateway import FakeInferenceGateway
+from docket.index.base import ChunkRecord
+from docket.index.fts_index import FtsIndexWriter
+from docket.index.manager import IndexManager
+from docket.index.vector_index import LanceIndexWriter
+from docket.inference.gateway import FakeInferenceGateway
 
 
 def _record(

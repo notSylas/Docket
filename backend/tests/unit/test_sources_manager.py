@@ -1,4 +1,4 @@
-"""Tests for `attest.sources.manager.SourceManager`."""
+"""Tests for `docket.sources.manager.SourceManager`."""
 
 from __future__ import annotations
 
@@ -7,14 +7,14 @@ from pathlib import Path
 import pytest
 from sqlalchemy.orm import sessionmaker
 
-from attest.db.engine import get_engine, get_session_factory
-from attest.db.models import Base, SourceStatus
-from attest.sources.manager import SourceManager, SourceNotFoundError
+from docket.db.engine import get_engine, get_session_factory
+from docket.db.models import Base, SourceStatus
+from docket.sources.manager import SourceManager, SourceNotFoundError
 
 
 @pytest.fixture()
 def session_factory(tmp_path: Path) -> sessionmaker:
-    engine = get_engine(tmp_path / "attest.sqlite3")
+    engine = get_engine(tmp_path / "docket.sqlite3")
     Base.metadata.create_all(engine)
     factory = get_session_factory(engine)
     yield factory

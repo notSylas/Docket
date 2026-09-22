@@ -1,4 +1,4 @@
-"""Tests for `attest.ingestion.pipeline.IngestionPipeline` -- the end-to-end
+"""Tests for `docket.ingestion.pipeline.IngestionPipeline` -- the end-to-end
 incremental ingestion wiring: real Docling parsing (via small generated
 `.docx` fixture files, same technique as `test_docling_wrapper.py`'s
 real-file smoke test), `FakeInferenceGateway` for embeddings (no Ollama
@@ -22,18 +22,18 @@ import docx
 import pytest
 from sqlalchemy import Engine, select
 
-from attest.db.engine import get_session_factory
-from attest.db.models import Chunk, EvidenceVersion, IngestionJob, IngestionJobStatus
-from attest.evidence.manager import EvidenceManager
-from attest.evidence.store import ContentAddressedStore
-from attest.index.fts_index import FtsIndexWriter
-from attest.index.manager import IndexManager
-from attest.index.vector_index import LanceIndexWriter
-from attest.inference.gateway import FakeInferenceGateway
-from attest.ingestion.pipeline import IngestionPipeline
-from attest.parsing.docling_wrapper import DoclingParser
-from attest.parsing.recipes import DEFAULT_SPLITTER, ChunkRecipe
-from attest.sources.manager import SourceManager
+from docket.db.engine import get_session_factory
+from docket.db.models import Chunk, EvidenceVersion, IngestionJob, IngestionJobStatus
+from docket.evidence.manager import EvidenceManager
+from docket.evidence.store import ContentAddressedStore
+from docket.index.fts_index import FtsIndexWriter
+from docket.index.manager import IndexManager
+from docket.index.vector_index import LanceIndexWriter
+from docket.inference.gateway import FakeInferenceGateway
+from docket.ingestion.pipeline import IngestionPipeline
+from docket.parsing.docling_wrapper import DoclingParser
+from docket.parsing.recipes import DEFAULT_SPLITTER, ChunkRecipe
+from docket.sources.manager import SourceManager
 
 
 def _write_docx(path: Path, heading: str, body: str) -> None:

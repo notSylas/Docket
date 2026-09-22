@@ -25,10 +25,10 @@ from pathlib import Path
 import pytest
 from sqlalchemy import Engine
 
-from attest.config import settings
-from attest.db.engine import get_session_factory
-from attest.db.identity import compute_chunk_id, compute_recipe_id
-from attest.db.models import (
+from docket.config import settings
+from docket.db.engine import get_session_factory
+from docket.db.identity import compute_chunk_id, compute_recipe_id
+from docket.db.models import (
     AuthorizedSource,
     Chunk,
     ChunkRecipe,
@@ -38,13 +38,13 @@ from attest.db.models import (
     SourceStatus,
     Workspace,
 )
-from attest.index.base import ChunkRecord
-from attest.index.fts_index import FtsIndexWriter
-from attest.index.vector_index import LanceIndexWriter
-from attest.inference.gateway import FakeInferenceGateway
-from attest.query.classifier import QueryMode
-from attest.query.service import QueryService
-from attest.retrieval.resolver import EvidenceResolver
+from docket.index.base import ChunkRecord
+from docket.index.fts_index import FtsIndexWriter
+from docket.index.vector_index import LanceIndexWriter
+from docket.inference.gateway import FakeInferenceGateway
+from docket.query.classifier import QueryMode
+from docket.query.service import QueryService
+from docket.retrieval.resolver import EvidenceResolver
 
 pytestmark = pytest.mark.integration
 
