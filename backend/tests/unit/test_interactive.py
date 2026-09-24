@@ -265,3 +265,48 @@ def test_chat_command_exits_cleanly(tmp_path, monkeypatch):
     result = runner.invoke(app, ["chat"], input="/exit\n")
     assert result.exit_code == 0
     assert "docket" in result.stdout
+
+
+# -- command registry dispatch (CP0) ----------------------------------------
+
+
+@pytest.mark.parametrize("cmd", ["/h", "/?", "help", "?", "HELP"])
+def test_help_variants(ctx, cmd):
+    out, _ = drive(ctx, [cmd])
+    assert "Commands:" in out and "docket watch" in out
+
+
+@pytest.mark.parametrize("cmd", ["/q", "exit", "quit", "/e"])
+def test_exit_variants(ctx, cmd):
+    _, svc = drive(ctx, [cmd, "never asked"])
+    assert svc.calls == []
+
+
+def test_prefix_and_alias_dispatch(ctx):
+    out, _ = drive(ctx, ["/ls", "/sou", "/ing"])
+    assert "No sources registered" in out
+    assert "No active sources to ingest" in out
+
+
+def test_bare_help_phrase_is_question(ctx):
+    _, svc = drive(ctx, ["help me with x"])
+    assert [c["question"] for c in svc.calls] == ["help me with x"]
+
+
+def test_unknown_command_suggests(ctx):
+    out, _ = drive(ctx, ["/hlep"])
+    assert "Unknown command: /hlep." in out
+    assert "Did you mean /help?" in out and "/help for the list" in out
+
+
+def test_add_dot_is_absolute_and_duplicate_detected(ctx, tmp_path, monkeypatch):
+    folder = tmp_path / "docs"
+    folder.mkdir()
+    monkeypatch.chdir(folder)
+    out, _ = drive(ctx, ["/add ."])
+    assert "Registered source" in out
+    sources = ctx.source_manager.list_sources()
+    assert len(sources) == 1 and sources[0].path == str(folder.resolve())
+    out, _ = drive(ctx, [f"/add {folder}"])
+    assert f"Already registered: {sources[0].id}" in out
+    assert len(ctx.source_manager.list_sources()) == 1

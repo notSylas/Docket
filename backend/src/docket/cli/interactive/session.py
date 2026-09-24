@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any, Callable
 
 from rich.console import Console
-from rich.markdown import Markdown
 
 from docket import __version__
 from docket.db.models import SourceStatus
@@ -25,21 +24,11 @@ from docket.query.conversation import ConversationTurn
 from docket.query.service import QueryService
 from docket.sources.manager import SourceNotFoundError
 
+from .commands import BARE_WORDS, HELP_FOOTER, CommandRegistry, default_registry
+from .reader import CallableReader, LineReader
+from .render import render
+
 PROMPT = "docket> "
-
-HELP_TEXT = """\
-Type a question to ask over your indexed evidence. Commands:
-
-  /help                      show this help
-  /sources                   list registered sources
-  /add <folder>              register a folder as a source
-  /ingest [<source-id>|all]  index a source (default: all active sources)
-  /mode [auto|fast|agent]    show or set the query mode (default: auto)
-  /clear                     forget the conversation so far
-  /exit, /quit               leave (Ctrl-D also works)
-
-Note: `docket watch <source-id>` (auto re-ingest on changes) blocks, so run it
-in a separate terminal rather than here."""
 
 QueryServiceFactory = Callable[[Any, Any], Any]
 
@@ -65,12 +54,14 @@ class _Session:
     def __init__(
         self,
         context: Any,
-        input_fn: Callable[[str], str],
+        reader: LineReader,
         console: Console,
         factory: QueryServiceFactory,
+        registry: CommandRegistry | None = None,
     ) -> None:
         self.context = context
-        self.input_fn = input_fn
+        self.reader = reader
+        self.registry = registry or default_registry()
         self.console = console
         self.factory = factory
         self.history: list[ConversationTurn] = []
@@ -104,7 +95,7 @@ class _Session:
     def loop(self) -> None:
         while True:
             try:
-                line = self.input_fn(PROMPT)
+                line = self.reader.read(PROMPT)
             except EOFError:
                 self.say()
                 return
@@ -116,6 +107,9 @@ class _Session:
             if not line:
                 continue
             try:
+                bare = BARE_WORDS.get(line.lower())
+                if bare is not None:
+                    line = "/" + bare
                 if line.startswith("/"):
                     if self.command(line):
                         return
@@ -150,25 +144,23 @@ class _Session:
         parts = line[1:].split(maxsplit=1)
         name = parts[0].lower() if parts else ""
         arg = parts[1].strip() if len(parts) > 1 else ""
-        if name in ("exit", "quit"):
-            return True
-        handlers = {
-            "help": self.cmd_help,
-            "sources": self.cmd_sources,
-            "add": self.cmd_add,
-            "ingest": self.cmd_ingest,
-            "mode": self.cmd_mode,
-            "clear": self.cmd_clear,
-        }
-        handler = handlers.get(name)
-        if handler is None:
-            self.say(f"Unknown command: /{name}. Type /help for the list of commands.")
-        else:
-            handler(arg)
-        return False
+        cmd = self.registry.resolve(name)
+        if cmd is None:
+            ambiguous = self.registry.prefix_matches(name)
+            if len(ambiguous) > 1:
+                names = ", ".join(c.name for c in ambiguous)
+                self.say(f"Ambiguous command /{name}: {names}. Type /help for the list of commands.")
+                return False
+            self.say(f"Unknown command: /{name}.")
+            suggestion = self.registry.suggest(name)
+            if suggestion:
+                self.say(f"Did you mean /{suggestion}?")
+            self.say("Type /help for the list of commands.")
+            return False
+        return bool(cmd.handler(self, arg))
 
     def cmd_help(self, arg: str) -> None:
-        self.say(HELP_TEXT)
+        self.say(self.registry.render_help(HELP_FOOTER))
 
     def cmd_sources(self, arg: str) -> None:
         sources = self.context.source_manager.list_sources()
@@ -183,7 +175,11 @@ class _Session:
         if not arg:
             self.say("Usage: /add <folder>")
             return
-        path = Path(arg).expanduser()
+        path = Path(arg).expanduser().resolve()
+        for existing in self.context.source_manager.list_sources():
+            if Path(existing.path) == path:
+                self.say(f"Already registered: {existing.id}")
+                return
         try:
             source = self.context.source_manager.register_source(path)
         except ValueError as exc:
@@ -258,21 +254,8 @@ class _Session:
             return
         with self.console.status("Thinking..."):
             result = service.ask(question, mode=self.mode, history=list(self.history))
-        self.render(result)
+        render(self.console, result)
         self.history.append(ConversationTurn(question=question, answer=result.answer))
-
-    def render(self, result: Any) -> None:
-        self.say()
-        self.console.print(Markdown(result.answer))
-        if result.citations:
-            self.say()
-            self.say("Citations:")
-            for citation in result.citations:
-                self.say(f"  {citation.citation_label}")
-        for warning in result.validation_warnings:
-            self.say(f"warning: {warning}", style="yellow dim")
-        self.say(f"[{result.mode}]", style="dim")
-        self.say()
 
 
 def run_session(
@@ -281,12 +264,13 @@ def run_session(
     input_fn: Callable[[str], str] = input,
     console: Console | None = None,
     query_service_factory: QueryServiceFactory | None = None,
+    reader: LineReader | None = None,
 ) -> None:
     if input_fn is input:
         _setup_readline()
     session = _Session(
         context,
-        input_fn,
+        reader or CallableReader(input_fn),
         console or Console(),
         query_service_factory or _default_factory,
     )
