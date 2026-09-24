@@ -10,6 +10,7 @@ fake `QueryService`.
 from __future__ import annotations
 
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -19,8 +20,13 @@ from rich.table import Table
 
 from docket import __version__
 from docket.db.models import SourceStatus
-from docket.inference.gateway import InferenceError, ModelNotFoundError
-from docket.ingestion.pipeline import SourceNotActiveError
+from docket.inference.gateway import (
+    InferenceError,
+    InferenceUnavailableError,
+    ModelNotFoundError,
+)
+from docket.inference.health import HealthReport, format_health_warning
+from docket.ingestion.pipeline import SUPPORTED_EXTENSIONS, ProgressEvent, SourceNotActiveError
 from docket.query.classifier import QueryMode
 from docket.query.conversation import ConversationTurn
 from docket.query.service import QueryService
@@ -56,7 +62,9 @@ class _Session:
         factory: QueryServiceFactory,
         registry: CommandRegistry | None = None,
         state: SessionState | None = None,
+        health_check: Callable[[], HealthReport] | None = None,
     ) -> None:
+        self.health_check = health_check
         self.context = context
         self.reader = reader
         self.registry = registry or default_registry()
@@ -98,8 +106,18 @@ class _Session:
             f"embeddings: {settings.embed_model}"
         )
         self.say("Type /help for commands, /exit to leave.", style="dim")
+        for line in self._health_lines():
+            self.console.print(line, style="yellow", markup=False, highlight=False)
         if count == 0:
             self.say("No sources yet. Get started: /add <folder>, then /ingest.", style="cyan")
+
+    def _health_lines(self) -> list[str]:
+        if self.health_check is None:
+            return []
+        try:
+            return format_health_warning(self.health_check(), self.context.settings)
+        except Exception:  # noqa: BLE001 -- health is advisory only
+            return []
 
     # -- main loop ---------------------------------------------------------
 
@@ -137,8 +155,16 @@ class _Session:
             import traceback
 
             self.error(traceback.format_exc())
-        if isinstance(exc, ModelNotFoundError):
-            self.error(f"Model not found: {exc}")
+        if isinstance(exc, InferenceUnavailableError):
+            self.error("Can't reach Ollama \u2014 is it running? (ollama serve)")
+            self.say(str(exc), style="dim")
+        elif isinstance(exc, ModelNotFoundError):
+            match = re.search(r"[Mm]odel '([^']+)'", str(exc))
+            model = match.group(1) if match else getattr(
+                getattr(self.context, "settings", None), "gen_model", "<model>"
+            )
+            self.error(f"Model not found: {model} \u2014 run: ollama pull {model}")
+            self.say(str(exc), style="dim")
         elif isinstance(exc, InferenceError):
             self.error(f"Inference error: {exc}")
         elif isinstance(exc, (SourceNotFoundError, SourceNotActiveError)):
@@ -190,20 +216,46 @@ class _Session:
         if not arg:
             self.say("Usage: /add <folder>")
             return
-        path = Path(arg).expanduser().resolve()
+        self._register(Path(arg).expanduser().resolve())
+
+    def _register(self, path: Path) -> Any | None:
+        """Register `path` (or report it's already registered). Returns the
+        source id on success or when already registered, else None."""
         for existing in self.context.source_manager.list_sources():
             if Path(existing.path) == path:
                 self.say(f"Already registered: {existing.id}")
-                return
+                return existing.id
         try:
             source = self.context.source_manager.register_source(path)
         except ValueError as exc:
             self.error(f"Error: {exc}")
-            return
+            return None
         self.state.refresh_sources(self.context.source_manager)
         self.sync_state()
         self.say(f"Registered source {source.id}")
         self.say(f"Next: /ingest {source.id}", style="dim")
+        return source.id
+
+    def first_run_offer(self) -> None:
+        """Opt-in guided start: offer to register the cwd when nothing is set up."""
+        if self.context.source_manager.list_sources():
+            return
+        cwd = Path.cwd().resolve()
+        if cwd == Path("/") or cwd == Path.home().resolve():
+            return
+        if not self._confirm(f"No sources yet. Add the current directory ({cwd})? [y/N] "):
+            return
+        source_id = self._register(cwd)
+        if source_id is None:
+            return
+        if self._confirm("Ingest it now? [y/N] "):
+            try:
+                self.cmd_ingest(str(source_id))
+            except KeyboardInterrupt:
+                self.say()
+                self.say("(interrupted)", style="dim")
+            except Exception as exc:  # noqa: BLE001
+                self.handle_error(exc)
 
     def cmd_ingest(self, arg: str) -> None:
         if not arg or arg.lower() == "all":
@@ -225,22 +277,55 @@ class _Session:
             self.sync_state()
 
     def _ingest_targets(self, target_ids: list[str]) -> None:
+        ctx = self.context
+        vars_ = vars(ctx) if hasattr(ctx, "__dict__") else {}
+        # Constructing the pipeline builds the Docling parser, which loads
+        # models (slow the first time). Say so before it happens.
+        cold = "pipeline" not in vars_ and "parser" not in vars_
         for target_id in target_ids:
+            status = None
             try:
-                with self.console.status(f"Ingesting {target_id}..."):
-                    result = self.context.pipeline.run_ingestion_for_source(target_id)
+                with self.console.status(f"Ingesting {target_id}...") as status:
+                    if cold:
+                        self.say(
+                            "Loading document parser (first time only \u2014 "
+                            "this can take a moment)\u2026",
+                            style="dim",
+                        )
+                    pipeline = ctx.pipeline
+                    cold = False
+
+                    def on_progress(event: ProgressEvent, status=status) -> None:
+                        if event.kind == "start":
+                            status.update(
+                                f"Ingesting {event.index}/{event.total}: {event.path.name}"
+                            )
+                        elif event.result is not None and event.result.status == "failed":
+                            self.error(f"FAILED: {event.path} -- {event.result.error}")
+
+                    result = pipeline.run_ingestion_for_source(target_id, progress=on_progress)
             except (SourceNotFoundError, SourceNotActiveError) as exc:
                 self.error(f"Error ingesting {target_id}: {exc}")
                 continue
-            chunks = sum(r.chunks_written for r in result.file_results)
-            self.say(
-                f"[{result.source_id}] status={result.status} "
-                f"files_processed={result.files_processed} "
-                f"files_failed={result.files_failed} chunks_written={chunks}"
+            self._summarize(target_id, result)
+
+    def _summarize(self, target_id: str, result: Any) -> None:
+        if result.files_processed == 0 and result.status == "failed":
+            folder = next(
+                (str(s.path) for s in self.context.source_manager.list_sources()
+                 if s.id == result.source_id),
+                result.source_id,
             )
-            for fr in result.file_results:
-                if fr.status == "failed":
-                    self.error(f"  FAILED: {fr.path} -- {fr.error}")
+            exts = ", ".join(sorted(SUPPORTED_EXTENSIONS))
+            self.say(f"No supported files found in {folder} (supported: {exts}).")
+            return
+        ingested = sum(1 for r in result.file_results if r.status == "ingested")
+        unchanged = sum(1 for r in result.file_results if r.status == "unchanged")
+        chunks = sum(r.chunks_written for r in result.file_results)
+        self.say(
+            f"{result.source_id}: {ingested} ingested, {unchanged} unchanged, "
+            f"{result.files_failed} failed \u2014 {chunks} chunks written"
+        )
 
     def cmd_mode(self, arg: str) -> None:
         arg = arg.lower()
@@ -393,6 +478,8 @@ def run_session(
     query_service_factory: QueryServiceFactory | None = None,
     reader: LineReader | None = None,
     state: SessionState | None = None,
+    health_check: Callable[[], HealthReport] | None = None,
+    offer_first_run: bool = False,
 ) -> None:
     registry = default_registry()
     state = state if state is not None else SessionState()
@@ -407,6 +494,9 @@ def run_session(
         query_service_factory or _default_factory,
         registry=registry,
         state=state,
+        health_check=health_check,
     )
     session.banner()
+    if offer_first_run:
+        session.first_run_offer()
     session.loop()

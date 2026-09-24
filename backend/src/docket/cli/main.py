@@ -33,15 +33,28 @@ def main(
         raise typer.Exit()
     if ctx.invoked_subcommand is None:
         if sys.stdin.isatty() and sys.stdout.isatty():
-            run_session(build_context())
+            _run_interactive()
         else:
             typer.echo(ctx.get_help())
+
+
+def _run_interactive() -> None:
+    from docket.inference.health import check_ollama
+
+    context = build_context()
+    settings = context.settings
+    run_session(
+        context,
+        health_check=lambda: check_ollama([settings.gen_model, settings.embed_model]),
+        # Only prompt when a human is on a TTY; never swallow piped commands.
+        offer_first_run=sys.stdin.isatty() and sys.stdout.isatty(),
+    )
 
 
 @app.command("chat")
 def chat() -> None:
     """Start an interactive session (multi-turn questions and /commands)."""
-    run_session(build_context())
+    _run_interactive()
 
 
 # -- sources -----------------------------------------------------------

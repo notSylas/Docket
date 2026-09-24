@@ -259,3 +259,57 @@ def test_one_corrupt_file_fails_without_aborting_the_batch(env: SimpleNamespace)
     assert results_by_path[doc2].status == "ingested"
     assert results_by_path[corrupt].status == "failed"
     assert results_by_path[corrupt].error is not None
+
+
+# ---------------------------------------------------------------------------
+# Progress callback + interruption.
+# ---------------------------------------------------------------------------
+
+
+def test_progress_events_order_and_counts(env: SimpleNamespace) -> None:
+    _write_docx(env.folder / "a.docx", "A", "Alpha content about penguins.")
+    _write_docx(env.folder / "b.docx", "B", "Beta content about volcanoes.")
+    events = []
+
+    result = env.pipeline.run_ingestion_for_source(env.source.id, progress=events.append)
+
+    assert [(e.kind, e.index, e.total) for e in events] == [
+        ("start", 1, 2),
+        ("done", 1, 2),
+        ("start", 2, 2),
+        ("done", 2, 2),
+    ]
+    assert events[0].result is None
+    assert events[1].result.status == "ingested"
+    assert [e.path.name for e in events[::2]] == ["a.docx", "b.docx"]
+    assert result.files_processed == 2
+
+
+def test_progress_callback_exception_is_swallowed(env: SimpleNamespace) -> None:
+    _write_docx(env.folder / "a.docx", "A", "Alpha content about penguins.")
+
+    def boom(event):
+        raise RuntimeError("callback bug")
+
+    result = env.pipeline.run_ingestion_for_source(env.source.id, progress=boom)
+    assert result.status == "succeeded"
+    assert result.files_processed == 1
+
+
+def test_interrupted_run_finalizes_job_as_failed_and_reraises(
+    env: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_docx(env.folder / "a.docx", "A", "Alpha content about penguins.")
+
+    def interrupt(source_id, path):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(env.pipeline, "_ingest_one_file", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        env.pipeline.run_ingestion_for_source(env.source.id)
+
+    with env.session_factory() as session:
+        job = session.execute(select(IngestionJob)).scalars().one()
+        assert job.status == IngestionJobStatus.FAILED
+        assert job.error == "interrupted"
+        assert job.finished_at is not None

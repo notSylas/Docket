@@ -44,7 +44,7 @@ class FakePipeline:
     def __init__(self, writer):
         self.writer = writer
 
-    def run_ingestion_for_source(self, source_id):
+    def run_ingestion_for_source(self, source_id, progress=None):
         if source_id == "bogus":
             raise SourceNotFoundError(source_id)
         self.writer.table = "TABLE"
@@ -68,7 +68,7 @@ def ctx(tmp_path, monkeypatch):
     return context
 
 
-def drive(ctx, lines, service=None, table=True, state=None):
+def drive(ctx, lines, service=None, table=True, state=None, **kw):
     service = service or FakeService()
     if not table:
         ctx.vector_writer.table = None
@@ -85,7 +85,7 @@ def drive(ctx, lines, service=None, table=True, state=None):
 
     out = io.StringIO()
     console = Console(file=out, width=120, force_terminal=False)
-    run_session(ctx, input_fn=input_fn, console=console, query_service_factory=lambda c, t: service, state=state)
+    run_session(ctx, input_fn=input_fn, console=console, query_service_factory=lambda c, t: service, state=state, **kw)
     return out.getvalue(), service
 
 
@@ -158,8 +158,8 @@ def test_ingest_paths(ctx, tmp_path):
     folder.mkdir()
     src = ctx.source_manager.register_source(folder)
     out, _ = drive(ctx, ["/ingest", "/ingest all", f"/ingest {src.id}", "/ingest bogus"])
-    assert out.count("chunks_written=3") == 3
-    assert "files_processed=1" in out
+    assert out.count("0 unchanged, 0 failed \u2014 3 chunks written") == 3  # was: chunks_written=3
+    assert f"{src.id}: 1 ingested" in out  # was: files_processed=1
     assert "Error ingesting bogus" in out
 
 
@@ -497,3 +497,134 @@ def test_sources_table_after_remove(tctx, tmp_path):
     out, _ = drive(tctx, [f"/remove {src.id}", "y", "/sources"])
     assert "ID" in out and "Status" in out and "Path" in out
     assert "revoked" in out
+
+
+# -- CP4: progress, health, first run ---------------------------------------
+
+from pathlib import Path  # noqa: E402
+
+from docket.inference.gateway import ModelNotFoundError  # noqa: E402
+from docket.inference.health import HealthReport  # noqa: E402
+
+
+def test_banner_shows_health_warnings(ctx):
+    bad = HealthReport(reachable=False, error="refused", host="http://h:1")
+    out, _ = drive(ctx, [], health_check=lambda: bad)
+    assert "Can't reach Ollama at http://h:1" in out and "ollama serve" in out
+    missing = HealthReport(reachable=True, missing_models=["qwen3:14b"], host="h")
+    out, _ = drive(ctx, [], health_check=lambda: missing)
+    assert "Model not found: qwen3:14b" in out and "ollama pull qwen3:14b" in out
+    for check in (None, lambda: HealthReport(reachable=True, host="h")):
+        out, _ = drive(ctx, [], health_check=check)
+        assert "Can't reach" not in out and "Model not found" not in out
+
+
+def test_health_check_exception_does_not_break_banner(ctx):
+    def boom():
+        raise RuntimeError("x")
+
+    out, _ = drive(ctx, [], health_check=boom)
+    assert "docket" in out
+
+
+def test_ingest_shows_failures_and_summary(ctx, tmp_path):
+    folder = tmp_path / "docs"
+    folder.mkdir()
+    src = ctx.source_manager.register_source(folder)
+
+    class P:
+        def run_ingestion_for_source(self, source_id, progress=None):
+            from docket.ingestion.pipeline import ProgressEvent
+
+            ok = FileIngestResult(path=Path("a.pdf"), status="ingested", chunks_written=5)
+            bad = FileIngestResult(path=Path("b.pdf"), status="failed", error="corrupt")
+            same = FileIngestResult(path=Path("c.pdf"), status="unchanged")
+            files = [ok, bad, same]
+            for i, r in enumerate(files, 1):
+                progress(ProgressEvent("start", i, 3, r.path))
+                progress(ProgressEvent("done", i, 3, r.path, r))
+            return IngestionJobResult(source_id, "j", "partial", 3, 1, files)
+
+    ctx.__dict__["pipeline"] = P()
+    out, _ = drive(ctx, [f"/ingest {src.id}"])
+    assert f"{src.id}: 1 ingested, 1 unchanged, 1 failed — 5 chunks written" in out
+    assert "FAILED: b.pdf -- corrupt" in out
+
+
+def test_ingest_empty_source_friendly(ctx, tmp_path):
+    folder = tmp_path / "empty"
+    folder.mkdir()
+    src = ctx.source_manager.register_source(folder)
+
+    class P:
+        def run_ingestion_for_source(self, source_id, progress=None):
+            return IngestionJobResult(source_id, "j", "failed", 0, 0, [])
+
+    ctx.__dict__["pipeline"] = P()
+    out, _ = drive(ctx, [f"/ingest {src.id}"])
+    assert "No supported files found in" in out
+    assert str(folder) in out and ".docx" in out and ".pdf" in out
+
+
+def test_friendly_inference_errors(ctx):
+    out, _ = drive(ctx, ["q"], service=FakeService(error=InferenceUnavailableError("conn refused")))
+    assert "Can't reach Ollama" in out and "ollama serve" in out
+    err = ModelNotFoundError("Model 'foo:1b' is not available on Ollama")
+    out, _ = drive(ctx, ["q"], service=FakeService(error=err))
+    assert "Model not found: foo:1b" in out and "ollama pull foo:1b" in out
+
+
+def _first_run(ctx, monkeypatch, tmp_path, answers, cwd=None, **kw):
+    work = cwd or (tmp_path / "work")
+    work.mkdir(exist_ok=True)
+    monkeypatch.chdir(work)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    return drive(ctx, answers, offer_first_run=True, **kw)
+
+
+def test_first_run_yes_yes_registers_and_ingests(ctx, monkeypatch, tmp_path):
+    out, _ = _first_run(ctx, monkeypatch, tmp_path, ["y", "y"])
+    sources = ctx.source_manager.list_sources()
+    assert len(sources) == 1
+    assert "1 ingested" in out
+
+
+def test_first_run_yes_then_no_ingest(ctx, monkeypatch, tmp_path):
+    out, _ = _first_run(ctx, monkeypatch, tmp_path, ["y", "n"])
+    assert len(ctx.source_manager.list_sources()) == 1
+    assert "ingested," not in out
+
+
+def test_first_run_no_and_eof(ctx, monkeypatch, tmp_path):
+    _first_run(ctx, monkeypatch, tmp_path, ["n"])
+    assert ctx.source_manager.list_sources() == []
+    _first_run(ctx, monkeypatch, tmp_path, [])
+    assert ctx.source_manager.list_sources() == []
+    _first_run(ctx, monkeypatch, tmp_path, [KeyboardInterrupt()])
+    assert ctx.source_manager.list_sources() == []
+
+
+def test_first_run_skipped_when_sources_exist(ctx, monkeypatch, tmp_path):
+    other = tmp_path / "other"
+    other.mkdir()
+    ctx.source_manager.register_source(other)
+    _first_run(ctx, monkeypatch, tmp_path, ["y"])
+    assert len(ctx.source_manager.list_sources()) == 1
+
+
+def test_first_run_skipped_in_home_and_root(ctx, monkeypatch, tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    _first_run(ctx, monkeypatch, tmp_path, ["y"], cwd=home)
+    assert ctx.source_manager.list_sources() == []
+    monkeypatch.chdir("/")
+    drive(ctx, ["y"], offer_first_run=True)
+    assert ctx.source_manager.list_sources() == []
+
+
+def test_first_run_off_by_default(ctx, monkeypatch, tmp_path):
+    work = tmp_path / "work"
+    work.mkdir()
+    monkeypatch.chdir(work)
+    drive(ctx, ["y"])
+    assert ctx.source_manager.list_sources() == []

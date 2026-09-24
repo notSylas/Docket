@@ -72,6 +72,8 @@ CP8 brief to be documented in code, not just in a report):
 from __future__ import annotations
 
 import json
+import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -105,6 +107,9 @@ from docket.sources.manager import SourceNotFoundError
 SUPPORTED_EXTENSIONS = {".docx", ".pdf"}
 
 
+logger = logging.getLogger(__name__)
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -128,6 +133,19 @@ class FileIngestResult:
     status: str  # "ingested" | "unchanged" | "failed"
     error: str | None = None
     chunks_written: int = 0
+
+
+@dataclass(frozen=True)
+class ProgressEvent:
+    """Emitted around each file during a run. `kind` is "start" (before the
+    file is processed; `result` is None) or "done" (after; `result` set).
+    `index` is 1-based; `total` is known because discovery precedes the loop."""
+
+    kind: str
+    index: int
+    total: int
+    path: Path
+    result: FileIngestResult | None = None
 
 
 @dataclass
@@ -308,9 +326,25 @@ class IngestionPipeline:
 
         return FileIngestResult(path=path, status="ingested", chunks_written=len(records))
 
+    def _finalize_job(
+        self, job_id: str, status: IngestionJobStatus, error: str | None, stats: dict
+    ) -> None:
+        with self._session_factory() as session:
+            job = session.get(IngestionJob, job_id)
+            job.status = status
+            job.finished_at = _utcnow()
+            job.error = error
+            job.stats_json = json.dumps(stats)
+            session.add(job)
+            session.commit()
+
     # -- entrypoint -----------------------------------------------------
 
-    def run_ingestion_for_source(self, source_id: str) -> IngestionJobResult:
+    def run_ingestion_for_source(
+        self,
+        source_id: str,
+        progress: Callable[[ProgressEvent], None] | None = None,
+    ) -> IngestionJobResult:
         source = self._load_active_source(source_id)
         self._ensure_chunk_recipe_row()
 
@@ -325,20 +359,45 @@ class IngestionPipeline:
             session.refresh(job)
             job_id = job.id
 
-        files = self._discover_files(Path(source.path))
+        def emit(event: ProgressEvent) -> None:
+            # A misbehaving callback must never break ingestion.
+            if progress is None:
+                return
+            try:
+                progress(event)
+            except Exception:  # noqa: BLE001
+                logger.debug("progress callback raised; ignored", exc_info=True)
 
         file_results: list[FileIngestResult] = []
-        for path in files:
-            try:
-                result = self._ingest_one_file(source_id, path)
-            except Exception as exc:  # noqa: BLE001 -- one bad file must not abort the batch
-                result = FileIngestResult(path=path, status="failed", error=str(exc))
-            file_results.append(result)
+        try:
+            files = self._discover_files(Path(source.path))
+            total = len(files)
+            for index, path in enumerate(files, start=1):
+                emit(ProgressEvent("start", index, total, path))
+                try:
+                    result = self._ingest_one_file(source_id, path)
+                except Exception as exc:  # noqa: BLE001 -- one bad file must not abort the batch
+                    result = FileIngestResult(path=path, status="failed", error=str(exc))
+                file_results.append(result)
+                emit(ProgressEvent("done", index, total, path, result))
 
-        # Single end-of-run reconcile pass -- see module docstring for why
-        # this must be whole-source, not per-file.
-        current_chunk_ids = self._current_chunk_ids_for_source(source_id)
-        self._index_manager.reconcile_source(source_id, current_chunk_ids=current_chunk_ids)
+            # Single end-of-run reconcile pass -- see module docstring for why
+            # this must be whole-source, not per-file.
+            current_chunk_ids = self._current_chunk_ids_for_source(source_id)
+            self._index_manager.reconcile_source(source_id, current_chunk_ids=current_chunk_ids)
+        except BaseException as exc:
+            # Interrupted (Ctrl-C etc.): don't leave the job row RUNNING forever.
+            self._finalize_job(
+                job_id,
+                IngestionJobStatus.FAILED,
+                "interrupted" if not isinstance(exc, Exception) else str(exc),
+                {
+                    "files_processed": len(file_results),
+                    "files_failed": sum(1 for r in file_results if r.status == "failed"),
+                    "chunks_written": sum(r.chunks_written for r in file_results),
+                },
+            )
+            raise
 
         files_failed = sum(1 for r in file_results if r.status == "failed")
         files_processed = len(file_results)
@@ -366,14 +425,7 @@ class IngestionPipeline:
             "chunks_written": sum(r.chunks_written for r in file_results),
         }
 
-        with self._session_factory() as session:
-            job = session.get(IngestionJob, job_id)
-            job.status = job_status
-            job.finished_at = _utcnow()
-            job.error = error
-            job.stats_json = json.dumps(stats)
-            session.add(job)
-            session.commit()
+        self._finalize_job(job_id, job_status, error, stats)
 
         return IngestionJobResult(
             source_id=source_id,
