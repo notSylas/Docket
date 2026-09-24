@@ -43,7 +43,31 @@ pipx install --python python3.12 "git+https://github.com/notSylas/Docket.git@mai
 docket --version
 ```
 
-## Quickstart
+## Interactive mode
+
+Run `docket` with no arguments in a terminal (or `docket chat`) to open an interactive session. Ask questions back-to-back — follow-ups like "what about X instead?" work because the session remembers recent turns — and manage sources with slash commands:
+
+```
+$ docket
+docket> /add ~/Documents/my-project
+docket> /ingest
+docket> What is the project's main goal?
+docket> Who is it aimed at?
+```
+
+| Command | What it does |
+|---|---|
+| `/help` | show all commands |
+| `/sources` | list registered sources |
+| `/add <folder>` | register a folder as a source |
+| `/ingest [<source-id>\|all]` | index a source (default: all active) |
+| `/mode [auto\|fast\|agent]` | show or set how questions are answered (default: auto) |
+| `/clear` | forget the conversation so far |
+| `/exit` | leave (Ctrl-D also works) |
+
+## One-shot commands
+
+The same functionality is available as individual commands, handy for scripts:
 
 ```bash
 # Register a folder as a source

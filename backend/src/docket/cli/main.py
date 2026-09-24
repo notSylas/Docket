@@ -1,18 +1,24 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import typer
 
 from docket import __version__
 from docket.cli.context import build_context
+from docket.cli.interactive import run_session
 from docket.db.models import SourceStatus
 from docket.ingestion.pipeline import SourceNotActiveError
 from docket.query.service import QueryService
 from docket.sources.manager import SourceNotFoundError
 from docket.sources.watcher import SourceWatcher
 
-app = typer.Typer(name="docket", help="Local-first, evidence-backed work intelligence assistant.")
+app = typer.Typer(name="docket", help=(
+        "Local-first, evidence-backed work intelligence assistant. "
+        "Run `docket` with no arguments in a terminal (or `docket chat`) for an interactive session."
+    ),
+)
 sources_app = typer.Typer(help="Manage registered sources (local folders).")
 app.add_typer(sources_app, name="sources")
 
@@ -26,7 +32,16 @@ def main(
         typer.echo(f"docket {__version__}")
         raise typer.Exit()
     if ctx.invoked_subcommand is None:
-        typer.echo(ctx.get_help())
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            run_session(build_context())
+        else:
+            typer.echo(ctx.get_help())
+
+
+@app.command("chat")
+def chat() -> None:
+    """Start an interactive session (multi-turn questions and /commands)."""
+    run_session(build_context())
 
 
 # -- sources -----------------------------------------------------------
