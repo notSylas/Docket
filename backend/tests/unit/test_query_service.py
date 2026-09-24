@@ -588,3 +588,155 @@ def test_agent_mode_with_no_successful_reads_yields_empty_citations_not_a_crash(
     assert result.mode == QueryMode.AGENT.value
     assert result.citations == []
     assert result.abstained is True
+
+
+# ---------------------------------------------------------------------------
+# Conversation history (multi-turn support).
+# ---------------------------------------------------------------------------
+
+from langchain_core.messages import HumanMessage, SystemMessage  # noqa: E402
+
+from docket.query.conversation import ConversationTurn, trim_history  # noqa: E402
+from docket.query.prompts import (  # noqa: E402
+    AGENT_SYSTEM_PROMPT,
+    AGENT_SYSTEM_PROMPT_WITH_HISTORY,
+    SYSTEM_PROMPT,
+    SYSTEM_PROMPT_WITH_HISTORY,
+)
+
+_HISTORY = [
+    ConversationTurn(question="What is RRF?", answer="A fusion method."),
+    ConversationTurn(question="Who wrote it?", answer="Cormack et al."),
+]
+
+
+def test_trim_history_empty() -> None:
+    assert trim_history([]) == []
+    assert trim_history(None) == []
+
+
+def test_trim_history_respects_max_turns() -> None:
+    turns = [ConversationTurn(question=f"q{i}", answer=f"a{i}") for i in range(10)]
+    out = trim_history(turns, max_turns=3)
+    assert [t.question for t in out] == ["q7", "q8", "q9"]
+
+
+def test_trim_history_respects_max_chars_dropping_oldest() -> None:
+    turns = [ConversationTurn(question="q" * 10, answer="a" * 10) for _ in range(4)]
+    tagged = [t.model_copy(update={"question": f"{i}" + t.question[1:]}) for i, t in enumerate(turns)]
+    out = trim_history(tagged, max_chars=45)  # 20 chars each -> two fit
+    assert [t.question[0] for t in out] == ["2", "3"]
+
+
+def test_trim_history_truncates_oversized_latest_turn_instead_of_dropping() -> None:
+    turns = [
+        ConversationTurn(question="old", answer="x"),
+        ConversationTurn(question="big?", answer="z" * 500),
+    ]
+    out = trim_history(turns, max_chars=50)
+    assert len(out) == 1
+    assert out[0].question == "big?"
+    assert out[0].answer.endswith("...")
+    assert len(out[0].question) + len(out[0].answer) <= 50
+
+
+def test_fast_path_with_history_builds_history_prompt(
+    migrated_sqlite_engine: Engine, tmp_path: Path, built: dict
+) -> None:
+    gateway = FakeInferenceGateway()
+    table = _index_chunk(migrated_sqlite_engine, tmp_path, gateway, built)
+    label = f"[report.pdf #{built['chunk_id'][:12]}]"
+    gateway.canned_response = f"RRF fuses ranked lists {label}."
+    service = _service(migrated_sqlite_engine, table, gateway, built)
+
+    gateway.embed_calls.clear()
+    service.ask(CHUNK_TEXT, mode=QueryMode.FAST, history=_HISTORY)
+
+    call = gateway.generate_calls[0]
+    assert call["system"] == SYSTEM_PROMPT_WITH_HISTORY
+    prompt = call["prompt"]
+    assert prompt.startswith("Conversation so far:\n")
+    assert "User: What is RRF?\nAssistant: A fusion method.\nUser: Who wrote it?" in prompt
+    assert prompt.index("Conversation so far:") < prompt.index("Context:")
+    assert prompt.index("Cormack et al.") < prompt.index("Context:")
+    # Retrieval used the literal latest question only.
+    assert gateway.embed_calls == [CHUNK_TEXT]
+
+
+@pytest.mark.parametrize("history", [None, []])
+def test_fast_path_without_history_is_unchanged(
+    migrated_sqlite_engine: Engine, tmp_path: Path, built: dict, history
+) -> None:
+    gateway = FakeInferenceGateway()
+    table = _index_chunk(migrated_sqlite_engine, tmp_path, gateway, built)
+    label = f"[report.pdf #{built['chunk_id'][:12]}]"
+    gateway.canned_response = f"RRF fuses ranked lists {label}."
+    service = _service(migrated_sqlite_engine, table, gateway, built)
+
+    service.ask(CHUNK_TEXT, mode=QueryMode.FAST, history=history)
+
+    call = gateway.generate_calls[0]
+    assert call["system"] == SYSTEM_PROMPT
+    assert call["prompt"] == f"Context:\n{label}\n{CHUNK_TEXT}\n\nQuestion: {CHUNK_TEXT}\n\nAnswer:"
+    assert "Conversation so far" not in call["prompt"]
+
+
+def test_agent_path_with_history_prepends_turns(
+    migrated_sqlite_engine: Engine, tmp_path: Path, built: dict
+) -> None:
+    gateway = FakeInferenceGateway()
+    table = _index_chunk(migrated_sqlite_engine, tmp_path, gateway, built)
+    resolver = EvidenceResolver(built["session_factory"])
+    label = f"[report.pdf #{built['chunk_id'][:12]}]"
+    final_messages = [
+        AIMessage(content="", tool_calls=[
+            {"name": "read_evidence", "args": {"chunk_id": built["chunk_id"]}, "id": "call_1"}
+        ]),
+        ToolMessage(
+            content=json.dumps({"chunk_id": built["chunk_id"], "text": CHUNK_TEXT,
+                                "citation_label": label, "source_display_name": "report.pdf",
+                                "heading": None}),
+            tool_call_id="call_1",
+        ),
+        AIMessage(content=f"RRF fuses ranked lists {label}."),
+    ]
+    fake_agent = _FakeAgent(final_messages)
+    service = QueryService(
+        engine=migrated_sqlite_engine, table=table, gateway=gateway,
+        resolver=resolver, agent=fake_agent,
+    )
+
+    result = service.ask("What about X instead?", mode=QueryMode.AGENT, history=_HISTORY)
+
+    msgs = fake_agent.invoke_calls[0]["messages"]
+    assert [type(m) for m in msgs] == [
+        SystemMessage, HumanMessage, AIMessage, HumanMessage, AIMessage, HumanMessage,
+    ]
+    assert msgs[0].content == AGENT_SYSTEM_PROMPT_WITH_HISTORY
+    assert [m.content for m in msgs[1:]] == [
+        "What is RRF?", "A fusion method.", "Who wrote it?", "Cormack et al.", "What about X instead?",
+    ]
+    assert all(not m.tool_calls for m in msgs if isinstance(m, AIMessage))
+    # Injected turns don't pollute citation reconstruction.
+    resolved = _citations_from_agent_messages(list(msgs) + final_messages, _FakeResolver())
+    assert [r.chunk_id for r in resolved] == [built["chunk_id"]]
+    assert [c.chunk_id for c in result.citations] == [built["chunk_id"]]
+
+
+@pytest.mark.parametrize("history", [None, []])
+def test_agent_path_without_history_is_unchanged(
+    migrated_sqlite_engine: Engine, tmp_path: Path, built: dict, history
+) -> None:
+    gateway = FakeInferenceGateway()
+    table = _index_chunk(migrated_sqlite_engine, tmp_path, gateway, built)
+    fake_agent = _FakeAgent([AIMessage(content=ABSTENTION_PHRASE)])
+    service = QueryService(
+        engine=migrated_sqlite_engine, table=table, gateway=gateway,
+        resolver=EvidenceResolver(built["session_factory"]), agent=fake_agent,
+    )
+
+    service.ask("q?", mode=QueryMode.AGENT, history=history)
+
+    msgs = fake_agent.invoke_calls[0]["messages"]
+    assert len(msgs) == 2
+    assert msgs[0].content == AGENT_SYSTEM_PROMPT

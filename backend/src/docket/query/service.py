@@ -34,10 +34,13 @@ from docket.config import Settings
 from docket.config import settings as default_settings
 from docket.inference.gateway import InferenceGateway
 from docket.query.classifier import HeuristicQueryClassifier, QueryClassifier, QueryMode
+from docket.query.conversation import ConversationTurn, format_history_block, trim_history
 from docket.query.prompts import (
     ABSTENTION_PHRASE,
     AGENT_SYSTEM_PROMPT,
+    AGENT_SYSTEM_PROMPT_WITH_HISTORY,
     SYSTEM_PROMPT,
+    SYSTEM_PROMPT_WITH_HISTORY,
     build_context_block,
     validate_citations,
 )
@@ -188,7 +191,12 @@ class QueryService:
             )
         return self._agent
 
-    def ask(self, question: str, mode: QueryMode | None = None) -> QueryResult:
+    def ask(
+        self,
+        question: str,
+        mode: QueryMode | None = None,
+        history: list[ConversationTurn] | None = None,
+    ) -> QueryResult:
         """Answer `question`, routing to FAST or AGENT.
 
         `mode`, when given, skips `self._classifier.classify(question)`
@@ -198,14 +206,22 @@ class QueryService:
         phrasing-based guess. When omitted (the default), behavior is
         unchanged from before this parameter existed: the question is
         classified and routed based on that result.
+
+        `history` holds prior conversation turns (oldest first), used only to
+        resolve references in `question`. Retrieval still uses the literal
+        latest question, and citations are validated against this turn's
+        evidence only. None/empty behaves exactly as without history.
         """
         if mode is None:
             mode = self._classifier.classify(question)
+        trimmed = trim_history(history)
         if mode == QueryMode.AGENT:
-            return self._ask_agent(question)
-        return self._ask_fast(question)
+            return self._ask_agent(question, trimmed)
+        return self._ask_fast(question, trimmed)
 
-    def _ask_fast(self, question: str) -> QueryResult:
+    def _ask_fast(
+        self, question: str, history: list[ConversationTurn] | None = None
+    ) -> QueryResult:
         ranked_chunks = hybrid_search(
             engine=self._engine,
             table=self._table,
@@ -230,9 +246,17 @@ class QueryService:
 
         resolved = self._resolver.resolve_many([rc.chunk_id for rc in ranked_chunks])
         context = build_context_block(resolved)
-        prompt = f"Context:\n{context}\n\nQuestion: {question}\n\nAnswer:"
+        if history:
+            prompt = (
+                f"Conversation so far:\n{format_history_block(history)}\n\n"
+                f"Context:\n{context}\n\nQuestion: {question}\n\nAnswer:"
+            )
+            system = SYSTEM_PROMPT_WITH_HISTORY
+        else:
+            prompt = f"Context:\n{context}\n\nQuestion: {question}\n\nAnswer:"
+            system = SYSTEM_PROMPT
 
-        answer = self._gateway.generate(system=SYSTEM_PROMPT, prompt=prompt)
+        answer = self._gateway.generate(system=system, prompt=prompt)
 
         validation = validate_citations(answer, resolved)
 
@@ -261,14 +285,20 @@ class QueryService:
             mode=QueryMode.FAST.value,
         )
 
-    def _ask_agent(self, question: str) -> QueryResult:
+    def _ask_agent(
+        self, question: str, history: list[ConversationTurn] | None = None
+    ) -> QueryResult:
         agent = self._get_agent()
 
+        system_prompt = AGENT_SYSTEM_PROMPT_WITH_HISTORY if history else AGENT_SYSTEM_PROMPT
+        messages_in: list = [SystemMessage(content=system_prompt)]
+        for turn in history or []:
+            messages_in.append(HumanMessage(content=turn.question))
+            messages_in.append(AIMessage(content=turn.answer))
+        messages_in.append(HumanMessage(content=question))
+
         initial_state = {
-            "messages": [
-                SystemMessage(content=AGENT_SYSTEM_PROMPT),
-                HumanMessage(content=question),
-            ],
+            "messages": messages_in,
             "iterations": 0,
             "tool_calls_made": 0,
             "blocked_calls": [],

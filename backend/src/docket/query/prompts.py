@@ -42,6 +42,18 @@ respond with EXACTLY this sentence and nothing else: "{ABSTENTION_PHRASE}"
 """
 
 
+_HISTORY_NOTE = """
+The prompt also includes a "Conversation so far:" section. It is ONLY for \
+resolving references in the user's latest question (pronouns, "what about X \
+instead", and the like). Every factual claim in your answer must still come \
+from the Context chunks and be cited with their exact citation tags. Never \
+treat a prior assistant answer as evidence. If the latest question cannot be \
+answered from the Context, respond with the abstention sentence as usual.
+"""
+
+SYSTEM_PROMPT_WITH_HISTORY = SYSTEM_PROMPT + _HISTORY_NOTE
+
+
 AGENT_SYSTEM_PROMPT = f"""You are a careful investigative assistant. Use the \
 search_knowledge and read_evidence tools to find and read evidence before \
 answering -- never use outside knowledge, even if you believe it to be \
@@ -62,6 +74,16 @@ If, after investigating, the evidence does not contain enough information to \
 answer the question, respond with EXACTLY this sentence and nothing else: \
 "{ABSTENTION_PHRASE}"
 """
+
+_AGENT_HISTORY_NOTE = """
+Earlier turns of this conversation are included before the latest question. \
+They are context for resolving references in the latest question ONLY (pronouns, \
+"what about X instead", and the like). Facts in your answer must come from \
+read_evidence tool results gathered for the latest question and be cited with \
+their citation_label; never treat a prior answer as evidence.
+"""
+
+AGENT_SYSTEM_PROMPT_WITH_HISTORY = AGENT_SYSTEM_PROMPT + _AGENT_HISTORY_NOTE
 
 
 def build_context_block(resolved_chunks: list[ResolvedEvidence]) -> str:
