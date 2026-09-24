@@ -10,6 +10,7 @@ fake `QueryService`.
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -63,6 +64,16 @@ class _Session:
         self.history: list[ConversationTurn] = []
         self.mode: QueryMode | None = None
         self._service: Any | None = None
+        self.state.model = getattr(getattr(context, "settings", None), "gen_model", "") or ""
+        self.sync_state()
+
+    def sync_state(self) -> None:
+        """Refresh cheap toolbar fields. Main thread only; may touch vector_writer."""
+        self.state.turns = len(self.history)
+        try:
+            self.state.indexed = self.context.vector_writer.table is not None
+        except Exception:
+            pass
 
     # -- output helpers ----------------------------------------------------
 
@@ -182,6 +193,7 @@ class _Session:
             self.error(f"Error: {exc}")
             return
         self.state.refresh_sources(self.context.source_manager)
+        self.sync_state()
         self.say(f"Registered source {source.id}")
         self.say(f"Next: /ingest {source.id}", style="dim")
 
@@ -202,6 +214,7 @@ class _Session:
             self._ingest_targets(target_ids)
         finally:
             self.state.refresh_sources(self.context.source_manager)
+            self.sync_state()
 
     def _ingest_targets(self, target_ids: list[str]) -> None:
         for target_id in target_ids:
@@ -238,6 +251,7 @@ class _Session:
 
     def cmd_clear(self, arg: str) -> None:
         self.history.clear()
+        self.sync_state()
         self.say("Conversation history cleared.")
 
     # -- questions ---------------------------------------------------------
@@ -256,10 +270,13 @@ class _Session:
         if service is None:
             self.say("Nothing indexed yet -- /add a folder and /ingest it first.")
             return
+        start = time.perf_counter()
         with self.console.status("Thinking..."):
             result = service.ask(question, mode=self.mode, history=list(self.history))
-        render(self.console, result)
+        elapsed = time.perf_counter() - start
+        render(self.console, result, elapsed)
         self.history.append(ConversationTurn(question=question, answer=result.answer))
+        self.sync_state()
 
 
 def run_session(
@@ -269,9 +286,10 @@ def run_session(
     console: Console | None = None,
     query_service_factory: QueryServiceFactory | None = None,
     reader: LineReader | None = None,
+    state: SessionState | None = None,
 ) -> None:
     registry = default_registry()
-    state = SessionState()
+    state = state if state is not None else SessionState()
     state.refresh_sources(context.source_manager)
     console = console or Console()
     if reader is None:

@@ -25,6 +25,10 @@ class CallableReader:
         return self._input_fn(prompt)
 
 
+def prompt_for_mode(mode: str) -> str:
+    return "docket> " if mode in ("", "auto") else f"docket ({mode})> "
+
+
 def _make_file_history_class() -> type:
     from prompt_toolkit.history import FileHistory
 
@@ -68,7 +72,8 @@ _STYLE = {
     "completion-menu.meta.completion.current": "bg:#3a5f7f #c0c0c0",
     "scrollbar.background": "bg:#262626",
     "scrollbar.button": "bg:#606060",
-    "bottom-toolbar": "noreverse",
+    "bottom-toolbar": "noreverse #808080",
+    "bottom-toolbar.text": "noreverse #808080",
     "prompt": "bold",
     "auto-suggestion": "#666666",
 }
@@ -84,6 +89,8 @@ class PtkReader:
         *,
         input: Any = None,
         output: Any = None,
+        prompt_fn: Callable[[], str] | None = None,
+        toolbar_fn: Callable[[int | None], str] | None = None,
     ) -> None:
         from prompt_toolkit import PromptSession
         from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
@@ -103,6 +110,8 @@ class PtkReader:
             event.current_buffer.insert_text("\n")
 
         self.history = history
+        self._prompt_fn = prompt_fn
+        self._toolbar_fn = toolbar_fn
         self._session = PromptSession(
             completer=ThreadedCompleter(completer) if completer is not None else None,
             history=history,
@@ -116,10 +125,36 @@ class PtkReader:
             style=Style.from_dict(_STYLE),
             input=input,
             output=output,
+            bottom_toolbar=self._toolbar if toolbar_fn is not None else None,
         )
 
+    def current_prompt(self, default: str = "docket> ") -> str:
+        if self._prompt_fn is not None:
+            try:
+                return self._prompt_fn()
+            except Exception:
+                pass
+        return default
+
+    def _toolbar(self) -> Any:
+        from prompt_toolkit.formatted_text import FormattedText
+
+        width: int | None = None
+        try:
+            from prompt_toolkit.application import get_app
+
+            width = get_app().output.get_size().columns
+        except Exception:
+            pass
+        try:
+            text = self._toolbar_fn(width) if self._toolbar_fn else ""
+        except Exception:
+            text = ""
+        return FormattedText([("class:bottom-toolbar", " " + text)])
+
     def read(self, prompt: str) -> str:
-        return self._session.prompt(prompt)
+        # Callable message: re-evaluated on every render, so mode changes show up.
+        return self._session.prompt(lambda: self.current_prompt(prompt))
 
 
 def make_reader(
@@ -139,7 +174,12 @@ def make_reader(
             from .completer import DocketCompleter
 
             history = build_history(context.settings.data_dir)
-            return PtkReader(DocketCompleter(registry, state), history)
+            return PtkReader(
+                DocketCompleter(registry, state),
+                history,
+                prompt_fn=lambda: prompt_for_mode(state.mode),
+                toolbar_fn=state.toolbar_text,
+            )
         except Exception as exc:
             msg = f"(rich line editing unavailable: {type(exc).__name__}; using plain input)"
             if console is not None:

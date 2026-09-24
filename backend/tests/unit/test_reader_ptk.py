@@ -108,3 +108,31 @@ def test_gate_non_tty(monkeypatch):
 
 def test_gate_term_dumb(monkeypatch):
     assert isinstance(_gate(input, monkeypatch, term="dumb"), CallableReader)
+
+
+def test_prompt_and_toolbar_fns_with_mode_change():
+    from docket.cli.interactive.reader import prompt_for_mode
+
+    state = SessionState(mode="auto")
+    seen = []
+
+    def prompt_fn():
+        p = prompt_for_mode(state.mode)
+        seen.append(p)
+        return p
+
+    with create_pipe_input() as pipe:
+        r = PtkReader(
+            None, InMemoryHistory(), input=pipe, output=DummyOutput(),
+            prompt_fn=prompt_fn, toolbar_fn=state.toolbar_text,
+        )
+        pipe.send_text("one\r")
+        assert r.read("ignored> ") == "one"
+        state.mode = "agent"
+        pipe.send_text("two\r")
+        assert r.read("ignored> ") == "two"
+    assert "docket> " in seen and "docket (agent)> " in seen
+    assert prompt_for_mode("fast") == "docket (fast)> "
+    assert r.current_prompt() == "docket (agent)> "
+    frags = r._toolbar()
+    assert "mode: agent" in "".join(t for _, t in frags)

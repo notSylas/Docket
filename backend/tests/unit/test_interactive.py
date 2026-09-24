@@ -66,7 +66,7 @@ def ctx(tmp_path, monkeypatch):
     return context
 
 
-def drive(ctx, lines, service=None, table=True):
+def drive(ctx, lines, service=None, table=True, state=None):
     service = service or FakeService()
     if not table:
         ctx.vector_writer.table = None
@@ -83,7 +83,7 @@ def drive(ctx, lines, service=None, table=True):
 
     out = io.StringIO()
     console = Console(file=out, width=120, force_terminal=False)
-    run_session(ctx, input_fn=input_fn, console=console, query_service_factory=lambda c, t: service)
+    run_session(ctx, input_fn=input_fn, console=console, query_service_factory=lambda c, t: service, state=state)
     return out.getvalue(), service
 
 
@@ -112,7 +112,8 @@ def test_question_history_and_output(ctx):
     assert "answer to first?" in out
     assert "Citations:" in out and "[doc.md#1]" in out
     assert "some warning" in out
-    assert "[fast]" in out
+    assert "quick search" in out
+    assert "[fast]" not in out
 
 
 def test_clear_empties_history(ctx):
@@ -310,3 +311,66 @@ def test_add_dot_is_absolute_and_duplicate_detected(ctx, tmp_path, monkeypatch):
     out, _ = drive(ctx, [f"/add {folder}"])
     assert f"Already registered: {sources[0].id}" in out
     assert len(ctx.source_manager.list_sources()) == 1
+
+
+def test_state_turns_and_clear(ctx):
+    from docket.cli.interactive.state import SessionState
+
+    st = SessionState()
+    drive(ctx, ["a", "b"], state=st)
+    assert st.turns == 2 and st.indexed is True
+    st = SessionState()
+    drive(ctx, ["a", "b", "/clear"], state=st)
+    assert st.turns == 0
+
+
+def test_state_errored_turn_not_counted(ctx):
+    from docket.cli.interactive.state import SessionState
+
+    st = SessionState()
+    drive(ctx, ["q1"], service=FakeService(error=InferenceUnavailableError("down")), state=st)
+    assert st.turns == 0
+
+
+def test_state_mode_follows_command(ctx):
+    from docket.cli.interactive.state import SessionState
+
+    st = SessionState()
+    drive(ctx, ["/mode agent"], state=st)
+    assert st.mode == "agent"
+    drive(ctx, ["/mode agent", "/mode auto"], state=st)
+    assert st.mode == "auto"
+
+
+def test_state_indexed_flips_after_ingest(ctx, tmp_path):
+    from docket.cli.interactive.state import SessionState
+
+    folder = tmp_path / "docs"
+    folder.mkdir()
+    src = ctx.source_manager.register_source(folder)
+    st = SessionState()
+    drive(ctx, [], table=False, state=st)
+    assert st.indexed is False and len(st.sources) == 1
+    drive(ctx, [f"/ingest {src.id}"], table=False, state=st)
+    assert st.indexed is True
+
+
+def test_footer_timing_and_agent(ctx, monkeypatch):
+    import itertools
+
+    from docket.cli.interactive import session as session_mod
+
+    ticks = itertools.count(0, 8)  # each perf_counter call advances 8s -> ask takes 8s
+    monkeypatch.setattr(session_mod.time, "perf_counter", lambda: next(ticks))
+    out, _ = drive(ctx, ["q"])
+    assert "quick search \u00b7 8.0s" in out
+    out, _ = drive(ctx, ["/mode agent", "q"])
+    assert "investigated with agent \u00b7 8.0s" in out
+
+
+def test_footer_no_elapsed_or_tiny():
+    from docket.cli.interactive.render import footer_text
+
+    assert footer_text("fast") == "quick search"
+    assert footer_text("agent", 0.01) == "investigated with agent"
+    assert footer_text("agent", 14.14) == "investigated with agent \u00b7 14.1s"
