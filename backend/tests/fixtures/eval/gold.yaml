@@ -1,0 +1,64 @@
+# Tiny gold set for the eval-harness unit tests. The corpus under corpus/ uses
+# the .pdf extension only so ingestion discovers the files; they hold plain
+# text and the tests parse them with a plain-text parser (no Docling).
+version: 1
+questions:
+  - id: vacation-days
+    type: single_fact
+    question: How many days of paid vacation do employees get?
+    answerable: true
+    must_contain: ["25"]
+    must_not_contain: ["30 days"]
+    gold_spans: ["25 days of paid vacation per year"]
+    reviewed: true
+
+  - id: carry-over
+    type: single_fact
+    question: When do unused vacation days expire?
+    answerable: true
+    must_contain: ["march 31"]
+    gold_spans: ["do not carry over past March 31"]
+
+  - id: support-channels
+    type: enumeration
+    question: Which support channels are available?
+    answerable: true
+    enumeration: ["email", "phone", "chat"]
+    gold_spans: ["three channels: email, phone, and chat"]
+
+  - id: marketing-budget
+    type: numeric
+    question: What is the 2025 marketing budget?
+    answerable: true
+    must_contain: ["1,200,000"]
+    gold_spans: ["marketing budget is $1,200,000"]
+
+  - id: vacation-and-budget
+    type: multi_doc
+    question: How many vacation days are there and what is the marketing budget?
+    answerable: true
+    must_contain: ["25", "re:1200000|1\\.2 million"]
+    gold_spans: ["25 days of paid vacation per year", "marketing budget is $1,200,000"]
+
+  - id: engineering-follow-up
+    type: follow_up
+    question: And the engineering one?
+    answerable: true
+    history:
+      - question: What is the marketing budget?
+        answer: The 2025 marketing budget is $1,200,000.
+    must_contain: ["3,500,000"]
+    gold_spans: ["engineering budget is $3,500,000"]
+
+  - id: ceo-name
+    type: out_of_corpus
+    question: Who is the CEO?
+    answerable: false
+
+  - id: revoked-engineering
+    type: revoked
+    question: What is the engineering budget?
+    answerable: false
+    setup:
+      revoke: [finance]
+    gold_spans: ["engineering budget is $3,500,000"]
