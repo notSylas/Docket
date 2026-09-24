@@ -224,6 +224,8 @@ class RunScore:
     span_in_context: list[bool] = field(default_factory=list)
     truncated: bool = False
     leaked: bool = False  # revoked-source evidence was still retrieved
+    judged: bool = False  # verdict was set by the LLM judge, not the regex checks
+    judge_disagreement: bool = False  # cross-check judge disagreed with the primary
 
     @property
     def passed(self) -> bool:

@@ -105,6 +105,7 @@ class Question(BaseModel):
     setup: Setup = Field(default_factory=Setup)
     reviewed: bool = False
     split: Split | None = None
+    origin: str | None = None  # where a drafted question came from (informational)
 
     @model_validator(mode="after")
     def _validate(self) -> Question:

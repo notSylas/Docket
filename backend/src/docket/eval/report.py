@@ -3,7 +3,8 @@
 Headline unit is the *question*: it passes if a majority of its repeats pass
 (>=2 of 3). Runs the deterministic checks could not decide (`needs_judge`) are
 counted two ways -- `strict` (not a pass) and `optimistic` (a pass) -- so the
-number is bracketed until the LLM judge exists.
+number is bracketed until the LLM judge has run; when judged runs are supplied
+they replace the bracket (only judge doubts keep it open).
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from docket.eval.judge import JudgedRun, judged_index, verdict_of
 from docket.eval.schema import GoldSet, Question, RunRecord
 from docket.eval.scoring import RunScore, Verdict, score_run
 from docket.eval.stats import pass_all, pass_majority, wilson_interval
@@ -77,6 +79,8 @@ class Report:
     revoked_answer_leaks: int
     failures: dict[str, int] = field(default_factory=dict)
     failures_by_type: dict[str, dict[str, int]] = field(default_factory=dict)
+    judged_runs: int = 0  # NEEDS_JUDGE runs resolved by the judge
+    judge_disagreements: int = 0  # ...where the cross-check judge disagreed
 
 
 def classify_failure(question: Question, record: RunRecord, score: RunScore) -> str | None:
@@ -129,15 +133,37 @@ def _slice(
     return Slice(n, Rate.of(strict_pass, n), Rate.of(optimistic_pass, n), Rate.of(all_pass, n), judge_runs)
 
 
-def build_report(gold: GoldSet, records: list[RunRecord]) -> Report:
+def resolve_scores(
+    gold: GoldSet, records: list[RunRecord], judged: list[JudgedRun] | None = None
+) -> list[tuple[Question, RunRecord, RunScore]]:
+    """Score every record; where the deterministic verdict is NEEDS_JUDGE and a
+    judged run exists, the judge's verdict replaces it (a judge doubt stays
+    NEEDS_JUDGE)."""
     questions = gold.by_id()
-    scores: dict[str, list[RunScore]] = defaultdict(list)
-    pairs: list[tuple[Question, RunRecord, RunScore]] = []
+    index = judged_index(judged) if judged else {}
+    resolved: list[tuple[Question, RunRecord, RunScore]] = []
     for record in records:
         question = questions.get(record.question_id)
         if question is None:
             continue  # record for a question no longer in the gold set
         score = score_run(question, record)
+        run = index.get((record.question_id, record.repeat))
+        if run is not None and run.source == "judge" and score.verdict is Verdict.NEEDS_JUDGE:
+            score.verdict = verdict_of(run)
+            score.reasons.append(f"judge verdict: {run.verdict.value}")
+            score.judged = True
+            score.judge_disagreement = run.disagreement
+        resolved.append((question, record, score))
+    return resolved
+
+
+def build_report(
+    gold: GoldSet, records: list[RunRecord], judged: list[JudgedRun] | None = None
+) -> Report:
+    questions = gold.by_id()
+    scores: dict[str, list[RunScore]] = defaultdict(list)
+    pairs: list[tuple[Question, RunRecord, RunScore]] = []
+    for question, record, score in resolve_scores(gold, records, judged):
         scores[question.id].append(score)
         pairs.append((question, record, score))
 
@@ -192,6 +218,8 @@ def build_report(gold: GoldSet, records: list[RunRecord]) -> Report:
         revoked_answer_leaks=sum(not s.abstained for _, _, s in revoked),
         failures=failures,
         failures_by_type=dict(sorted(failures_by_type.items())),
+        judged_runs=sum(s.judged for _, _, s in pairs),
+        judge_disagreements=sum(s.judge_disagreement for _, _, s in pairs),
     )
 
 
@@ -206,12 +234,30 @@ def _slice_lines(title: str, slices: dict[str, Slice]) -> list[str]:
     return lines
 
 
+def _accuracy_lines(report: Report) -> list[str]:
+    o = report.overall
+    if report.judged_runs == 0:
+        return [
+            f"Accuracy strict      {o.strict.fmt()}",
+            f"Accuracy optimistic  {o.optimistic.fmt()}   ({o.needs_judge_runs} runs need the judge)",
+        ]
+    lines = [
+        f"Accuracy (judged)    {o.strict.fmt()}",
+        f"Judge: {report.judged_runs} runs resolved, {report.judge_disagreements} cross-check disagreements",
+    ]
+    if o.needs_judge_runs:
+        lines.append(
+            f"  {o.needs_judge_runs} runs are judge doubt: counted as fail above, "
+            f"as pass in the optimistic bound {o.optimistic.value:.1%}"
+        )
+    return lines
+
+
 def format_report(report: Report) -> str:
     o = report.overall
     lines = [
         f"Questions: {o.questions}   repeats: {report.repeats}   (pass = majority of repeats)",
-        f"Accuracy strict      {o.strict.fmt()}",
-        f"Accuracy optimistic  {o.optimistic.fmt()}   ({o.needs_judge_runs} runs need the judge)",
+        *_accuracy_lines(report),
         f"Pass-all repeats     {o.pass_all.fmt()}",
         "",
         *_slice_lines("By type:", report.by_type),

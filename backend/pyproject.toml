@@ -22,6 +22,7 @@ dependencies = [
     "watchfiles",
     "prompt_toolkit>=3.0.43",
     "rich>=13",
+    "pyyaml",
 ]
 
 [project.optional-dependencies]

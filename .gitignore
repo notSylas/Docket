@@ -20,3 +20,6 @@ backend/src/docket.egg-info/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Private gold sets, run outputs and labels for real documents
+eval-private/

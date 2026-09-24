@@ -9,6 +9,7 @@ from docket import __version__
 from docket.cli.context import build_context
 from docket.cli.interactive import run_session
 from docket.db.models import SourceStatus
+from docket.eval.cli import eval_app
 from docket.ingestion.pipeline import SourceNotActiveError
 from docket.query.service import QueryService
 from docket.sources.manager import SourceNotFoundError
@@ -21,6 +22,7 @@ app = typer.Typer(name="docket", help=(
 )
 sources_app = typer.Typer(help="Manage registered sources (local folders).")
 app.add_typer(sources_app, name="sources")
+app.add_typer(eval_app, name="eval")
 
 
 @app.callback(invoke_without_command=True)

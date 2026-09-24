@@ -151,6 +151,14 @@ class _EvalContext(AppContext):
             self.__dict__["parser"] = parser
 
 
+@dataclass(frozen=True)
+class CorpusChunk:
+    chunk_id: str
+    source_name: str
+    heading: str | None
+    text: str
+
+
 def discover_sources(corpus_dir: Path) -> dict[str, Path]:
     """Map source name -> folder (see module docstring for the rule)."""
     corpus_dir = Path(corpus_dir)
@@ -248,6 +256,17 @@ class EvalRunner:
             top_k=self._top_k,
             settings=ctx.settings,
         )
+
+    def corpus_chunks(self) -> list[CorpusChunk]:
+        """Every indexed chunk (parsed text, as stored) with its source name."""
+        names = {sid: name for name, sid in self._source_ids.items()}
+        with self._context.session_factory() as session:
+            rows = session.execute(
+                select(Chunk.id, Chunk.source_id, Chunk.heading, Chunk.text).order_by(
+                    Chunk.source_id, Chunk.ordinal
+                )
+            ).all()
+        return [CorpusChunk(cid, names.get(sid, sid), heading, text) for cid, sid, heading, text in rows]
 
     # -- running ----------------------------------------------------------
 
