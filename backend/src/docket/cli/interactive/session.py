@@ -25,7 +25,8 @@ from docket.query.service import QueryService
 from docket.sources.manager import SourceNotFoundError
 
 from .commands import BARE_WORDS, HELP_FOOTER, CommandRegistry, default_registry
-from .reader import CallableReader, LineReader
+from .reader import LineReader, make_reader
+from .state import SessionState
 from .render import render
 
 PROMPT = "docket> "
@@ -43,13 +44,6 @@ def _default_factory(context: Any, table: Any) -> QueryService:
     )
 
 
-def _setup_readline() -> None:
-    try:
-        import readline  # noqa: F401
-    except ImportError:
-        pass
-
-
 class _Session:
     def __init__(
         self,
@@ -58,10 +52,12 @@ class _Session:
         console: Console,
         factory: QueryServiceFactory,
         registry: CommandRegistry | None = None,
+        state: SessionState | None = None,
     ) -> None:
         self.context = context
         self.reader = reader
         self.registry = registry or default_registry()
+        self.state = state or SessionState()
         self.console = console
         self.factory = factory
         self.history: list[ConversationTurn] = []
@@ -185,6 +181,7 @@ class _Session:
         except ValueError as exc:
             self.error(f"Error: {exc}")
             return
+        self.state.refresh_sources(self.context.source_manager)
         self.say(f"Registered source {source.id}")
         self.say(f"Next: /ingest {source.id}", style="dim")
 
@@ -201,6 +198,12 @@ class _Session:
         else:
             target_ids = [arg]
 
+        try:
+            self._ingest_targets(target_ids)
+        finally:
+            self.state.refresh_sources(self.context.source_manager)
+
+    def _ingest_targets(self, target_ids: list[str]) -> None:
         for target_id in target_ids:
             try:
                 with self.console.status(f"Ingesting {target_id}..."):
@@ -230,6 +233,7 @@ class _Session:
         else:
             self.say("Usage: /mode [auto|fast|agent]")
             return
+        self.state.mode = arg
         self.say(f"Mode set to {arg}.")
 
     def cmd_clear(self, arg: str) -> None:
@@ -266,13 +270,19 @@ def run_session(
     query_service_factory: QueryServiceFactory | None = None,
     reader: LineReader | None = None,
 ) -> None:
-    if input_fn is input:
-        _setup_readline()
+    registry = default_registry()
+    state = SessionState()
+    state.refresh_sources(context.source_manager)
+    console = console or Console()
+    if reader is None:
+        reader = make_reader(input_fn, context, state, registry, console)
     session = _Session(
         context,
-        reader or CallableReader(input_fn),
-        console or Console(),
+        reader,
+        console,
         query_service_factory or _default_factory,
+        registry=registry,
+        state=state,
     )
     session.banner()
     session.loop()

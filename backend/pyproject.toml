@@ -20,6 +20,8 @@ dependencies = [
     "pydantic-settings",
     "typer",
     "watchfiles",
+    "prompt_toolkit>=3.0.43",
+    "rich>=13",
 ]
 
 [project.optional-dependencies]
