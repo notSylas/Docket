@@ -118,6 +118,28 @@ def default_registry() -> CommandRegistry:
             arg_hint="[auto|fast|agent]",
         )
     )
+    reg.register(
+        SlashCommand(
+            "remove",
+            "stop searching a source (asks first)",
+            _call("cmd_remove"),
+            arg_hint="<source-id>",
+        )
+    )
+    reg.register(
+        SlashCommand(
+            "show",
+            "read the evidence behind citation n",
+            _call("cmd_show"),
+            arg_hint="<n>",
+        )
+    )
+    reg.register(
+        SlashCommand("retry", "re-ask the previous question in the current mode", _call("cmd_retry"))
+    )
+    reg.register(
+        SlashCommand("status", "show data dir, models, sources and mode", _call("cmd_status"))
+    )
     reg.register(SlashCommand("clear", "forget the conversation so far", _call("cmd_clear")))
     reg.register(
         SlashCommand(

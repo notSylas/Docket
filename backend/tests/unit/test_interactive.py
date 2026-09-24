@@ -7,11 +7,13 @@ from typer.testing import CliRunner
 
 from docket.cli.context import AppContext
 from docket.cli.interactive import run_session
+from docket.cli.interactive.state import SessionState
 from docket.cli.main import app
 from docket.inference.gateway import InferenceUnavailableError
 from docket.ingestion.pipeline import FileIngestResult, IngestionJobResult, SourceNotFoundError
 from docket.query.classifier import QueryMode
 from docket.query.service import Citation, QueryResult
+from docket.retrieval.resolver import ChunkNotFoundError, ResolvedEvidence
 
 
 class FakeService:
@@ -110,7 +112,7 @@ def test_question_history_and_output(ctx):
     assert svc.calls[1]["history"][0].question == "first?"
     assert svc.calls[1]["history"][0].answer == "answer to first?"
     assert "answer to first?" in out
-    assert "Citations:" in out and "[doc.md#1]" in out
+    assert "Sources:" in out and "[1] doc.md" in out  # was: "Citations:" + raw label
     assert "some warning" in out
     assert "quick search" in out
     assert "[fast]" not in out
@@ -374,3 +376,124 @@ def test_footer_no_elapsed_or_tiny():
     assert footer_text("fast") == "quick search"
     assert footer_text("agent", 0.01) == "investigated with agent"
     assert footer_text("agent", 14.14) == "investigated with agent \u00b7 14.1s"
+
+
+# ---- CP3: numbered citations, /show, /retry, /status, /remove ----------------
+
+TAG_A = "[a.docx #chk_1111aaaa]"
+TAG_B = "[b.docx #chk_2222bbbb]"
+
+
+class TaggedService(FakeService):
+    def ask(self, question, mode=None, history=None):
+        self.calls.append({"question": question, "mode": mode, "history": list(history or [])})
+        return QueryResult(
+            question=question,
+            answer=f"Second fact {TAG_B}. First fact {TAG_A}. Again {TAG_B}.",
+            citations=[
+                Citation(citation_label=TAG_A, chunk_id="c_a", source_display_name="a.docx"),
+                Citation(citation_label=TAG_B, chunk_id="c_b", source_display_name="b.docx"),
+            ],
+            abstained=False,
+            validation_warnings=[],
+            mode="fast",
+        )
+
+
+class FakeResolver:
+    def resolve(self, chunk_id):
+        if chunk_id == "c_b":
+            raise ChunkNotFoundError(chunk_id)
+        return ResolvedEvidence(
+            chunk_id=chunk_id,
+            text="The evidence body text.",
+            source_display_name="a.docx",
+            evidence_version_id="v1",
+            heading="Overview",
+            citation_label=TAG_A,
+        )
+
+
+@pytest.fixture
+def tctx(ctx):
+    ctx.__dict__["resolver"] = FakeResolver()
+    return ctx
+
+
+def test_answer_is_numbered_and_history_keeps_original(tctx):
+    out, svc = drive(tctx, ["q1", "q2"], service=TaggedService())
+    assert "#chk_" not in out
+    assert "Second fact [1]. First fact [2]. Again [1]." in out
+    assert "Sources:" in out and "[1] b.docx" in out and "[2] a.docx" in out
+    assert "/show <n> to read the evidence" in out
+    assert svc.calls[1]["history"][0].answer == (
+        f"Second fact {TAG_B}. First fact {TAG_A}. Again {TAG_B}."
+    )
+
+
+def test_show_prints_evidence_and_errors(tctx):
+    out, _ = drive(tctx, ["/show 1"], service=TaggedService())
+    assert "No answer yet" in out
+    out, _ = drive(tctx, ["q", "/show 2", "/show 9", "/show abc", "/show 1"], service=TaggedService())
+    assert "[2] a.docx \u2014 Overview" in out
+    assert "The evidence body text." in out
+    assert "chunk c_a" in out
+    assert "No citation 9 in the last answer (it has 2)." in out
+    assert "Usage: /show <n>" in out
+    assert "no longer available" in out  # citation 1 is c_b
+
+
+def test_clear_resets_citations(tctx):
+    state = SessionState()
+    out, _ = drive(tctx, ["q", "/clear", "/show 1"], service=TaggedService(), state=state)
+    assert "No answer yet" in out
+    assert state.citations == ()
+
+
+def test_state_citations_snapshot(tctx):
+    state = SessionState()
+    drive(tctx, ["q"], service=TaggedService(), state=state)
+    assert state.citations == ((1, "b.docx"), (2, "a.docx"))
+
+
+def test_retry(tctx):
+    out, svc = drive(tctx, ["/retry", "q1", "/mode agent", "/retry"], service=TaggedService())
+    assert "Nothing to retry yet." in out
+    assert [c["question"] for c in svc.calls] == ["q1", "q1"]
+    assert svc.calls[1]["history"] == []  # stale turn popped
+    assert svc.calls[1]["mode"] == QueryMode.AGENT
+
+
+def test_status(tctx):
+    out, _ = drive(tctx, ["/mode fast", "/status"])
+    assert str(tctx.settings.data_dir) in out
+    assert tctx.settings.gen_model in out and tctx.settings.embed_model in out
+    assert "fast" in out and "0 active / 0 total" in out
+
+
+def _src(tctx, tmp_path):
+    folder = tmp_path / "f"
+    folder.mkdir()
+    return tctx.source_manager.register_source(folder)
+
+
+@pytest.mark.parametrize("reply,removed", [("y", True), ("YES", True), ("n", False), ("", False), (EOFError(), False)])
+def test_remove_confirmation(tctx, tmp_path, reply, removed):
+    src = _src(tctx, tmp_path)
+    out, _ = drive(tctx, [f"/remove {src.id}", reply])
+    status = tctx.source_manager.list_sources()[0].status.value
+    assert (status == "revoked") == removed
+    assert ("Removed" in out) == removed
+
+
+def test_remove_unknown_and_usage(tctx):
+    out, _ = drive(tctx, ["/remove nope", "/remove"])
+    assert "source not found: nope" in out
+    assert "Usage: /remove" in out
+
+
+def test_sources_table_after_remove(tctx, tmp_path):
+    src = _src(tctx, tmp_path)
+    out, _ = drive(tctx, [f"/remove {src.id}", "y", "/sources"])
+    assert "ID" in out and "Status" in out and "Path" in out
+    assert "revoked" in out

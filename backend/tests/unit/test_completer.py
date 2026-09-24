@@ -76,3 +76,22 @@ def test_no_completions_for_plain_text_or_unknown():
     assert complete(c, " /mode ") == []
     assert complete(c, "/zzz ") == []
     assert complete(c, "/help ") == []
+
+
+def test_remove_args_active_only_no_all():
+    sources = [
+        SourceInfo("src_a", "/data/a", "active"),
+        SourceInfo("src_b", "/data/b", "revoked"),
+    ]
+    comps = complete(make(sources), "/remove ")
+    assert [c.text for c in comps] == ["src_a"]
+    assert comps[0].display_meta_text == "/data/a"
+
+
+def test_show_args_citation_numbers():
+    state = SessionState(citations=((1, "a.docx"), (2, "b.docx")))
+    comps = complete(DocketCompleter(default_registry(), state), "/show ")
+    assert [c.text for c in comps] == ["1", "2"]
+    assert comps[1].display_meta_text == "b.docx"
+    assert complete(make(), "/show ") == []
+    assert complete(make(), "/retry ") == [] and complete(make(), "/status ") == []

@@ -38,6 +38,36 @@ class SourceIdCompleter(Completer):
                 yield Completion(text, start_position=-len(word), display_meta=meta)
 
 
+class ActiveSourceCompleter(Completer):
+    """Ids of ACTIVE sources only (no `all`), path as meta."""
+
+    def __init__(self, state: SessionState) -> None:
+        self._state = state
+
+    def get_completions(
+        self, document: Document, complete_event: CompleteEvent
+    ) -> Iterable[Completion]:
+        word = document.get_word_before_cursor(WORD=True)
+        for s in self._state.sources:
+            if s.status == "active" and s.id.startswith(word):
+                yield Completion(s.id, start_position=-len(word), display_meta=s.path)
+
+
+class CitationNumberCompleter(Completer):
+    """Citation numbers of the last answer (from the snapshot), source as meta."""
+
+    def __init__(self, state: SessionState) -> None:
+        self._state = state
+
+    def get_completions(
+        self, document: Document, complete_event: CompleteEvent
+    ) -> Iterable[Completion]:
+        word = document.get_word_before_cursor(WORD=True)
+        for n, name in self._state.citations:
+            if str(n).startswith(word):
+                yield Completion(str(n), start_position=-len(word), display_meta=name)
+
+
 def build_arg_completers(state: SessionState) -> dict[str, Completer]:
     """Argument completers keyed by command name."""
     return {
@@ -52,6 +82,8 @@ def build_arg_completers(state: SessionState) -> dict[str, Completer]:
         ),
         "add": PathCompleter(only_directories=True, expanduser=True),
         "ingest": SourceIdCompleter(state),
+        "remove": ActiveSourceCompleter(state),
+        "show": CitationNumberCompleter(state),
     }
 
 

@@ -24,6 +24,7 @@ class SessionState:
     model: str = ""
     turns: int = 0
     indexed: bool = False
+    citations: tuple[tuple[int, str], ...] = ()  # (number, source name) of last answer
     extra: dict[str, Any] = field(default_factory=dict)
 
     def refresh_sources(self, source_manager: Any) -> None:

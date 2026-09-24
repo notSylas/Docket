@@ -110,6 +110,8 @@ class PtkReader:
             event.current_buffer.insert_text("\n")
 
         self.history = history
+        self._input = input
+        self._output = output
         self._prompt_fn = prompt_fn
         self._toolbar_fn = toolbar_fn
         self._session = PromptSession(
@@ -151,6 +153,12 @@ class PtkReader:
         except Exception:
             text = ""
         return FormattedText([("class:bottom-toolbar", " " + text)])
+
+    def confirm(self, prompt: str) -> str:
+        """One plain line (no completion/toolbar, not stored in history)."""
+        from prompt_toolkit import PromptSession
+
+        return PromptSession(input=self._input, output=self._output).prompt(prompt)
 
     def read(self, prompt: str) -> str:
         # Callable message: re-evaluated on every render, so mode changes show up.

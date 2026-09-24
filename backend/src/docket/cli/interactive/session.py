@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from rich.console import Console
+from rich.table import Table
 
 from docket import __version__
 from docket.db.models import SourceStatus
@@ -23,12 +24,13 @@ from docket.ingestion.pipeline import SourceNotActiveError
 from docket.query.classifier import QueryMode
 from docket.query.conversation import ConversationTurn
 from docket.query.service import QueryService
+from docket.retrieval.resolver import ChunkNotFoundError
 from docket.sources.manager import SourceNotFoundError
 
 from .commands import BARE_WORDS, HELP_FOOTER, CommandRegistry, default_registry
 from .reader import LineReader, make_reader
 from .state import SessionState
-from .render import render
+from .render import number_citations, render
 
 PROMPT = "docket> "
 
@@ -63,6 +65,8 @@ class _Session:
         self.factory = factory
         self.history: list[ConversationTurn] = []
         self.mode: QueryMode | None = None
+        self.last_citations: list[Any] = []
+        self.last_question: str | None = None
         self._service: Any | None = None
         self.state.model = getattr(getattr(context, "settings", None), "gen_model", "") or ""
         self.sync_state()
@@ -174,9 +178,13 @@ class _Session:
         if not sources:
             self.say("No sources registered. Use /add <folder>.")
             return
-        self.say(f"{'ID':<40}{'STATUS':<12}PATH")
+        table = Table(show_header=True, header_style="bold", box=None, pad_edge=False)
+        table.add_column("ID", no_wrap=True, overflow="fold")
+        table.add_column("Status", no_wrap=True)
+        table.add_column("Path", overflow="fold")
         for source in sources:
-            self.say(f"{source.id:<40}{source.status.value:<12}{source.path}")
+            table.add_row(str(source.id), source.status.value, str(source.path))
+        self.console.print(table)
 
     def cmd_add(self, arg: str) -> None:
         if not arg:
@@ -251,8 +259,103 @@ class _Session:
 
     def cmd_clear(self, arg: str) -> None:
         self.history.clear()
+        self._set_citations([], None)
         self.sync_state()
         self.say("Conversation history cleared.")
+
+    def _set_citations(self, citations: list[Any], question: str | None) -> None:
+        self.last_citations = citations
+        self.last_question = question
+        self.state.citations = tuple(
+            (n, c.source_display_name) for n, c in enumerate(citations, 1)
+        )
+
+    def cmd_show(self, arg: str) -> None:
+        if not self.last_citations:
+            self.say("No answer yet \u2014 ask a question first.")
+            return
+        try:
+            n = int(arg)
+        except ValueError:
+            self.say("Usage: /show <n>")
+            return
+        total = len(self.last_citations)
+        if not 1 <= n <= total:
+            self.say(f"No citation {n} in the last answer (it has {total}).")
+            return
+        citation = self.last_citations[n - 1]
+        try:
+            evidence = self.context.resolver.resolve(citation.chunk_id)
+        except ChunkNotFoundError:
+            self.say("That evidence is no longer available (source changed or removed).")
+            return
+        header = f"[{n}] {evidence.source_display_name}"
+        if evidence.heading:
+            header += f" \u2014 {evidence.heading}"
+        self.console.print(header, style="bold", markup=False, highlight=False)
+        self.say()
+        self.say(evidence.text)
+        self.say()
+        self.say(f"chunk {evidence.chunk_id}", style="dim")
+
+    def cmd_retry(self, arg: str) -> None:
+        question = self.last_question
+        if not question:
+            self.say("Nothing to retry yet.")
+            return
+        if self.history and self.history[-1].question == question:
+            self.history.pop()
+        self.ask(question)
+
+    def cmd_status(self, arg: str) -> None:
+        settings = self.context.settings
+        sources = self.state.sources
+        active = sum(1 for s in sources if s.status == "active")
+        table = Table(show_header=False, box=None, pad_edge=False)
+        table.add_column(style="bold", no_wrap=True)
+        table.add_column(overflow="fold")
+        table.add_row("Data dir", str(settings.data_dir))
+        table.add_row("Sources", f"{active} active / {len(sources)} total")
+        table.add_row("Indexed", "yes" if self.state.indexed else "no")
+        table.add_row("Model", str(settings.gen_model))
+        table.add_row("Embeddings", str(settings.embed_model))
+        table.add_row("Mode", self.mode.value if self.mode else "auto")
+        table.add_row("Turns", str(len(self.history)))
+        history_file = Path(str(settings.data_dir)) / "history"
+        if history_file.exists():
+            table.add_row("History", str(history_file))
+        self.console.print(table)
+
+    def _confirm(self, prompt: str) -> bool:
+        read = getattr(self.reader, "confirm", None) or self.reader.read
+        try:
+            reply = read(prompt)
+        except (EOFError, KeyboardInterrupt):
+            self.say()
+            return False
+        return reply.strip().lower() in ("y", "yes")
+
+    def cmd_remove(self, arg: str) -> None:
+        if not arg:
+            self.say("Usage: /remove <source-id>")
+            return
+        manager = self.context.source_manager
+        match = next((s for s in manager.list_sources() if s.id == arg), None)
+        if match is None:
+            self.error(f"Error: source not found: {arg}")
+            return
+        if not self._confirm(f"Remove source {arg} ({match.path})? [y/N] "):
+            self.say("Cancelled.", style="dim")
+            return
+        try:
+            manager.deactivate_source(arg)
+        except SourceNotFoundError:
+            self.error(f"Error: source not found: {arg}")
+            return
+        finally:
+            self.state.refresh_sources(manager)
+            self.sync_state()
+        self.say(f"Removed {arg}. Its evidence is no longer searched.")
 
     # -- questions ---------------------------------------------------------
 
@@ -274,8 +377,11 @@ class _Session:
         with self.console.status("Thinking..."):
             result = service.ask(question, mode=self.mode, history=list(self.history))
         elapsed = time.perf_counter() - start
-        render(self.console, result, elapsed)
+        text, numbered = number_citations(result.answer, list(result.citations))
+        render(self.console, result, elapsed, text, numbered)
+        # History keeps the ORIGINAL tagged answer so follow-ups stay consistent.
         self.history.append(ConversationTurn(question=question, answer=result.answer))
+        self._set_citations(numbered, question)
         self.sync_state()
 
 

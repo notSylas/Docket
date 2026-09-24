@@ -136,3 +136,12 @@ def test_prompt_and_toolbar_fns_with_mode_change():
     assert r.current_prompt() == "docket (agent)> "
     frags = r._toolbar()
     assert "mode: agent" in "".join(t for _, t in frags)
+
+
+def test_confirm_reads_plain_line_and_skips_history():
+    hist = InMemoryHistory()
+    with create_pipe_input() as pipe:
+        r = PtkReader(None, hist, input=pipe, output=DummyOutput())
+        pipe.send_text("y\r")
+        assert r.confirm("Remove? [y/N] ") == "y"
+    assert list(hist.load_history_strings()) == []

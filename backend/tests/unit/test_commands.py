@@ -14,7 +14,7 @@ def reg():
 
 def test_registration_order_stable(reg):
     assert [c.name for c in reg.all()] == [
-        "help", "sources", "add", "ingest", "mode", "clear", "exit"
+        "help", "sources", "add", "ingest", "mode", "remove", "show", "retry", "status", "clear", "exit"
     ]
 
 
