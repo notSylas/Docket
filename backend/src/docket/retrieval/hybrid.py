@@ -19,8 +19,9 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine, bindparam, text
 
+from docket.db.models import SourceStatus
 from docket.inference.gateway import InferenceGateway
 
 _DEFAULT_RRF_K = 60
@@ -112,30 +113,111 @@ def _sanitize_fts_query(query: str) -> str:
     return " OR ".join(f'"{term}"' for term in terms)
 
 
+# M3 -- revoked/current-version correctness: a source can be revoked (its
+# `Source.status` flips away from ACTIVE via `SourceManager.deactivate_source`)
+# and re-ingesting a changed file supersedes an old `EvidenceVersion`
+# (`is_current` flips to False). Neither leg of hybrid search is allowed to
+# surface a chunk from a non-ACTIVE source or a non-current evidence version,
+# regardless of how well it ranks lexically or semantically -- the CLI tells
+# the user a revoked source's "evidence is no longer searched", and that has
+# to actually be true. `fts_chunks` has no `source_id`/`evidence_version_id`
+# columns of its own (see `docket.index.fts_index`'s module docstring), but it
+# lives in the same SQLite database as the `chunks`/`sources`/
+# `evidence_versions` ORM tables (both are reached through the same `Engine`),
+# so the FTS query below joins straight through to them. `SourceStatus.ACTIVE`
+# is intentionally the only status treated as searchable (not e.g. MISSING --
+# see the M3 plan) and its `.name` ("ACTIVE") is what SQLAlchemy's `Enum` type
+# actually persists in the `sources.status` column (verified against a real
+# migrated DB), not `.value` ("active").
+_FTS_SEARCH_SQL = text(
+    "SELECT fts_chunks.chunk_id FROM fts_chunks "
+    "JOIN chunks ON chunks.id = fts_chunks.chunk_id "
+    "JOIN sources ON sources.id = chunks.source_id "
+    "JOIN evidence_versions ON evidence_versions.id = chunks.evidence_version_id "
+    "WHERE fts_chunks MATCH :query "
+    "AND sources.status = :active_status "
+    "AND evidence_versions.is_current = :is_current "
+    "ORDER BY bm25(fts_chunks) LIMIT :limit"
+)
+
+
 def fts_search(engine: Engine, query: str, top_k: int) -> list[str]:
     """Run an FTS5 MATCH query against `fts_chunks`, returning chunk_ids
-    ranked by `bm25()` (best/lowest-scoring match first)."""
+    ranked by `bm25()` (best/lowest-scoring match first).
+
+    Joins through to `chunks`/`sources`/`evidence_versions` so a revoked
+    source's chunks or a superseded evidence version's chunks are excluded
+    *before* `ORDER BY .. LIMIT ..` runs -- they never occupy one of the
+    `top_k` slots that an active, current chunk could otherwise take (see
+    the module-level comment above `_FTS_SEARCH_SQL`).
+    """
     sanitized = _sanitize_fts_query(query).strip()
     if not sanitized:
         return []
     with engine.connect() as conn:
         rows = conn.execute(
-            text(
-                "SELECT chunk_id FROM fts_chunks WHERE fts_chunks MATCH :query "
-                "ORDER BY bm25(fts_chunks) LIMIT :limit"
-            ),
-            {"query": sanitized, "limit": top_k},
+            _FTS_SEARCH_SQL,
+            {
+                "query": sanitized,
+                "limit": top_k,
+                "active_status": SourceStatus.ACTIVE.name,
+                "is_current": True,
+            },
         )
         return [row[0] for row in rows]
 
 
-def vector_search(table: Any, gateway: InferenceGateway, query: str, top_k: int) -> list[str]:
+_ALLOWED_CHUNK_IDS_SQL = text(
+    "SELECT chunks.id FROM chunks "
+    "JOIN sources ON sources.id = chunks.source_id "
+    "JOIN evidence_versions ON evidence_versions.id = chunks.evidence_version_id "
+    "WHERE chunks.id IN :chunk_ids "
+    "AND sources.status = :active_status "
+    "AND evidence_versions.is_current = :is_current"
+).bindparams(bindparam("chunk_ids", expanding=True))
+
+
+def _filter_active_and_current(engine: Engine, chunk_ids: list[str]) -> list[str]:
+    """Filter `chunk_ids` (in-place order preserved) down to those whose
+    source is ACTIVE and whose evidence version is current.
+
+    The LanceDB vector table has no `evidence_version_id`/status columns of
+    its own (see `docket.index.vector_index`'s schema note -- it only carries
+    `chunk_id`/`source_id`/`text`/`vector`), so unlike `fts_search` (which can
+    join and filter inside the SQL query itself), vector search's result has
+    to be post-filtered against the real `chunks`/`sources`/`evidence_versions`
+    tables through `engine` after the nearest-neighbor search runs. This can
+    return fewer than `top_k` results when a revoked/superseded chunk would
+    otherwise have ranked in the top `top_k` -- correct filtering matters more
+    here than backfilling the slot it leaves (M5's candidate-pool widening is
+    the place to do that, not this fix).
+    """
+    if not chunk_ids:
+        return []
+    with engine.connect() as conn:
+        rows = conn.execute(
+            _ALLOWED_CHUNK_IDS_SQL,
+            {
+                "chunk_ids": chunk_ids,
+                "active_status": SourceStatus.ACTIVE.name,
+                "is_current": True,
+            },
+        )
+        allowed = {row[0] for row in rows}
+    return [chunk_id for chunk_id in chunk_ids if chunk_id in allowed]
+
+
+def vector_search(
+    table: Any, engine: Engine, gateway: InferenceGateway, query: str, top_k: int
+) -> list[str]:
     """Embed `query` via `gateway` and run a nearest-neighbor search against
     `table` (a LanceDB `chunks` table), returning chunk_ids ranked by vector
-    similarity (best match first)."""
+    similarity (best match first), filtered to active/current chunks via
+    `engine` (see `_filter_active_and_current`)."""
     query_vector = gateway.embed(query)
     results = table.search(query_vector).limit(top_k).to_list()
-    return [row["chunk_id"] for row in results]
+    chunk_ids = [row["chunk_id"] for row in results]
+    return _filter_active_and_current(engine, chunk_ids)
 
 
 def hybrid_search(
@@ -148,8 +230,13 @@ def hybrid_search(
 ) -> list[RankedChunk]:
     """Run lexical and semantic search (each requesting `top_k` results) and
     fuse them via Reciprocal Rank Fusion, returning the top `top_k` fused
-    results."""
+    results.
+
+    Both legs already exclude revoked-source/non-current-version chunks
+    (`fts_search`'s SQL join, `vector_search`'s post-filter), so the fused
+    result inherits that guarantee for free -- RRF only ever combines
+    chunk_ids that were present in one of the input lists."""
     fts_ranked = fts_search(engine, query, top_k)
-    vector_ranked = vector_search(table, gateway, query, top_k)
+    vector_ranked = vector_search(table, engine, gateway, query, top_k)
     fused = reciprocal_rank_fusion([fts_ranked, vector_ranked])
     return fused[:top_k]

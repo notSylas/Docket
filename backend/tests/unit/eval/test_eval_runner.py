@@ -97,11 +97,17 @@ def test_full_run_records_everything(gold, fixtures_dir, tmp_path):
     assert by_id["ceo-name"].abstained and by_id["ceo-name"].answer == ABSTENTION_PHRASE
     assert by_id["ceo-name"].spans_indexed == []
 
-    # Revoked questions run last. Retrieval does not filter revoked sources yet
-    # (milestone M3), so the harness must surface that as leaks.
+    # Revoked questions run last. Retrieval now filters revoked sources
+    # (milestone M3: hybrid_search joins to sources/evidence_versions and
+    # excludes anything not ACTIVE/current), so the "finance" source's
+    # engineering-budget chunk must not come back at all while it's revoked,
+    # and the harness must report zero leaks.
     assert records[-1].question_id == "revoked-engineering"
+    assert not any(
+        "engineering budget is $3,500,000" in c.text for c in by_id["revoked-engineering"].retrieved
+    )
     report = build_report(gold, records)
-    assert report.revoked_retrieval_leaks == 2
+    assert report.revoked_retrieval_leaks == 0
     assert report.overall.strict.passed == 8
     assert (report.abstention_recall.passed, report.abstention_recall.total) == (4, 4)  # runs
 

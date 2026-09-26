@@ -7,6 +7,17 @@ from pathlib import Path
 
 from sqlalchemy import Engine
 
+from docket.db.engine import get_session_factory
+from docket.db.models import (
+    AuthorizedSource,
+    Chunk,
+    ChunkRecipe,
+    EvidenceUnit,
+    EvidenceVersion,
+    Source,
+    SourceStatus,
+    Workspace,
+)
 from docket.index.base import ChunkRecord
 from docket.index.fts_index import FtsIndexWriter
 from docket.index.vector_index import LanceIndexWriter
@@ -19,6 +30,122 @@ from docket.retrieval.hybrid import (
     reciprocal_rank_fusion,
     vector_search,
 )
+
+
+def _insert_metadata(
+    engine: Engine,
+    records: list[ChunkRecord],
+    *,
+    status: SourceStatus = SourceStatus.ACTIVE,
+    is_current: bool = True,
+) -> None:
+    """Insert the `Source`/`EvidenceVersion`/`EvidenceUnit`/`ChunkRecipe`/
+    `Chunk` ORM rows that `hybrid_search`'s M3 status/`is_current` join
+    (`fts_search`'s SQL join, `vector_search`'s post-filter) reads from.
+
+    Pre-M3, `fts_search`/`vector_search` only ever touched the `fts_chunks`
+    FTS5 table / the LanceDB table directly, so this module's fixtures
+    (`_populate_fts`/`_populate_vector`) never needed to populate the real
+    `chunks`/`sources`/`evidence_versions` tables (unlike
+    `test_query_service.py`'s `built` fixture, which always has -- it builds
+    the real ORM chain for `EvidenceResolver`'s sake). Now that
+    `hybrid_search` joins through to them for every query, this fixture has
+    to populate them too, or every chunk here would look like it belongs to
+    a nonexistent (therefore unfilterable-as-active) source. One call
+    handles every (source_id, evidence_version_id) pair present in
+    `records`, defaulting to an ACTIVE, current source -- the status the
+    vast majority of this file's pre-existing tests need to keep passing;
+    the new revoked/non-current tests below pass `status`/`is_current`
+    explicitly.
+    """
+    session_factory = get_session_factory(engine)
+    with session_factory() as session:
+        seen_sources: set[str] = set()
+        seen_versions: set[str] = set()
+        seen_recipes: set[str] = set()
+        seen_units: set[str] = set()
+        for record in records:
+            if record.source_id not in seen_sources:
+                seen_sources.add(record.source_id)
+                workspace = Workspace(id=f"ws_{record.source_id}", name=f"ws-{record.source_id}")
+                session.merge(workspace)
+                auth = AuthorizedSource(
+                    id=f"auth_{record.source_id}", workspace_id=workspace.id, scope_path="/tmp"
+                )
+                session.merge(auth)
+                session.merge(
+                    Source(
+                        id=record.source_id,
+                        workspace_id=workspace.id,
+                        authorized_source_id=auth.id,
+                        source_type="local_folder",
+                        path=f"/tmp/{record.source_id}",
+                        status=status,
+                    )
+                )
+            if record.evidence_version_id not in seen_versions:
+                seen_versions.add(record.evidence_version_id)
+                session.merge(
+                    EvidenceVersion(
+                        id=record.evidence_version_id,
+                        source_id=record.source_id,
+                        content_hash=f"hash_{record.evidence_version_id}",
+                        byte_size=1,
+                        parser_name="test",
+                        parser_version="1",
+                        is_current=is_current,
+                    )
+                )
+            if record.chunk_recipe_id not in seen_recipes:
+                seen_recipes.add(record.chunk_recipe_id)
+                session.merge(
+                    ChunkRecipe(
+                        id=record.chunk_recipe_id,
+                        chunk_size=100,
+                        overlap=0,
+                        splitter="test",
+                        parser_name="test",
+                        parser_version="1",
+                    )
+                )
+            if record.evidence_unit_id not in seen_units:
+                seen_units.add(record.evidence_unit_id)
+                session.merge(
+                    EvidenceUnit(
+                        id=record.evidence_unit_id,
+                        evidence_version_id=record.evidence_version_id,
+                        unit_index=record.ordinal,
+                        heading=record.heading,
+                        content_hash=record.content_hash,
+                    )
+                )
+            session.merge(
+                Chunk(
+                    id=record.chunk_id,
+                    source_id=record.source_id,
+                    evidence_version_id=record.evidence_version_id,
+                    evidence_unit_id=record.evidence_unit_id,
+                    chunk_recipe_id=record.chunk_recipe_id,
+                    ordinal=record.ordinal,
+                    heading=record.heading,
+                    text=record.text,
+                    content_hash=record.content_hash,
+                )
+            )
+        session.commit()
+
+
+def _set_source_status(engine: Engine, source_id: str, status: SourceStatus) -> None:
+    """Flip an already-inserted source's status in place -- used by the
+    reactivation test to mirror `SourceManager.deactivate_source`/the eval
+    runner's `_set_status` (revoke, then restore to ACTIVE) without needing
+    the full `SourceManager`."""
+    session_factory = get_session_factory(engine)
+    with session_factory() as session:
+        source = session.get(Source, source_id)
+        assert source is not None
+        source.status = status
+        session.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -101,27 +228,26 @@ _DOCS = [
 
 def _populate_fts(engine: Engine) -> FtsIndexWriter:
     writer = FtsIndexWriter(engine)
-    writer.upsert(
-        [
-            ChunkRecord(
-                chunk_id=chunk_id,
-                source_id="src_1",
-                evidence_version_id="ev_1",
-                evidence_unit_id="eu_1",
-                chunk_recipe_id="rcp_1",
-                ordinal=i,
-                heading=None,
-                text=text,
-                content_hash="hash_" + chunk_id,
-            )
-            for i, (chunk_id, text) in enumerate(_DOCS)
-        ],
-        embeddings=None,
-    )
+    records = [
+        ChunkRecord(
+            chunk_id=chunk_id,
+            source_id="src_1",
+            evidence_version_id="ev_1",
+            evidence_unit_id="eu_1",
+            chunk_recipe_id="rcp_1",
+            ordinal=i,
+            heading=None,
+            text=text,
+            content_hash="hash_" + chunk_id,
+        )
+        for i, (chunk_id, text) in enumerate(_DOCS)
+    ]
+    writer.upsert(records, embeddings=None)
+    _insert_metadata(engine, records)
     return writer
 
 
-def _populate_vector(tmp_path: Path, gateway: FakeInferenceGateway):
+def _populate_vector(tmp_path: Path, engine: Engine, gateway: FakeInferenceGateway):
     writer = LanceIndexWriter(tmp_path / "lancedb")
     records = [
         ChunkRecord(
@@ -139,6 +265,7 @@ def _populate_vector(tmp_path: Path, gateway: FakeInferenceGateway):
     ]
     embeddings = [gateway.embed(text) for _, text in _DOCS]
     writer.upsert(records, embeddings=embeddings)
+    _insert_metadata(engine, records)
     return writer._open_table()
 
 
@@ -165,14 +292,16 @@ def test_fts_search_empty_after_sanitization_returns_empty_list(
     assert fts_search(migrated_sqlite_engine, "!!!---:::", top_k=8) == []
 
 
-def test_vector_search_returns_chunk_embedded_with_same_query_text(tmp_path: Path) -> None:
+def test_vector_search_returns_chunk_embedded_with_same_query_text(
+    migrated_sqlite_engine: Engine, tmp_path: Path
+) -> None:
     gateway = FakeInferenceGateway()
-    table = _populate_vector(tmp_path, gateway)
+    table = _populate_vector(tmp_path, migrated_sqlite_engine, gateway)
 
     # Query with the exact same text as one of the indexed chunks -- with the
     # deterministic FakeInferenceGateway this must be the nearest neighbor.
     query_text = _DOCS[1][1]
-    results = vector_search(table, gateway, query_text, top_k=1)
+    results = vector_search(table, migrated_sqlite_engine, gateway, query_text, top_k=1)
     assert results == ["chk_beta"]
 
 
@@ -181,7 +310,7 @@ def test_hybrid_search_end_to_end_returns_expected_top_result(
 ) -> None:
     gateway = FakeInferenceGateway()
     _populate_fts(migrated_sqlite_engine)
-    table = _populate_vector(tmp_path, gateway)
+    table = _populate_vector(tmp_path, migrated_sqlite_engine, gateway)
 
     query = _DOCS[2][1]  # obviously about RRF -- both lexical and vector should agree
     fused = hybrid_search(
@@ -195,7 +324,7 @@ def test_hybrid_search_end_to_end_returns_expected_top_result(
 def test_hybrid_search_respects_top_k(migrated_sqlite_engine: Engine, tmp_path: Path) -> None:
     gateway = FakeInferenceGateway()
     _populate_fts(migrated_sqlite_engine)
-    table = _populate_vector(tmp_path, gateway)
+    table = _populate_vector(tmp_path, migrated_sqlite_engine, gateway)
 
     fused = hybrid_search(
         engine=migrated_sqlite_engine,
@@ -288,36 +417,35 @@ def test_fts_search_finds_journeys_question_that_previously_returned_zero_rows(
     contained that phrasing. The fixed sanitizer (stopwords dropped, terms
     OR'd) must find it."""
     writer = FtsIndexWriter(migrated_sqlite_engine)
-    writer.upsert(
-        [
-            ChunkRecord(
-                chunk_id="chk_journeys",
-                source_id="src_1",
-                evidence_version_id="ev_1",
-                evidence_unit_id="eu_1",
-                chunk_recipe_id="rcp_1",
-                ordinal=0,
-                heading="User Journeys",
-                text=(
-                    "The PRD defines six user journeys covering onboarding, "
-                    "search, checkout, support, renewal, and offboarding."
-                ),
-                content_hash="hash_journeys",
+    records = [
+        ChunkRecord(
+            chunk_id="chk_journeys",
+            source_id="src_1",
+            evidence_version_id="ev_1",
+            evidence_unit_id="eu_1",
+            chunk_recipe_id="rcp_1",
+            ordinal=0,
+            heading="User Journeys",
+            text=(
+                "The PRD defines six user journeys covering onboarding, "
+                "search, checkout, support, renewal, and offboarding."
             ),
-            ChunkRecord(
-                chunk_id="chk_unrelated",
-                source_id="src_1",
-                evidence_version_id="ev_1",
-                evidence_unit_id="eu_1",
-                chunk_recipe_id="rcp_1",
-                ordinal=1,
-                heading="Pricing",
-                text="Pricing tiers are Free, Pro, and Enterprise.",
-                content_hash="hash_pricing",
-            ),
-        ],
-        embeddings=None,
-    )
+            content_hash="hash_journeys",
+        ),
+        ChunkRecord(
+            chunk_id="chk_unrelated",
+            source_id="src_1",
+            evidence_version_id="ev_1",
+            evidence_unit_id="eu_1",
+            chunk_recipe_id="rcp_1",
+            ordinal=1,
+            heading="Pricing",
+            text="Pricing tiers are Free, Pro, and Enterprise.",
+            content_hash="hash_pricing",
+        ),
+    ]
+    writer.upsert(records, embeddings=None)
+    _insert_metadata(migrated_sqlite_engine, records)
 
     results = fts_search(
         migrated_sqlite_engine, "What are the six user journeys defined in the PRD", top_k=8
@@ -344,22 +472,21 @@ def test_fts_search_handles_literal_and_or_not_without_raising(
 
 def test_fts_search_finds_hyphenated_id_like_nfr_003(migrated_sqlite_engine: Engine) -> None:
     writer = FtsIndexWriter(migrated_sqlite_engine)
-    writer.upsert(
-        [
-            ChunkRecord(
-                chunk_id="chk_nfr003",
-                source_id="src_1",
-                evidence_version_id="ev_1",
-                evidence_unit_id="eu_1",
-                chunk_recipe_id="rcp_1",
-                ordinal=0,
-                heading="Non-Functional Requirements",
-                text="NFR-003: the system must respond within 200ms at p95.",
-                content_hash="hash_nfr003",
-            ),
-        ],
-        embeddings=None,
-    )
+    records = [
+        ChunkRecord(
+            chunk_id="chk_nfr003",
+            source_id="src_1",
+            evidence_version_id="ev_1",
+            evidence_unit_id="eu_1",
+            chunk_recipe_id="rcp_1",
+            ordinal=0,
+            heading="Non-Functional Requirements",
+            text="NFR-003: the system must respond within 200ms at p95.",
+            content_hash="hash_nfr003",
+        ),
+    ]
+    writer.upsert(records, embeddings=None)
+    _insert_metadata(migrated_sqlite_engine, records)
 
     results = fts_search(migrated_sqlite_engine, "What does NFR-003 require?", top_k=8)
     assert "chk_nfr003" in results
@@ -372,22 +499,21 @@ def test_fts_search_finds_journey_stem_variant_via_porter_stemming(
     (0003_fts_porter_stemming) -- a query for the singular "journey" should
     still find a chunk that only contains the plural "journeys"."""
     writer = FtsIndexWriter(migrated_sqlite_engine)
-    writer.upsert(
-        [
-            ChunkRecord(
-                chunk_id="chk_journeys",
-                source_id="src_1",
-                evidence_version_id="ev_1",
-                evidence_unit_id="eu_1",
-                chunk_recipe_id="rcp_1",
-                ordinal=0,
-                heading=None,
-                text="The PRD defines six user journeys.",
-                content_hash="hash_journeys",
-            ),
-        ],
-        embeddings=None,
-    )
+    records = [
+        ChunkRecord(
+            chunk_id="chk_journeys",
+            source_id="src_1",
+            evidence_version_id="ev_1",
+            evidence_unit_id="eu_1",
+            chunk_recipe_id="rcp_1",
+            ordinal=0,
+            heading=None,
+            text="The PRD defines six user journeys.",
+            content_hash="hash_journeys",
+        ),
+    ]
+    writer.upsert(records, embeddings=None)
+    _insert_metadata(migrated_sqlite_engine, records)
 
     results = fts_search(migrated_sqlite_engine, "user journey", top_k=8)
     assert "chk_journeys" in results
@@ -400,38 +526,292 @@ def test_fts_search_finds_journey_stem_variant_via_porter_stemming(
 
 def test_fts_search_ranks_stronger_match_first_via_bm25(migrated_sqlite_engine: Engine) -> None:
     writer = FtsIndexWriter(migrated_sqlite_engine)
-    writer.upsert(
-        [
-            ChunkRecord(
-                chunk_id="chk_weak",
-                source_id="src_1",
-                evidence_version_id="ev_1",
-                evidence_unit_id="eu_1",
-                chunk_recipe_id="rcp_1",
-                ordinal=0,
-                heading=None,
-                # "fusion" appears once, buried among unrelated content.
-                text="This chunk briefly mentions fusion once and otherwise "
-                "discusses gardening, weather, and travel plans.",
-                content_hash="hash_weak",
-            ),
-            ChunkRecord(
-                chunk_id="chk_strong",
-                source_id="src_1",
-                evidence_version_id="ev_1",
-                evidence_unit_id="eu_1",
-                chunk_recipe_id="rcp_1",
-                ordinal=1,
-                heading=None,
-                # "fusion" is the entire subject -- much higher term
-                # frequency relative to document length, so bm25 should
-                # rank it above chk_weak.
-                text="fusion fusion fusion",
-                content_hash="hash_strong",
-            ),
-        ],
-        embeddings=None,
-    )
+    records = [
+        ChunkRecord(
+            chunk_id="chk_weak",
+            source_id="src_1",
+            evidence_version_id="ev_1",
+            evidence_unit_id="eu_1",
+            chunk_recipe_id="rcp_1",
+            ordinal=0,
+            heading=None,
+            # "fusion" appears once, buried among unrelated content.
+            text="This chunk briefly mentions fusion once and otherwise "
+            "discusses gardening, weather, and travel plans.",
+            content_hash="hash_weak",
+        ),
+        ChunkRecord(
+            chunk_id="chk_strong",
+            source_id="src_1",
+            evidence_version_id="ev_1",
+            evidence_unit_id="eu_1",
+            chunk_recipe_id="rcp_1",
+            ordinal=1,
+            heading=None,
+            # "fusion" is the entire subject -- much higher term
+            # frequency relative to document length, so bm25 should
+            # rank it above chk_weak.
+            text="fusion fusion fusion",
+            content_hash="hash_strong",
+        ),
+    ]
+    writer.upsert(records, embeddings=None)
+    _insert_metadata(migrated_sqlite_engine, records)
 
     results = fts_search(migrated_sqlite_engine, "fusion", top_k=8)
     assert results.index("chk_strong") < results.index("chk_weak")
+
+
+# ---------------------------------------------------------------------------
+# M3 -- revoked sources / non-current evidence versions must never surface,
+# even when they're the single best lexical or semantic match.
+# ---------------------------------------------------------------------------
+
+
+def test_fts_search_excludes_revoked_source_chunk_even_as_best_lexical_match(
+    migrated_sqlite_engine: Engine,
+) -> None:
+    writer = FtsIndexWriter(migrated_sqlite_engine)
+    records = [
+        ChunkRecord(
+            chunk_id="chk_revoked",
+            source_id="src_revoked",
+            evidence_version_id="ev_revoked",
+            evidence_unit_id="eu_revoked",
+            chunk_recipe_id="rcp_1",
+            ordinal=0,
+            heading=None,
+            # "zephyrion" repeated -- the strongest possible bm25 match --
+            # so if the revoked filter weren't airtight, this chunk would
+            # win the ranking outright.
+            text="zephyrion zephyrion zephyrion zephyrion",
+            content_hash="hash_revoked",
+        ),
+        ChunkRecord(
+            chunk_id="chk_active",
+            source_id="src_active",
+            evidence_version_id="ev_active",
+            evidence_unit_id="eu_active",
+            chunk_recipe_id="rcp_1",
+            ordinal=0,
+            heading=None,
+            text="zephyrion appears once here, among other unrelated words.",
+            content_hash="hash_active",
+        ),
+    ]
+    writer.upsert(records, embeddings=None)
+    _insert_metadata(migrated_sqlite_engine, [records[0]], status=SourceStatus.REVOKED)
+    _insert_metadata(migrated_sqlite_engine, [records[1]], status=SourceStatus.ACTIVE)
+
+    results = fts_search(migrated_sqlite_engine, "zephyrion", top_k=8)
+
+    assert "chk_revoked" not in results
+    assert "chk_active" in results
+
+
+def test_vector_search_excludes_revoked_source_chunk_even_as_best_semantic_match(
+    migrated_sqlite_engine: Engine, tmp_path: Path
+) -> None:
+    gateway = FakeInferenceGateway()
+    writer = LanceIndexWriter(tmp_path / "lancedb")
+    revoked_text = "The quarterly compliance audit findings are summarized here."
+    records = [
+        ChunkRecord(
+            chunk_id="chk_revoked",
+            source_id="src_revoked",
+            evidence_version_id="ev_revoked",
+            evidence_unit_id="eu_revoked",
+            chunk_recipe_id="rcp_1",
+            ordinal=0,
+            heading=None,
+            text=revoked_text,
+            content_hash="hash_revoked",
+        ),
+        ChunkRecord(
+            chunk_id="chk_active",
+            source_id="src_active",
+            evidence_version_id="ev_active",
+            evidence_unit_id="eu_active",
+            chunk_recipe_id="rcp_1",
+            ordinal=0,
+            heading=None,
+            text="Unrelated content about garden irrigation schedules.",
+            content_hash="hash_active",
+        ),
+    ]
+    embeddings = [gateway.embed(r.text) for r in records]
+    writer.upsert(records, embeddings=embeddings)
+    _insert_metadata(migrated_sqlite_engine, [records[0]], status=SourceStatus.REVOKED)
+    _insert_metadata(migrated_sqlite_engine, [records[1]], status=SourceStatus.ACTIVE)
+    table = writer._open_table()
+
+    # Query with the exact revoked chunk's own text -- with the deterministic
+    # FakeInferenceGateway this is a guaranteed distance-0 nearest neighbor,
+    # so it would win top_k=1 outright if the filter weren't applied.
+    results = vector_search(table, migrated_sqlite_engine, gateway, revoked_text, top_k=2)
+
+    assert "chk_revoked" not in results
+
+
+def test_hybrid_search_excludes_revoked_source_chunk_from_fused_result(
+    migrated_sqlite_engine: Engine, tmp_path: Path
+) -> None:
+    gateway = FakeInferenceGateway()
+    revoked_text = "zephyrion zephyrion zephyrion -- the quarterly compliance findings."
+    active_text = "Unrelated content about garden irrigation schedules."
+    records = [
+        ChunkRecord(
+            chunk_id="chk_revoked",
+            source_id="src_revoked",
+            evidence_version_id="ev_revoked",
+            evidence_unit_id="eu_revoked",
+            chunk_recipe_id="rcp_1",
+            ordinal=0,
+            heading=None,
+            text=revoked_text,
+            content_hash="hash_revoked",
+        ),
+        ChunkRecord(
+            chunk_id="chk_active",
+            source_id="src_active",
+            evidence_version_id="ev_active",
+            evidence_unit_id="eu_active",
+            chunk_recipe_id="rcp_1",
+            ordinal=0,
+            heading=None,
+            text=active_text,
+            content_hash="hash_active",
+        ),
+    ]
+
+    fts_writer = FtsIndexWriter(migrated_sqlite_engine)
+    fts_writer.upsert(records, embeddings=None)
+
+    vector_writer = LanceIndexWriter(tmp_path / "lancedb")
+    embeddings = [gateway.embed(r.text) for r in records]
+    vector_writer.upsert(records, embeddings=embeddings)
+
+    _insert_metadata(migrated_sqlite_engine, [records[0]], status=SourceStatus.REVOKED)
+    _insert_metadata(migrated_sqlite_engine, [records[1]], status=SourceStatus.ACTIVE)
+    table = vector_writer._open_table()
+
+    # Query with the revoked chunk's own text: best possible lexical match
+    # ("zephyrion" x3) AND a guaranteed distance-0 semantic match. If either
+    # leg's filter leaked, RRF would still surface it.
+    fused = hybrid_search(
+        engine=migrated_sqlite_engine, table=table, gateway=gateway, query=revoked_text, top_k=8
+    )
+
+    assert "chk_revoked" not in [rc.chunk_id for rc in fused]
+
+
+def test_fts_search_excludes_non_current_evidence_version_chunk(
+    migrated_sqlite_engine: Engine,
+) -> None:
+    writer = FtsIndexWriter(migrated_sqlite_engine)
+    records = [
+        ChunkRecord(
+            chunk_id="chk_old_version",
+            source_id="src_1",
+            evidence_version_id="ev_old",
+            evidence_unit_id="eu_old",
+            chunk_recipe_id="rcp_1",
+            ordinal=0,
+            heading=None,
+            text="glorbnex glorbnex glorbnex -- superseded content.",
+            content_hash="hash_old",
+        ),
+        ChunkRecord(
+            chunk_id="chk_new_version",
+            source_id="src_1",
+            evidence_version_id="ev_new",
+            evidence_unit_id="eu_new",
+            chunk_recipe_id="rcp_1",
+            ordinal=0,
+            heading=None,
+            text="glorbnex appears once in the current re-ingested content.",
+            content_hash="hash_new",
+        ),
+    ]
+    writer.upsert(records, embeddings=None)
+    # Same source (ACTIVE), but the old record's evidence version is no
+    # longer current -- e.g. the file was re-ingested with new content.
+    _insert_metadata(migrated_sqlite_engine, [records[0]], is_current=False)
+    _insert_metadata(migrated_sqlite_engine, [records[1]], is_current=True)
+
+    results = fts_search(migrated_sqlite_engine, "glorbnex", top_k=8)
+
+    assert "chk_old_version" not in results
+    assert "chk_new_version" in results
+
+
+def test_vector_search_excludes_non_current_evidence_version_chunk(
+    migrated_sqlite_engine: Engine, tmp_path: Path
+) -> None:
+    gateway = FakeInferenceGateway()
+    writer = LanceIndexWriter(tmp_path / "lancedb")
+    old_text = "The superseded onboarding steps, before the process changed."
+    records = [
+        ChunkRecord(
+            chunk_id="chk_old_version",
+            source_id="src_1",
+            evidence_version_id="ev_old",
+            evidence_unit_id="eu_old",
+            chunk_recipe_id="rcp_1",
+            ordinal=0,
+            heading=None,
+            text=old_text,
+            content_hash="hash_old",
+        ),
+        ChunkRecord(
+            chunk_id="chk_new_version",
+            source_id="src_1",
+            evidence_version_id="ev_new",
+            evidence_unit_id="eu_new",
+            chunk_recipe_id="rcp_1",
+            ordinal=0,
+            heading=None,
+            text="Unrelated current content about a different topic entirely.",
+            content_hash="hash_new",
+        ),
+    ]
+    embeddings = [gateway.embed(r.text) for r in records]
+    writer.upsert(records, embeddings=embeddings)
+    _insert_metadata(migrated_sqlite_engine, [records[0]], is_current=False)
+    _insert_metadata(migrated_sqlite_engine, [records[1]], is_current=True)
+    table = writer._open_table()
+
+    results = vector_search(table, migrated_sqlite_engine, gateway, old_text, top_k=2)
+
+    assert "chk_old_version" not in results
+
+
+def test_reactivated_source_becomes_searchable_again(migrated_sqlite_engine: Engine) -> None:
+    """`SourceStatus` supports flipping a source's status back to ACTIVE
+    (this is exactly what the eval runner's `_set_status` does after a
+    `setup.revoke` question: revoke for the duration of that one question,
+    then restore to ACTIVE) -- a re-activated source's chunks must become
+    searchable again, proving the filter is a live per-query status check,
+    not a one-way/cached decision."""
+    writer = FtsIndexWriter(migrated_sqlite_engine)
+    records = [
+        ChunkRecord(
+            chunk_id="chk_flip",
+            source_id="src_flip",
+            evidence_version_id="ev_flip",
+            evidence_unit_id="eu_flip",
+            chunk_recipe_id="rcp_1",
+            ordinal=0,
+            heading=None,
+            text="woozlebane appears only in this chunk.",
+            content_hash="hash_flip",
+        ),
+    ]
+    writer.upsert(records, embeddings=None)
+    _insert_metadata(migrated_sqlite_engine, records, status=SourceStatus.REVOKED)
+
+    assert fts_search(migrated_sqlite_engine, "woozlebane", top_k=8) == []
+
+    _set_source_status(migrated_sqlite_engine, "src_flip", SourceStatus.ACTIVE)
+
+    assert fts_search(migrated_sqlite_engine, "woozlebane", top_k=8) == ["chk_flip"]
