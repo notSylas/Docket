@@ -97,13 +97,16 @@ def _alembic_config(sqlite_path: Path) -> Config:
 
 
 def _ensure_schema(sqlite_path: Path) -> None:
-    """Run Alembic migrations up to `head` if the DB file doesn't exist yet,
-    so a fresh CLI run against an empty data dir never crashes with "no such
-    table". If the file already exists, it's assumed to already be migrated
-    (or managed manually via `alembic upgrade head`) -- we don't re-run
-    migrations on every single CLI invocation against an existing DB."""
-    if sqlite_path.exists():
-        return
+    """Run Alembic migrations up to `head`, every CLI invocation.
+
+    `alembic upgrade head` is a no-op (a fast read of the `alembic_version`
+    table) when already current, so this is cheap for the common case and
+    means a schema change (like 0003's FTS5 retokenization) actually reaches
+    an existing user's DB on their next command, not just a fresh install.
+    Previously this only ran when the DB file didn't exist yet, which left
+    existing installs permanently on whatever schema they were created with
+    unless someone ran `alembic upgrade head` by hand.
+    """
     command.upgrade(_alembic_config(sqlite_path), "head")
 
 

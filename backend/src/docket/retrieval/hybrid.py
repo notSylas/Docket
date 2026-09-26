@@ -15,6 +15,7 @@ independent of any real search backend. `fts_search`/`vector_search`/
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -23,6 +24,30 @@ from sqlalchemy import Engine, text
 from docket.inference.gateway import InferenceGateway
 
 _DEFAULT_RRF_K = 60
+
+# A short, defensible English stopword list -- articles, forms of "be",
+# wh-words, and a handful of common prepositions/conjunctions. Deliberately
+# NOT exhaustive: over-stripping risks discarding a term that's actually
+# informative for a niche question, and the goal here is just to stop a
+# natural-language question's function words from starving out its content
+# words when every remaining term is OR'd together (see
+# `_sanitize_fts_query`). Includes "and"/"or"/"not" -- these double as FTS5
+# boolean operators, so dropping them (on top of quoting every surviving
+# term below) means a question that happens to contain them as plain English
+# words never risks being parsed as FTS5 syntax.
+_FTS_STOPWORDS = frozenset(
+    {
+        "a", "an", "the",
+        "is", "are", "was", "were", "be", "been", "being",
+        "what", "which", "who", "whom", "whose", "when", "where", "why", "how",
+        "of", "to", "in", "on", "at", "by", "for", "with", "from", "as", "into",
+        "and", "or", "not",
+        "do", "does", "did",
+        "this", "that", "these", "those",
+    }
+)
+
+_WORD_RE = re.compile(r"\w+")
 
 
 @dataclass(frozen=True)
@@ -53,29 +78,52 @@ def reciprocal_rank_fusion(
 
 
 def _sanitize_fts_query(query: str) -> str:
-    """Strip characters that aren't alphanumeric/whitespace before building
-    an FTS5 MATCH query.
+    """Turn a natural-language question into a safe FTS5 MATCH query.
 
-    Raw FTS5 query syntax treats characters like `"`, `-`, `:`, `(`, `)`, `*`
-    specially and can raise a syntax error on arbitrary user input (e.g. a
-    question containing a colon or a quote). Reducing the query to its
-    alphanumeric tokens avoids that entirely, at the cost of losing FTS5's
-    phrase/boolean operators -- an acceptable tradeoff for this use case
-    (searching with a natural-language question, not a crafted query).
-    Same approach as `spike/query.py`'s `fts_search`.
+    The naive approach (AND-ing every alphanumeric token together) fails
+    badly on real questions: function words like "what"/"the"/"is" are
+    ANDed in right alongside the content words, so a question like "What
+    are the six user journeys defined in the PRD" requires "what" AND
+    "are" AND "the" AND ... AND "journeys" AND ... to all appear in one
+    chunk -- which usually returns zero rows, silently collapsing hybrid
+    retrieval to vector-only (this was measured: 11/11 classifiable
+    failures in the first accuracy-milestone baseline were retrieval
+    misses). Bare `and`/`or`/`not` are also FTS5 boolean operators, so an
+    unquoted question containing them as ordinary English words risked a
+    syntax error or a mis-parsed query.
+
+    This version: lowercases, tokenizes on `\\w+` (matching the ingest-side
+    tokenizer's own word-splitting, including on ids like "J-01" ->
+    "j"/"01"), drops a short stopword list (`_FTS_STOPWORDS`, which
+    includes and/or/not), double-quotes each remaining term (a quoted FTS5
+    phrase can never be parsed as an operator, belt-and-suspenders even
+    for terms the stopword list doesn't catch), and ORs them together --
+    any one content word matching is enough to surface a candidate chunk,
+    with the vector side and RRF fusion in `hybrid_search` supplying the
+    precision. If every token is a stopword (or the query is empty/query
+    is all punctuation), falls back to the unfiltered token list rather
+    than emit an empty MATCH query (which FTS5 would reject) or silently
+    return nothing.
     """
-    return "".join(c if c.isalnum() or c.isspace() else " " for c in query)
+    words = _WORD_RE.findall(query.lower())
+    terms = [w for w in words if w not in _FTS_STOPWORDS]
+    if not terms:
+        terms = words
+    return " OR ".join(f'"{term}"' for term in terms)
 
 
 def fts_search(engine: Engine, query: str, top_k: int) -> list[str]:
     """Run an FTS5 MATCH query against `fts_chunks`, returning chunk_ids
-    ranked by FTS5's own `rank` (best match first)."""
+    ranked by `bm25()` (best/lowest-scoring match first)."""
     sanitized = _sanitize_fts_query(query).strip()
     if not sanitized:
         return []
     with engine.connect() as conn:
         rows = conn.execute(
-            text("SELECT chunk_id FROM fts_chunks WHERE fts_chunks MATCH :query ORDER BY rank LIMIT :limit"),
+            text(
+                "SELECT chunk_id FROM fts_chunks WHERE fts_chunks MATCH :query "
+                "ORDER BY bm25(fts_chunks) LIMIT :limit"
+            ),
             {"query": sanitized, "limit": top_k},
         )
         return [row[0] for row in rows]
