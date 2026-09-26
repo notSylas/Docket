@@ -1,0 +1,375 @@
+version: 1
+questions:
+- id: draft-ea7eb9a7
+  type: single_fact
+  question: What is the name of the gate that requires the source to be authorized/versioned and evidence
+    to persist?
+  answerable: true
+  must_contain:
+  - Foundation gate
+  gold_spans:
+  - G0 | Foundation gate | Source can be authorized/versioned;
+  origin: "Docs > 3. Phase 0 \u2014 Foundation"
+  reviewed: true
+- id: draft-e690796d
+  type: single_fact
+  question: What is the initial candidate for the embedding dimension/model?
+  answerable: true
+  must_contain:
+  - Qwen3-Embedding-0.6B
+  gold_spans:
+  - Qwen3-Embedding-0.6B initial candidate
+  origin: Docs > 24. Open Decisions and Benchmark Gates
+  reviewed: true
+- id: draft-86d7f88f
+  type: enumeration
+  question: What are the requirements for new agent capability additions?
+  answerable: true
+  gold_spans:
+  - No new agent capability is added without policy allow-list
+  enumeration:
+  - policy allow-list
+  - security test coverage
+  origin: Docs > 16. Engineering Definition of Done
+  reviewed: true
+- id: draft-842d2b6d
+  type: single_fact
+  question: What must every vector resolve to in SQLite?
+  answerable: true
+  must_contain:
+  - chunk_id
+  gold_spans:
+  - Every vector must resolve to a valid chunk_id in SQLite.
+  origin: Docs > 7.1 Vector invariants
+  reviewed: true
+- id: draft-2b1c5291
+  type: single_fact
+  question: What is the name of the current Phase-1 baseline candidate for the vector database?
+  answerable: true
+  must_contain:
+  - LanceDB
+  gold_spans:
+  - LanceDB is the current Phase-1 baseline candidate
+  origin: Docs > 7. Vector Index Schema
+  reviewed: true
+- id: draft-b4ab3a6b
+  type: table_lookup
+  question: What is the status of the architectural decision regarding the vector backend?
+  answerable: true
+  must_contain:
+  - Pending benchmark
+  gold_spans:
+  - 'Vector backend is embedded and benchmark-gated: LanceDB'
+  origin: Docs > 13. Architectural Decisions
+  reviewed: true
+- id: draft-e4ef8eea
+  type: single_fact
+  question: What is the retry guidance for the 'Rerank' call?
+  answerable: true
+  must_contain:
+  - Retry once/twice
+  gold_spans:
+  - Retry once/twice within query deadline; otherwise skip
+  origin: Docs > 8.1 Timeouts/Retry Policy
+  reviewed: true
+- id: draft-c85dd82f
+  type: single_fact
+  question: What is the deliverable for work package 5.1?
+  answerable: true
+  must_contain:
+  - Central API/workers/storage/index deployment design
+  gold_spans:
+  - Central API/workers/storage/index deployment design
+  origin: "Docs > 8. Phase 5 \u2014 Enterprise"
+  reviewed: true
+- id: draft-883a939c
+  type: enumeration
+  question: What must be true before proceeding for G1 Documents?
+  answerable: true
+  gold_spans:
+  - Supported formats ingest; retrieval benchmark passes;
+  enumeration:
+  - Supported formats ingest
+  - retrieval benchmark passes
+  - citations resolve
+  - abstention works
+  - resource/package/license benchmarks pass
+  origin: Docs > 11. Release Gates
+  reviewed: true
+- id: draft-923dbc67
+  type: single_fact
+  question: What is the name of the capability that involves understanding change history?
+  answerable: true
+  must_contain:
+  - CAP-10
+  gold_spans:
+  - CAP-10 | Understand change history
+  origin: Docs > 5. Functional Capability Map
+  reviewed: true
+- id: draft-c38f54b2
+  type: single_fact
+  question: What does the inference provider point to in the fully local variant?
+  answerable: true
+  must_contain:
+  - local model server
+  gold_spans:
+  - The inference provider may point to a local model server
+  origin: Docs > 10.2 Fully Local Variant
+  reviewed: true
+- id: draft-69871a0e
+  type: single_fact
+  question: What is the default retrieval behavior regarding the number of candidates requested?
+  answerable: true
+  must_contain:
+  - tens of lightweight candidates
+  gold_spans:
+  - Default retrieval should request tens of lightweight
+  origin: Docs > 7. Resource and Performance Requirements
+  reviewed: true
+- id: draft-7bd3feb2
+  type: single_fact
+  question: What does the Local filesystem provide?
+  answerable: true
+  must_contain:
+  - authorized document/code content
+  gold_spans:
+  - Provides authorized document/code content; never receives
+  origin: Docs > 1.1 External Actors
+  reviewed: true
+- id: draft-603adc2d
+  type: enumeration
+  question: What are the key columns for the document_metadata table?
+  answerable: true
+  gold_spans:
+  - evidence_version_id, title, author, created_at, modified_at,
+  enumeration:
+  - evidence_version_id
+  - title
+  - author
+  - created_at
+  - modified_at
+  - page_count
+  - doc_type
+  origin: Docs > 9. Document Intelligence Extensions
+  reviewed: true
+- id: draft-22c020bd
+  type: single_fact
+  question: What is the technology baseline for the Evidence Content Store?
+  answerable: true
+  must_contain:
+  - Encrypted local content store
+  gold_spans:
+  - Encrypted local content store; content-addressed layout
+  origin: Docs > 4.1 Storage Ownership
+  reviewed: true
+- id: draft-fbf31c04
+  type: single_fact
+  question: What are the requirements for a clean installation regarding mandatory paid SaaS dependencies?
+  answerable: true
+  must_contain:
+  - no mandatory paid SaaS
+  gold_spans:
+  - A clean installation can run with no mandatory paid SaaS
+  origin: Docs > 11. Release Acceptance
+  reviewed: true
+- id: draft-9ebcacc3
+  type: enumeration
+  question: What are the possible values for the 'source_kind' column in the authorized_sources table?
+  answerable: true
+  gold_spans:
+  - source_kind | TEXT | folder, repo, connector scope, file
+  enumeration:
+  - folder
+  - repo
+  - connector scope
+  - file
+  origin: Docs > 4.2 authorized_sources
+  reviewed: true
+- id: draft-20f59ae3
+  type: single_fact
+  question: What is the name of the component that allows for the swapping of providers without changing
+    agent/knowledge contracts?
+  answerable: true
+  must_contain:
+  - Inference Gateway
+  gold_spans:
+  - "Inference Gateway | Ollama \u2192 vLLM/other on-prem | Provider"
+  origin: Docs > 14. Evolution Roadmap
+  reviewed: true
+- id: draft-d611680b
+  type: enumeration
+  question: What are the components of the Foundation Platform?
+  answerable: true
+  gold_spans:
+  - 4.1 Foundation Platform - Source authorization and registry
+  enumeration:
+  - Source authorization and registry
+  - Evidence identity, versioning, hashing and provenance
+  - Encrypted authoritative evidence storage
+  - Metadata/control database
+  - Policy, trust, resource and audit services
+  - Background ingestion with reconciliation
+  - On-prem inference gateway
+  - Custom agent policy and knowledge-tool gateway
+  origin: Docs > 4.1 Foundation Platform
+  reviewed: true
+- id: draft-fbf5cebb
+  type: single_fact
+  question: "What is the exit criterion for Phase 1 \u2014 Document Intelligence?"
+  answerable: true
+  must_contain:
+  - exact citations
+  gold_spans:
+  - Representative document corpus answers accurately with exact
+  origin: Docs > 8. Product Phasing
+  reviewed: true
+- id: draft-e54e1ab5
+  type: enumeration
+  question: What file formats MUST be supported in Phase 1 implementation?
+  answerable: true
+  gold_spans:
+  - pipeline MUST support PDF, DOCX, PPTX, XLSX, TXT, Markdown,
+  enumeration:
+  - PDF
+  - DOCX
+  - PPTX
+  - XLSX
+  - TXT
+  - Markdown
+  - HTML
+  - image/scanned
+  origin: Docs > 3. Functional Requirements
+  reviewed: true
+- id: draft-9960cfde
+  type: single_fact
+  question: What is the mutability status of the evidence_version_id?
+  answerable: true
+  must_contain:
+  - Immutable
+  gold_spans:
+  - evidence_version_id | One immutable captured state of a
+  origin: Docs > 3.1 Identity hierarchy
+  reviewed: true
+- id: draft-5fa9b10c
+  type: enumeration
+  question: What services can be introduced behind existing adapters in the Enterprise Central Deployment
+    mode?
+  answerable: true
+  gold_spans:
+  - Fine-grained authorization, enterprise secret storage,
+  enumeration:
+  - Fine-grained authorization
+  - enterprise secret storage
+  - centralized telemetry
+  - Qdrant Server
+  - another service-mode vector backend
+  origin: Docs > 10.3 Enterprise Central Deployment
+  reviewed: true
+- id: draft-22b9de2c
+  type: table_lookup
+  question: What is the primary test suite for the 'Document parsing' requirement family?
+  answerable: true
+  must_contain:
+  - Golden corpus
+  - malformed/scanned fixtures
+  gold_spans:
+  - Document parsing | Golden corpus + malformed/scanned
+  origin: Docs > 12. Verification Matrix
+  reviewed: true
+- id: draft-ff90fbbd
+  type: single_fact
+  question: What is the current project status of the Local-First Work Intelligence System?
+  answerable: true
+  must_contain:
+  - implementation and benchmark execution pending
+  gold_spans:
+  - '| **Project status** | Architecture defined; implementation'
+  origin: Docs
+  reviewed: true
+- id: draft-a97ac9b5
+  type: enumeration
+  question: What is the release criteria for the enterprise gate?
+  answerable: true
+  gold_spans:
+  - Multi-user security, operations, scale, backup/restore and
+  enumeration:
+  - Multi-user security
+  - operations
+  - scale
+  - backup/restore
+  - licensing
+  origin: "Docs > 8. Phase 5 \u2014 Enterprise"
+  reviewed: true
+- id: draft-5379040a
+  type: single_fact
+  question: What is the name of the gate that requires representative document corpus answers with exact
+    citations, bounded RAM and no paid/cloud dependency?
+  answerable: true
+  must_contain:
+  - Document Intelligence gate
+  gold_spans:
+  - Document Intelligence gate | Representative document corpus
+  origin: "Docs > 4. Phase 1 \u2014 Document Intelligence"
+  reviewed: true
+- id: draft-fa1bedf5
+  type: enumeration
+  question: What tools are used for Python sidecar packaging in the context of Docling/native-vector compatibility
+    and size/startup trade-offs?
+  answerable: true
+  gold_spans:
+  - Python sidecar packaging spike compares PyInstaller and
+  enumeration:
+  - PyInstaller
+  - Nuitka Community
+  origin: Docs > 15. Build, Packaging and Migrations
+  reviewed: true
+- id: draft-4c0eda14
+  type: single_fact
+  question: What are the possible transitions from the RETRY_WAIT state in the Job State Machine?
+  answerable: true
+  must_contain:
+  - QUEUED
+  gold_spans:
+  - +-> RETRY_WAIT -> QUEUED
+  origin: Docs > 5.1 Job State Machine
+  reviewed: true
+- id: draft-1ae8e70d
+  type: single_fact
+  question: What is the data type of the 'ordinal' column in the evidence_units table?
+  answerable: true
+  must_contain:
+  - INTEGER
+  gold_spans:
+  - ordinal | INTEGER | Stable within normalization revision
+  origin: Docs > 4.5 evidence_units
+  reviewed: true
+- id: draft-4bd2fdcf
+  type: single_fact
+  question: What is the recommended SQLite journal mode for concurrent readers and controlled writers?
+  answerable: true
+  must_contain:
+  - WAL
+  gold_spans:
+  - SQLite journal mode | WAL for concurrent readers and
+  origin: Docs > 17. Integrity, Transactions and Concurrency
+  reviewed: true
+- id: draft-7e63c043
+  type: single_fact
+  question: What is the purpose of the endpoint POST /v1/queries?
+  answerable: true
+  must_contain:
+  - query_id
+  gold_spans:
+  - Create query and return query_id; supports streaming
+  origin: Docs > 13. API and IPC
+  reviewed: true
+- id: draft-1a7e2841
+  type: single_fact
+  question: What is the notation used for a work package that typically takes days to complete?
+  answerable: true
+  must_contain:
+  - S
+  gold_spans:
+  - S | Small work package; typically days.
+  origin: Docs > 1. Planning Basis
+  reviewed: true

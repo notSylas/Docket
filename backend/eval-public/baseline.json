@@ -1,0 +1,209 @@
+{
+  "repeats": 3,
+  "overall": {
+    "questions": 33,
+    "strict": {
+      "passed": 29,
+      "total": 33,
+      "lo": 0.7267415674973484,
+      "hi": 0.9518391673241576
+    },
+    "optimistic": {
+      "passed": 29,
+      "total": 33,
+      "lo": 0.7267415674973484,
+      "hi": 0.9518391673241576
+    },
+    "pass_all": {
+      "passed": 29,
+      "total": 33,
+      "lo": 0.7267415674973484,
+      "hi": 0.9518391673241576
+    },
+    "needs_judge_runs": 0
+  },
+  "by_type": {
+    "enumeration": {
+      "questions": 9,
+      "strict": {
+        "passed": 8,
+        "total": 9,
+        "lo": 0.5649937852319399,
+        "hi": 0.9801096286728695
+      },
+      "optimistic": {
+        "passed": 8,
+        "total": 9,
+        "lo": 0.5649937852319399,
+        "hi": 0.9801096286728695
+      },
+      "pass_all": {
+        "passed": 8,
+        "total": 9,
+        "lo": 0.5649937852319399,
+        "hi": 0.9801096286728695
+      },
+      "needs_judge_runs": 0
+    },
+    "single_fact": {
+      "questions": 22,
+      "strict": {
+        "passed": 19,
+        "total": 22,
+        "lo": 0.6666458812053,
+        "hi": 0.9525108273576373
+      },
+      "optimistic": {
+        "passed": 19,
+        "total": 22,
+        "lo": 0.6666458812053,
+        "hi": 0.9525108273576373
+      },
+      "pass_all": {
+        "passed": 19,
+        "total": 22,
+        "lo": 0.6666458812053,
+        "hi": 0.9525108273576373
+      },
+      "needs_judge_runs": 0
+    },
+    "table_lookup": {
+      "questions": 2,
+      "strict": {
+        "passed": 2,
+        "total": 2,
+        "lo": 0.34237195288961925,
+        "hi": 1.0
+      },
+      "optimistic": {
+        "passed": 2,
+        "total": 2,
+        "lo": 0.34237195288961925,
+        "hi": 1.0
+      },
+      "pass_all": {
+        "passed": 2,
+        "total": 2,
+        "lo": 0.34237195288961925,
+        "hi": 1.0
+      },
+      "needs_judge_runs": 0
+    }
+  },
+  "by_split": {
+    "dev": {
+      "questions": 18,
+      "strict": {
+        "passed": 14,
+        "total": 18,
+        "lo": 0.5478497354769452,
+        "hi": 0.90999218086618
+      },
+      "optimistic": {
+        "passed": 14,
+        "total": 18,
+        "lo": 0.5478497354769452,
+        "hi": 0.90999218086618
+      },
+      "pass_all": {
+        "passed": 14,
+        "total": 18,
+        "lo": 0.5478497354769452,
+        "hi": 0.90999218086618
+      },
+      "needs_judge_runs": 0
+    },
+    "test": {
+      "questions": 15,
+      "strict": {
+        "passed": 15,
+        "total": 15,
+        "lo": 0.7961107336956521,
+        "hi": 1.0
+      },
+      "optimistic": {
+        "passed": 15,
+        "total": 15,
+        "lo": 0.7961107336956521,
+        "hi": 1.0
+      },
+      "pass_all": {
+        "passed": 15,
+        "total": 15,
+        "lo": 0.7961107336956521,
+        "hi": 1.0
+      },
+      "needs_judge_runs": 0
+    }
+  },
+  "recall_k": 8,
+  "recall_any": {
+    "passed": 81,
+    "total": 99,
+    "lo": 0.7308102684012943,
+    "hi": 0.8817823011425481
+  },
+  "recall_all": {
+    "passed": 81,
+    "total": 99,
+    "lo": 0.7308102684012943,
+    "hi": 0.8817823011425481
+  },
+  "fact_in_context": {
+    "passed": 81,
+    "total": 99,
+    "lo": 0.7308102684012943,
+    "hi": 0.8817823011425481
+  },
+  "abstention_precision": {
+    "passed": 0,
+    "total": 5,
+    "lo": 0.0,
+    "hi": 0.43449149475208104
+  },
+  "abstention_recall": {
+    "passed": 0,
+    "total": 0,
+    "lo": 0.0,
+    "hi": 1.0
+  },
+  "wrongful_abstention": {
+    "passed": 5,
+    "total": 99,
+    "lo": 0.02176291355669111,
+    "hi": 0.11282853581788105
+  },
+  "revoked_retrieval_leaks": 0,
+  "revoked_answer_leaks": 0,
+  "failures": {
+    "parse": 0,
+    "retrieval_miss": 11,
+    "context_truncation": 0,
+    "generation_error": 0,
+    "citation_error": 0,
+    "judge_doubt": 0,
+    "run_error": 0
+  },
+  "failures_by_type": {
+    "enumeration": {
+      "parse": 0,
+      "retrieval_miss": 3,
+      "context_truncation": 0,
+      "generation_error": 0,
+      "citation_error": 0,
+      "judge_doubt": 0,
+      "run_error": 0
+    },
+    "single_fact": {
+      "parse": 0,
+      "retrieval_miss": 8,
+      "context_truncation": 0,
+      "generation_error": 0,
+      "citation_error": 0,
+      "judge_doubt": 0,
+      "run_error": 0
+    }
+  },
+  "judged_runs": 14,
+  "judge_disagreements": 5
+}
