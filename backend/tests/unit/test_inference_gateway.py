@@ -82,6 +82,65 @@ def test_ollama_gateway_explicit_args_override_settings() -> None:
     assert gateway.embed_model == "custom-embed:1b"
 
 
+# --- num_ctx/num_predict defaults (M1) -------------------------------------
+
+
+def test_generate_passes_settings_num_ctx_and_num_predict_by_default(mocker) -> None:
+    mock_generate = mocker.patch(
+        "docket.inference.gateway._ollama.generate",
+        return_value={"response": "ok"},
+    )
+    gateway = OllamaGateway()
+    gateway.generate(system="sys", prompt="hello")
+
+    _, kwargs = mock_generate.call_args
+    assert kwargs["options"]["num_ctx"] == settings.num_ctx
+    assert kwargs["options"]["num_predict"] == settings.num_predict
+
+
+def test_generate_merges_num_ctx_into_caller_supplied_options(mocker) -> None:
+    mock_generate = mocker.patch(
+        "docket.inference.gateway._ollama.generate",
+        return_value={"response": "ok"},
+    )
+    gateway = OllamaGateway()
+    gateway.generate(system="sys", prompt="hello", options={"temperature": 0})
+
+    _, kwargs = mock_generate.call_args
+    assert kwargs["options"]["temperature"] == 0
+    assert kwargs["options"]["num_ctx"] == settings.num_ctx
+    assert kwargs["options"]["num_predict"] == settings.num_predict
+
+
+def test_generate_does_not_override_caller_supplied_num_ctx(mocker) -> None:
+    mock_generate = mocker.patch(
+        "docket.inference.gateway._ollama.generate",
+        return_value={"response": "ok"},
+    )
+    gateway = OllamaGateway()
+    gateway.generate(
+        system="sys", prompt="hello", options={"num_ctx": 16384, "num_predict": 2048}
+    )
+
+    _, kwargs = mock_generate.call_args
+    assert kwargs["options"]["num_ctx"] == 16384
+    assert kwargs["options"]["num_predict"] == 2048
+
+
+def test_generate_passes_through_non_options_kwargs(mocker) -> None:
+    mock_generate = mocker.patch(
+        "docket.inference.gateway._ollama.generate",
+        return_value={"response": "ok"},
+    )
+    gateway = OllamaGateway()
+    gateway.generate(system="sys", prompt="hello", think=False, format="json")
+
+    _, kwargs = mock_generate.call_args
+    assert kwargs["think"] is False
+    assert kwargs["format"] == "json"
+    assert kwargs["options"]["num_ctx"] == settings.num_ctx
+
+
 # --- Error translation (mocked, no real Ollama needed) --------------------
 
 

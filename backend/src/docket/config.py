@@ -11,6 +11,15 @@ class Settings(BaseSettings):
     gen_model: str = "qwen3:14b"
     embed_model: str = "qwen3-embedding:0.6b"
 
+    # Ollama's default context window is 4096 tokens when a model file sets
+    # none (confirmed via `ollama ps` on qwen3:14b) -- an 8-chunk retrieval
+    # prompt is commonly ~2.6-3.2k tokens on its own, before any conversation
+    # history or thinking-mode output, so the default risks silent
+    # truncation. num_predict is set generously so thinking mode can't
+    # exhaust the answer budget before producing a final answer.
+    num_ctx: int = 8192
+    num_predict: int = 4096
+
     chunk_size_words: int = 200
     chunk_overlap_words: int = 40
 

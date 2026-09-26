@@ -29,7 +29,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
 from docket.cli.context import AppContext, _ensure_schema
-from docket.config import Settings
+from docket.config import Settings, settings
 from docket.db.engine import get_engine, get_session_factory
 from docket.db.models import Chunk, Source, SourceStatus
 from docket.eval.schema import (
@@ -67,6 +67,16 @@ class OllamaMetaGateway(OllamaGateway):
     last_generate_meta: dict[str, Any] | None = None
 
     def generate(self, *, system: str, prompt: str, **opts) -> str:
+        # Reuses the base class's num_ctx/num_predict-default merging (see
+        # OllamaGateway.generate) rather than calling _ollama.generate
+        # directly, so eval runs measure the same options production calls
+        # get -- otherwise M1's context-window fix would silently not apply
+        # to eval harness runs.
+        opts = dict(opts)
+        options = dict(opts.get("options") or {})
+        options.setdefault("num_ctx", settings.num_ctx)
+        options.setdefault("num_predict", settings.num_predict)
+        opts["options"] = options
         try:
             response = _ollama.generate(
                 model=self.gen_model, system=system, prompt=prompt, **opts

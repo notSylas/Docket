@@ -91,6 +91,14 @@ class OllamaGateway:
         self.embed_model = embed_model or settings.embed_model
 
     def generate(self, *, system: str, prompt: str, **opts) -> str:
+        opts = dict(opts)
+        options = dict(opts.get("options") or {})
+        # settings.num_ctx/num_predict are defaults, not overrides: a caller
+        # that already put num_ctx/num_predict in its own `options` dict
+        # (e.g. eval/judge.py's JUDGE_OPTS) wins.
+        options.setdefault("num_ctx", settings.num_ctx)
+        options.setdefault("num_predict", settings.num_predict)
+        opts["options"] = options
         try:
             response = _ollama.generate(
                 model=self.gen_model, system=system, prompt=prompt, **opts

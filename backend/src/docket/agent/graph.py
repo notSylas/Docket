@@ -22,9 +22,10 @@ answers), just parameterized instead of hardcoded:
 `build_investigation_agent()` is the real-use convenience wrapper: it builds
 the real `search_knowledge`/`read_evidence` tools (via `docket.agent.tools`)
 bound to a caller-supplied engine/table/gateway/resolver, and assembles them
-into a graph via `build_agent()`, pulling its model/iteration/call-budget
-config from `Settings` (`gen_model`, `max_agent_iterations`,
-`max_agent_tool_calls`) instead of the spike's module-level constants. This
+into a graph via `build_agent()`, pulling its model/iteration/call-budget/
+context config from `Settings` (`gen_model`, `max_agent_iterations`,
+`max_agent_tool_calls`, `num_ctx`, `num_predict`) instead of the spike's
+module-level constants. This
 is the function a later milestone's Agent Runtime Manager / QueryService
 routing would call to hand off a question to the bounded-investigation path
 -- not wired into the CLI yet (routing fast-path-vs-agent-path is out of
@@ -53,11 +54,20 @@ def build_agent(
     gateway_llm_model: str,
     max_iterations: int,
     max_tool_calls: int,
+    num_ctx: int,
+    num_predict: int,
 ):
     """Compile the bounded agent graph for a given tool allow-list and model/
     budget configuration. `allowed_tools` maps tool name -> LangChain tool
-    object; the model is bound only to `allowed_tools.values()`."""
-    llm = ChatOllama(model=gateway_llm_model, temperature=0)
+    object; the model is bound only to `allowed_tools.values()`.
+
+    `num_ctx`/`num_predict` are passed through explicitly (rather than read
+    from `Settings` here) so this stays testable without a settings object --
+    `build_investigation_agent` is the one that sources them from
+    `Settings.num_ctx`/`Settings.num_predict`."""
+    llm = ChatOllama(
+        model=gateway_llm_model, temperature=0, num_ctx=num_ctx, num_predict=num_predict
+    )
     llm_with_tools = llm.bind_tools(list(allowed_tools.values()))
     gateway_node = make_policy_gateway(allowed_tools, max_tool_calls)
 
@@ -104,4 +114,6 @@ def build_investigation_agent(
         gateway_llm_model=settings.gen_model,
         max_iterations=settings.max_agent_iterations,
         max_tool_calls=settings.max_agent_tool_calls,
+        num_ctx=settings.num_ctx,
+        num_predict=settings.num_predict,
     )
