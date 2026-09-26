@@ -3,22 +3,22 @@
   "overall": {
     "questions": 33,
     "strict": {
-      "passed": 29,
+      "passed": 33,
       "total": 33,
-      "lo": 0.7267415674973484,
-      "hi": 0.9518391673241576
+      "lo": 0.8957265699643882,
+      "hi": 1.0
     },
     "optimistic": {
-      "passed": 29,
+      "passed": 33,
       "total": 33,
-      "lo": 0.7267415674973484,
-      "hi": 0.9518391673241576
+      "lo": 0.8957265699643882,
+      "hi": 1.0
     },
     "pass_all": {
-      "passed": 29,
+      "passed": 32,
       "total": 33,
-      "lo": 0.7267415674973484,
-      "hi": 0.9518391673241576
+      "lo": 0.8468093832683193,
+      "hi": 0.9946307279103482
     },
     "needs_judge_runs": 0
   },
@@ -26,44 +26,44 @@
     "enumeration": {
       "questions": 9,
       "strict": {
-        "passed": 8,
+        "passed": 9,
         "total": 9,
-        "lo": 0.5649937852319399,
-        "hi": 0.9801096286728695
+        "lo": 0.7008472464490407,
+        "hi": 1.0
       },
       "optimistic": {
-        "passed": 8,
+        "passed": 9,
         "total": 9,
-        "lo": 0.5649937852319399,
-        "hi": 0.9801096286728695
+        "lo": 0.7008472464490407,
+        "hi": 1.0
       },
       "pass_all": {
-        "passed": 8,
+        "passed": 9,
         "total": 9,
-        "lo": 0.5649937852319399,
-        "hi": 0.9801096286728695
+        "lo": 0.7008472464490407,
+        "hi": 1.0
       },
       "needs_judge_runs": 0
     },
     "single_fact": {
       "questions": 22,
       "strict": {
-        "passed": 19,
+        "passed": 22,
         "total": 22,
-        "lo": 0.6666458812053,
-        "hi": 0.9525108273576373
+        "lo": 0.8513404742740388,
+        "hi": 1.0
       },
       "optimistic": {
-        "passed": 19,
+        "passed": 22,
         "total": 22,
-        "lo": 0.6666458812053,
-        "hi": 0.9525108273576373
+        "lo": 0.8513404742740388,
+        "hi": 1.0
       },
       "pass_all": {
-        "passed": 19,
+        "passed": 21,
         "total": 22,
-        "lo": 0.6666458812053,
-        "hi": 0.9525108273576373
+        "lo": 0.7820151050048196,
+        "hi": 0.9919307806988522
       },
       "needs_judge_runs": 0
     },
@@ -94,22 +94,22 @@
     "dev": {
       "questions": 18,
       "strict": {
-        "passed": 14,
+        "passed": 18,
         "total": 18,
-        "lo": 0.5478497354769452,
-        "hi": 0.90999218086618
+        "lo": 0.8241154494176252,
+        "hi": 1.0
       },
       "optimistic": {
-        "passed": 14,
+        "passed": 18,
         "total": 18,
-        "lo": 0.5478497354769452,
-        "hi": 0.90999218086618
+        "lo": 0.8241154494176252,
+        "hi": 1.0
       },
       "pass_all": {
-        "passed": 14,
+        "passed": 18,
         "total": 18,
-        "lo": 0.5478497354769452,
-        "hi": 0.90999218086618
+        "lo": 0.8241154494176252,
+        "hi": 1.0
       },
       "needs_judge_runs": 0
     },
@@ -128,38 +128,38 @@
         "hi": 1.0
       },
       "pass_all": {
-        "passed": 15,
+        "passed": 14,
         "total": 15,
-        "lo": 0.7961107336956521,
-        "hi": 1.0
+        "lo": 0.7018292244757601,
+        "hi": 0.9881334113938051
       },
       "needs_judge_runs": 0
     }
   },
   "recall_k": 8,
   "recall_any": {
-    "passed": 81,
+    "passed": 99,
     "total": 99,
-    "lo": 0.7308102684012943,
-    "hi": 0.8817823011425481
+    "lo": 0.9626454664260378,
+    "hi": 1.0
   },
   "recall_all": {
-    "passed": 81,
+    "passed": 99,
     "total": 99,
-    "lo": 0.7308102684012943,
-    "hi": 0.8817823011425481
+    "lo": 0.9626454664260378,
+    "hi": 1.0
   },
   "fact_in_context": {
-    "passed": 81,
+    "passed": 99,
     "total": 99,
-    "lo": 0.7308102684012943,
-    "hi": 0.8817823011425481
+    "lo": 0.9626454664260378,
+    "hi": 1.0
   },
   "abstention_precision": {
     "passed": 0,
-    "total": 5,
+    "total": 0,
     "lo": 0.0,
-    "hi": 0.43449149475208104
+    "hi": 1.0
   },
   "abstention_recall": {
     "passed": 0,
@@ -168,42 +168,33 @@
     "hi": 1.0
   },
   "wrongful_abstention": {
-    "passed": 5,
+    "passed": 0,
     "total": 99,
-    "lo": 0.02176291355669111,
-    "hi": 0.11282853581788105
+    "lo": 0.0,
+    "hi": 0.03735453357396229
   },
   "revoked_retrieval_leaks": 0,
   "revoked_answer_leaks": 0,
   "failures": {
     "parse": 0,
-    "retrieval_miss": 11,
+    "retrieval_miss": 0,
     "context_truncation": 0,
-    "generation_error": 0,
+    "generation_error": 1,
     "citation_error": 0,
     "judge_doubt": 0,
     "run_error": 0
   },
   "failures_by_type": {
-    "enumeration": {
-      "parse": 0,
-      "retrieval_miss": 3,
-      "context_truncation": 0,
-      "generation_error": 0,
-      "citation_error": 0,
-      "judge_doubt": 0,
-      "run_error": 0
-    },
     "single_fact": {
       "parse": 0,
-      "retrieval_miss": 8,
+      "retrieval_miss": 0,
       "context_truncation": 0,
-      "generation_error": 0,
+      "generation_error": 1,
       "citation_error": 0,
       "judge_doubt": 0,
       "run_error": 0
     }
   },
-  "judged_runs": 14,
-  "judge_disagreements": 5
+  "judged_runs": 2,
+  "judge_disagreements": 0
 }
