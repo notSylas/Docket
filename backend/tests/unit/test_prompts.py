@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from docket.query.prompts import (
     ABSTENTION_PHRASE,
+    AGENT_SYSTEM_PROMPT,
+    SYSTEM_PROMPT,
     build_context_block,
     validate_citations,
 )
@@ -141,3 +143,71 @@ def test_bracketed_aside_without_hash_is_not_flagged_as_citation() -> None:
 
     assert result.unknown_citations == []
     assert result.uncited is True
+
+
+def test_fake_citation_label_field_line_is_rejected_as_uncited() -> None:
+    """Regression test for a real failure mode seen in eval: the model writes
+    a field-name-style line (`citation_label: (...)`) instead of copying the
+    actual bracketed tag. This is not a real citation tag (no brackets at
+    all), so it must not be picked up by `cited_labels`, and the answer must
+    be flagged `uncited` since no real tag is present."""
+    chunks = [_evidence("chk_a", "Ohm's law text.", "[physics.pdf #a1b2c3]")]
+
+    answer = (
+        "The potential difference across a resistor is directly proportional "
+        "to the current flowing through it.\n"
+        "citation_label: (Ohm's law states that the potential difference "
+        "across a resistor is directly proportional to the current flowing "
+        "through it...)"
+    )
+    result = validate_citations(answer, chunks)
+
+    assert result.cited_labels == []
+    assert result.uncited is True
+    # The fake field line has no "[...#...]" shape, so it's not even caught
+    # as an *unknown* citation -- it's simply not a citation at all, which is
+    # exactly why the uncited check (not the unknown-citation check) is what
+    # catches this failure mode.
+    assert result.unknown_citations == []
+
+
+def test_real_bracketed_tag_is_still_accepted_alongside_fake_field_line() -> None:
+    """If the model also includes the real tag somewhere, that still counts,
+    even if it additionally emits a bogus `citation_label: (...)` line."""
+    chunks = [_evidence("chk_a", "Ohm's law text.", "[physics.pdf #a1b2c3]")]
+
+    answer = (
+        "V = IR [physics.pdf #a1b2c3].\n"
+        "citation_label: (Ohm's law states that the potential difference "
+        "across a resistor is directly proportional to the current flowing "
+        "through it...)"
+    )
+    result = validate_citations(answer, chunks)
+
+    assert result.cited_labels == ["[physics.pdf #a1b2c3]"]
+    assert result.uncited is False
+
+
+# ---------------------------------------------------------------------------
+# SYSTEM_PROMPT / AGENT_SYSTEM_PROMPT content
+# ---------------------------------------------------------------------------
+
+
+def test_system_prompt_forbids_latex() -> None:
+    assert "LaTeX" in SYSTEM_PROMPT
+    assert "$$" in SYSTEM_PROMPT
+
+
+def test_agent_system_prompt_forbids_latex() -> None:
+    assert "LaTeX" in AGENT_SYSTEM_PROMPT
+    assert "$$" in AGENT_SYSTEM_PROMPT
+
+
+def test_system_prompt_shows_negative_citation_example() -> None:
+    assert "citation_label: (...)" in SYSTEM_PROMPT
+    assert "NOT a citation" in SYSTEM_PROMPT
+
+
+def test_agent_system_prompt_shows_negative_citation_example() -> None:
+    assert "citation_label: (...)" in AGENT_SYSTEM_PROMPT
+    assert "NOT a citation" in AGENT_SYSTEM_PROMPT

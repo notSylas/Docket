@@ -55,7 +55,20 @@ def matches(pattern: str, normalized_text: str) -> bool:
     (searched, case-insensitively, in already-normalized text)."""
     if pattern.startswith(REGEX_PREFIX):
         return re.search(pattern[len(REGEX_PREFIX) :], normalized_text, re.IGNORECASE) is not None
-    return normalize_text(pattern) in normalized_text
+    normalized_pattern = normalize_text(pattern)
+    if normalized_pattern in normalized_text:
+        return True
+    # Whitespace-insensitive fallback: real-world equations/units/symbols get
+    # spaced differently by different renderers with no change in meaning
+    # ("V = I R" vs "V = IR", superscript "10⁻⁷" NFKC-folds to "10-7" with no
+    # space where the gold text has "10 -7", "∠ BCA" vs "∠BCA"). Comparing
+    # with all whitespace removed catches these without weakening the match
+    # otherwise -- it's still an exact character-for-character match, just
+    # blind to *where* spaces fall, not a fuzzy/edit-distance comparison.
+    stripped_pattern = _WS_RE.sub("", normalized_pattern)
+    if not stripped_pattern:
+        return False
+    return stripped_pattern in _WS_RE.sub("", normalized_text)
 
 
 def _prepare_answer(answer: str) -> str:

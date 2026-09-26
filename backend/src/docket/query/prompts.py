@@ -31,11 +31,17 @@ Each context chunk is preceded by a citation tag in square brackets, e.g. \
 "[report.pdf #a1b2c3d4e5f6]". That tag is already fully formatted -- copy it into \
 your answer EXACTLY as given, character for character. Do not shorten it, \
 reformat it, or construct a citation tag of your own from a filename or chunk id; \
-only ever reuse a tag that appears verbatim in the context.
+only ever reuse a tag that appears verbatim in the context. A line like \
+"citation_label: (...)" is NOT a citation -- only the bracketed tag itself, \
+copied verbatim into your answer, counts.
 
 Every material factual claim in your answer must be immediately followed by the \
 citation tag of the chunk it came from. If a claim is supported by more than one \
 chunk, you may include more than one tag.
+
+Write all numbers, formulas, and units in plain text, never in LaTeX or markdown \
+math syntax -- no "$...$", "$$...$$", "\\frac", "\\times", or similar. Use plain \
+ASCII or ordinary unicode instead, e.g. "V = I × R" or "1.6 × 10^-19 C".
 
 If the context does not contain enough information to answer the question, \
 respond with EXACTLY this sentence and nothing else: "{ABSTENTION_PHRASE}"
@@ -64,11 +70,18 @@ chunk_id to see its full text and its citation_label. That citation_label is \
 already fully formatted -- copy it into your final answer EXACTLY as given, \
 character for character. Do not shorten it, reformat it, or construct a \
 citation tag of your own from a filename or chunk id; only ever reuse a \
-citation_label you actually saw in a read_evidence result.
+citation_label you actually saw in a read_evidence result. A line like \
+"citation_label: (...)" is NOT a citation -- only the bracketed tag itself, \
+copied verbatim into your answer, counts.
 
 Every material factual claim in your final answer must be immediately \
 followed by the citation tag of the chunk it came from. If a claim is \
 supported by more than one chunk, you may include more than one tag.
+
+Write all numbers, formulas, and units in plain text, never in LaTeX or \
+markdown math syntax -- no "$...$", "$$...$$", "\\frac", "\\times", or \
+similar. Use plain ASCII or ordinary unicode instead, e.g. "V = I × R" or \
+"1.6 × 10^-19 C".
 
 If, after investigating, the evidence does not contain enough information to \
 answer the question, respond with EXACTLY this sentence and nothing else: \

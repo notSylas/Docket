@@ -68,6 +68,25 @@ def test_matches_plain_and_regex():
     assert not matches("3 million", text)
 
 
+def test_matches_is_whitespace_insensitive_as_a_fallback():
+    """Real answers reflow spacing around equations/units/symbols with no
+    change in meaning -- found via the physics gold set, where "V = I R"
+    (gold) vs "V = IR" (a correct answer, no space) was scored a false
+    miss. Still an exact character match once whitespace is ignored, not an
+    edit-distance/fuzzy one: unrelated characters must not accidentally
+    satisfy it (only *where* spaces fall is ignored)."""
+    assert matches("V = I R", normalize_text("Ohm's law: V = IR, so..."))
+    assert matches("10 -7", normalize_text("equals 1.6 x 10-7 J"))
+    assert matches("angle BCA", normalize_text("the angle B C A is bisected"))
+    assert not matches("V = I R", normalize_text("Ohm's law: V = 2 I R"))
+    assert not matches("xyz123", normalize_text("nothing relevant here"))
+    # known, accepted tradeoff of a whitespace-insensitive fallback: words
+    # that happen to concatenate into the pattern can false-positive (e.g.
+    # "read" + "me" -> "readme"). Rare in practice and the strict check
+    # above still runs first; documented here rather than silently assumed.
+    assert matches("readme", normalize_text("please read me carefully"))
+
+
 # -- must_contain / must_not_contain ------------------------------------------
 
 
