@@ -33,6 +33,12 @@ class ParsedDocument:
     parser_name: str  # e.g. "docling"
     parser_version: str  # docling.__version__
     formula_regions: list[dict] = field(default_factory=list)  # source coordinates, not recognized text
+    # page_no -> raw PNG bytes of that page's rendered image (visual
+    # retrieval checkpoint 2). Only used as a VLM-description input
+    # (`docket.index.visual_index`) -- never citable evidence, never shown to
+    # a user. A page missing from this dict means Docling couldn't produce an
+    # image for it (see `_page_images`); callers must skip it, not error.
+    page_images: dict[int, bytes] = field(default_factory=dict)
     # Same content as `text`, but with `<!--PAGE:N-->` markers left in at
     # each genuine page transition -- consumed only by
     # `docket.parsing.chunker.chunk_document` to derive per-chunk
@@ -80,6 +86,35 @@ def _formula_regions(document: object) -> list[dict]:
                 if bbox is not None else None,
             })
     return regions
+
+
+def _page_images(document: object) -> dict[int, bytes]:
+    """Extract each page's rendered image as PNG bytes, for the VLM
+    description pass (visual retrieval checkpoint 2).
+
+    Reads `document.pages[page_no].image`, a Pydantic `ImageRef | None` (see
+    `docling_core.types.doc.document`). Rendered via `.pil_image` (a PIL
+    Image, re-encoded to PNG here) rather than parsing `.uri`'s data-URI by
+    hand. A page whose `image` is `None` (e.g. generation failed for that
+    page) is skipped, not an error -- `generate_page_images` is best-effort
+    per Docling's own semantics.
+    """
+    from io import BytesIO
+
+    images: dict[int, bytes] = {}
+    pages = getattr(document, "pages", {}) or {}
+    items = pages.items() if isinstance(pages, dict) else []
+    for page_no, page in items:
+        image_ref = getattr(page, "image", None)
+        if image_ref is None:
+            continue
+        pil_image = getattr(image_ref, "pil_image", None)
+        if pil_image is None:
+            continue
+        buffer = BytesIO()
+        pil_image.save(buffer, format="PNG")
+        images[page_no] = buffer.getvalue()
+    return images
 
 
 def _insert_page_markers(markdown: str, document: object) -> str:
@@ -164,7 +199,18 @@ class DoclingParser:
         from docling.datamodel.pipeline_options import PdfPipelineOptions
 
         # Formula OCR is generative and must not silently become authoritative evidence.
-        options = PdfPipelineOptions(do_formula_enrichment=False)
+        # generate_page_images=True: captures each page's rendered image so a
+        # VLM can describe it as a retrieval-ranking signal (visual retrieval
+        # checkpoint 2) -- never citable evidence, see ParsedDocument.page_images.
+        # images_scale=2.0 (Docling's default is 1.0): a real, considered choice,
+        # not an arbitrary bump -- a VLM reading a small/blurry render will
+        # describe it worse (missed headings, misread numbers), so legibility
+        # is worth the extra memory/time per page during ingestion.
+        options = PdfPipelineOptions(
+            do_formula_enrichment=False,
+            generate_page_images=True,
+            images_scale=2.0,
+        )
         self._converter = DocumentConverter(
             format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=options)}
         )
@@ -209,6 +255,7 @@ class DoclingParser:
             annotated_markdown = _insert_page_markers(markdown, result.document)
             text_with_page_markers = unescape_markdown(annotated_markdown)
             formula_regions = _formula_regions(result.document)
+            page_images = _page_images(result.document)
         except Exception as exc:  # noqa: BLE001 -- intentionally broad, see docstring
             raise ParseError(source_id, path, exc) from exc
 
@@ -219,4 +266,5 @@ class DoclingParser:
             parser_version=self._parser_version,
             formula_regions=formula_regions,
             text_with_page_markers=text_with_page_markers,
+            page_images=page_images,
         )

@@ -434,3 +434,164 @@ def test_chunk_page_span_is_none_when_parser_gives_no_marker_info(env, monkeypat
         rows = session.execute(select(Chunk.page_start, Chunk.page_end)).all()
     assert rows
     assert all(page_start is None and page_end is None for page_start, page_end in rows)
+
+
+# ---------------------------------------------------------------------------
+# Page images (EvidenceVersion.page_images_json + visual index) --
+# visual retrieval checkpoint 2.
+# ---------------------------------------------------------------------------
+
+
+def _multipage_parsed_document(path, page_images: dict[int, bytes]):
+    from docket.parsing.docling_wrapper import ParsedDocument
+
+    return ParsedDocument(
+        text="# Section One\nAlpha content.\n# Section Two\nBeta content.\n",
+        source_path=path,
+        parser_name="fixture",
+        parser_version="1",
+        page_images=page_images,
+    )
+
+
+def test_page_images_stored_and_indexed_when_visual_index_enabled(
+    migrated_sqlite_engine, tmp_path, parser, monkeypatch
+):
+    """With `visual_index_enabled=True` and a `FakeInferenceGateway`,
+    ingesting a small multi-page fixture must: populate
+    `EvidenceVersion.page_images_json`, make each page's bytes retrievable
+    from the `ContentAddressedStore`, and write rows (with the fake
+    gateway's canned description) to the pages LanceDB table."""
+    import json as json_mod
+
+    from docket.config import Settings
+    from docket.db.engine import get_session_factory
+    from docket.db.models import EvidenceVersion
+    from docket.evidence.manager import EvidenceManager
+    from docket.evidence.store import ContentAddressedStore
+    from docket.index.fts_index import FtsIndexWriter
+    from docket.index.manager import IndexManager
+    from docket.index.vector_index import LanceIndexWriter
+    from docket.index.visual_index import LancePageIndexWriter
+    from docket.inference.gateway import FakeInferenceGateway
+    from docket.ingestion.pipeline import IngestionPipeline
+    from docket.parsing.recipes import DEFAULT_SPLITTER, ChunkRecipe
+    from docket.sources.manager import SourceManager
+
+    session_factory = get_session_factory(migrated_sqlite_engine)
+    store_root = tmp_path / "evidence_store"
+    for sub in ("objects", "manifests", "quarantine", "trash"):
+        (store_root / sub).mkdir(parents=True, exist_ok=True)
+    store = ContentAddressedStore(store_root)
+    evidence_manager = EvidenceManager(store, session_factory)
+
+    gateway = FakeInferenceGateway(canned_description="a page describing penguins")
+    fts = FtsIndexWriter(migrated_sqlite_engine)
+    vector = LanceIndexWriter(tmp_path / "lancedb")
+    visual_writer = LancePageIndexWriter(tmp_path / "lancedb")
+    index_manager = IndexManager(fts, vector, gateway)
+
+    chunk_recipe = ChunkRecipe(
+        chunk_size=200,
+        overlap=40,
+        splitter=DEFAULT_SPLITTER,
+        parser_name=parser.parser_name,
+        parser_version=parser.parser_version,
+    )
+
+    pipeline = IngestionPipeline(
+        session_factory=session_factory,
+        evidence_manager=evidence_manager,
+        parser=parser,
+        index_manager=index_manager,
+        chunk_recipe=chunk_recipe,
+        gateway=gateway,
+        visual_index_writer=visual_writer,
+        settings=Settings(visual_index_enabled=True),
+    )
+
+    source_manager = SourceManager(session_factory)
+    folder = tmp_path / "docs"
+    folder.mkdir()
+    source = source_manager.register_source(folder)
+
+    path = folder / "multipage.docx"
+    _write_docx(path, "Multi", "placeholder body")
+    page_images = {1: b"fake-png-bytes-page-1", 2: b"fake-png-bytes-page-2"}
+    monkeypatch.setattr(
+        pipeline._parser, "parse", lambda source_id, source_path: _multipage_parsed_document(
+            source_path, page_images
+        )
+    )
+
+    result = pipeline.run_ingestion_for_source(source.id)
+    assert result.status == "succeeded"
+
+    with session_factory() as session:
+        version = session.execute(select(EvidenceVersion)).scalar_one()
+        assert version.page_images_json is not None
+        hashes = json_mod.loads(version.page_images_json)
+        assert set(hashes.keys()) == {"1", "2"}
+
+    for page_no, image_bytes in page_images.items():
+        content_hash = hashes[str(page_no)]
+        assert store.get(content_hash) == image_bytes
+
+    assert len(gateway.describe_image_calls) == 2
+    described_images = {call["image_bytes"] for call in gateway.describe_image_calls}
+    assert described_images == set(page_images.values())
+    for call in gateway.describe_image_calls:
+        assert call["model"] == "qwen2.5vl:7b"
+
+    table = visual_writer.table
+    assert table is not None
+    rows = {row["page_no"]: row["description"] for row in table.search().to_list()}
+    assert rows == {1: "a page describing penguins", 2: "a page describing penguins"}
+    for row in table.search().to_list():
+        assert row["evidence_version_id"] == version.id
+        assert row["source_id"] == source.id
+
+
+def test_page_images_disabled_by_default_no_vlm_or_index_calls(env, monkeypatch):
+    """With `visual_index_enabled=False` (the default -- `env`'s pipeline was
+    built without passing `gateway`/`visual_index_writer`/`settings` at all,
+    same as every other test in this file), none of the visual-index
+    machinery runs: no `describe_image`/extra `embed` calls, no pages table
+    writes. Page images are still captured/stored (item 3/4 of the
+    checkpoint is unconditional) -- only the VLM+embedding+LanceDB-write step
+    is gated."""
+    path = env.folder / "multipage.docx"
+    _write_docx(path, "Multi", "placeholder body")
+    page_images = {1: b"fake-png-bytes-page-1", 2: b"fake-png-bytes-page-2"}
+    monkeypatch.setattr(
+        env.pipeline._parser,
+        "parse",
+        lambda source_id, source_path: _multipage_parsed_document(source_path, page_images),
+    )
+
+    embed_calls_before = len(env.gateway.embed_calls)
+    result = env.pipeline.run_ingestion_for_source(env.source.id)
+    assert result.status == "succeeded"
+
+    assert env.gateway.describe_image_calls == []
+    # Chunk-text embedding still happens (unrelated to the visual index);
+    # what must NOT happen is any *extra* embed call for a page description.
+    # With a fake gateway and no page-description embeds, the count should
+    # equal exactly the number of chunk-text embed calls made this run.
+    assert len(env.gateway.embed_calls) - embed_calls_before == sum(
+        r.chunks_written for r in result.file_results
+    )
+
+    import json as json_mod
+    from docket.db.models import EvidenceVersion
+
+    with env.session_factory() as session:
+        version = session.execute(
+            select(EvidenceVersion).where(EvidenceVersion.file_path == str(path))
+        ).scalar_one()
+        assert version.page_images_json is not None
+        assert json_mod.loads(version.page_images_json) != {}
+
+    # No "pages" table created at all under the same lancedb dir the
+    # pipeline's own vector writer uses.
+    assert "pages" not in env.vector._db.list_tables().tables

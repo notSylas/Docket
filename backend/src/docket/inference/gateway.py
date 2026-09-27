@@ -53,6 +53,16 @@ class InferenceGateway(Protocol):
         """Returns the embedding vector for a single piece of text."""
         ...
 
+    def describe_image(self, image_bytes: bytes, *, prompt: str, model: str, **opts) -> str:
+        """Returns a short text description of an image, produced by a
+        vision-language model.
+
+        Used only as a retrieval-ranking signal (`docket.index.visual_index`)
+        -- the returned description is never citable evidence and must never
+        be shown to a user or flow into `validate_citations`/
+        `EvidenceResolver`."""
+        ...
+
 
 def _translate_error(exc: Exception, model: str) -> InferenceError:
     """Map an exception raised by the `ollama` package to an `InferenceError`."""
@@ -114,6 +124,25 @@ class OllamaGateway:
             raise _translate_error(exc, self.embed_model) from exc
         return response["embeddings"][0]
 
+    def describe_image(self, image_bytes: bytes, *, prompt: str, model: str, **opts) -> str:
+        opts = dict(opts)
+        options = dict(opts.get("options") or {})
+        # Same defaulting rationale as `generate` -- a caller-supplied
+        # options dict still wins.
+        options.setdefault("num_ctx", settings.num_ctx)
+        options.setdefault("num_predict", settings.num_predict)
+        opts["options"] = options
+        try:
+            # ollama's `generate` accepts `images` as a list of raw bytes (or
+            # base64 strings) -- verified against the installed `ollama`
+            # package's actual signature, no base64 encoding needed here.
+            response = _ollama.generate(
+                model=model, prompt=prompt, images=[image_bytes], **opts
+            )
+        except Exception as exc:
+            raise _translate_error(exc, model) from exc
+        return response["response"]
+
 
 class FakeInferenceGateway:
     """In-memory `InferenceGateway` test double -- no network, no model server.
@@ -125,15 +154,22 @@ class FakeInferenceGateway:
       need embeddings to behave consistently (e.g. similarity/ranking checks)
       without a real embedding model.
 
-    Calls are recorded on `generate_calls` / `embed_calls` so tests can assert
-    on what was asked of the gateway.
+    Calls are recorded on `generate_calls` / `embed_calls` / `describe_image_calls`
+    so tests can assert on what was asked of the gateway.
     """
 
-    def __init__(self, canned_response: str | None = None, embed_dim: int = 32):
+    def __init__(
+        self,
+        canned_response: str | None = None,
+        embed_dim: int = 32,
+        canned_description: str | None = None,
+    ):
         self.canned_response = canned_response
         self.embed_dim = embed_dim
+        self.canned_description = canned_description
         self.generate_calls: list[dict] = []
         self.embed_calls: list[str] = []
+        self.describe_image_calls: list[dict] = []
 
     def generate(self, *, system: str, prompt: str, **opts) -> str:
         self.generate_calls.append({"system": system, "prompt": prompt, **opts})
@@ -146,3 +182,11 @@ class FakeInferenceGateway:
         digest = hashlib.sha256(text.encode("utf-8")).digest()
         repeated = (digest * ((self.embed_dim // len(digest)) + 1))[: self.embed_dim]
         return [byte / 255.0 for byte in repeated]
+
+    def describe_image(self, image_bytes: bytes, *, prompt: str, model: str, **opts) -> str:
+        self.describe_image_calls.append(
+            {"image_bytes": image_bytes, "prompt": prompt, "model": model, **opts}
+        )
+        if self.canned_description is not None:
+            return self.canned_description
+        return f"[fake description of a {len(image_bytes)}-byte image]"

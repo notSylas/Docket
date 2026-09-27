@@ -67,6 +67,44 @@ def test_fake_gateway_embed_records_calls() -> None:
     assert fake.embed_calls == ["text a", "text b"]
 
 
+# --- FakeInferenceGateway.describe_image (visual retrieval CP2) -----------
+
+
+def test_fake_gateway_describe_image_records_calls() -> None:
+    fake = FakeInferenceGateway()
+    fake.describe_image(b"png-bytes-1", prompt="describe it", model="vlm:1b")
+    fake.describe_image(b"png-bytes-2", prompt="describe it too", model="vlm:1b", extra=1)
+    assert fake.describe_image_calls == [
+        {"image_bytes": b"png-bytes-1", "prompt": "describe it", "model": "vlm:1b"},
+        {
+            "image_bytes": b"png-bytes-2",
+            "prompt": "describe it too",
+            "model": "vlm:1b",
+            "extra": 1,
+        },
+    ]
+
+
+def test_fake_gateway_describe_image_returns_deterministic_default() -> None:
+    fake = FakeInferenceGateway()
+    result = fake.describe_image(b"abc", prompt="p", model="m")
+    assert isinstance(result, str)
+    assert result  # non-empty
+    assert result == fake.describe_image(b"abc", prompt="p", model="m")
+
+
+def test_fake_gateway_describe_image_returns_canned_description_when_configured() -> None:
+    fake = FakeInferenceGateway(canned_description="a page about penguins")
+    assert fake.describe_image(b"abc", prompt="p", model="m") == "a page about penguins"
+    assert fake.describe_image(b"xyz", prompt="p2", model="m") == "a page about penguins"
+
+
+def test_fake_gateway_describe_image_canned_description_independent_of_canned_response() -> None:
+    fake = FakeInferenceGateway(canned_response="gen answer", canned_description="img answer")
+    assert fake.generate(system="s", prompt="p") == "gen answer"
+    assert fake.describe_image(b"abc", prompt="p", model="m") == "img answer"
+
+
 # --- OllamaGateway construction ------------------------------------------
 
 
@@ -139,6 +177,65 @@ def test_generate_passes_through_non_options_kwargs(mocker) -> None:
     assert kwargs["think"] is False
     assert kwargs["format"] == "json"
     assert kwargs["options"]["num_ctx"] == settings.num_ctx
+
+
+# --- OllamaGateway.describe_image (visual retrieval CP2, mocked) ----------
+
+
+def test_describe_image_calls_ollama_generate_with_images_arg(mocker) -> None:
+    mock_generate = mocker.patch(
+        "docket.inference.gateway._ollama.generate",
+        return_value={"response": "a page showing a chart"},
+    )
+    gateway = OllamaGateway()
+    result = gateway.describe_image(
+        b"raw-png-bytes", prompt="describe this page", model="qwen2.5vl:7b"
+    )
+
+    assert result == "a page showing a chart"
+    _, kwargs = mock_generate.call_args
+    assert kwargs["model"] == "qwen2.5vl:7b"
+    assert kwargs["prompt"] == "describe this page"
+    assert kwargs["images"] == [b"raw-png-bytes"]
+    assert kwargs["options"]["num_ctx"] == settings.num_ctx
+    assert kwargs["options"]["num_predict"] == settings.num_predict
+
+
+def test_describe_image_merges_caller_supplied_options(mocker) -> None:
+    mock_generate = mocker.patch(
+        "docket.inference.gateway._ollama.generate",
+        return_value={"response": "ok"},
+    )
+    gateway = OllamaGateway()
+    gateway.describe_image(
+        b"bytes", prompt="p", model="m", options={"num_ctx": 4096}
+    )
+
+    _, kwargs = mock_generate.call_args
+    assert kwargs["options"]["num_ctx"] == 4096
+    assert kwargs["options"]["num_predict"] == settings.num_predict
+
+
+def test_describe_image_wraps_connection_failure(mocker) -> None:
+    mocker.patch(
+        "docket.inference.gateway._ollama.generate",
+        side_effect=ConnectionError("Failed to connect to Ollama."),
+    )
+    gateway = OllamaGateway()
+    with pytest.raises(InferenceUnavailableError):
+        gateway.describe_image(b"bytes", prompt="p", model="qwen2.5vl:7b")
+
+
+def test_describe_image_wraps_model_not_found(mocker) -> None:
+    mocker.patch(
+        "docket.inference.gateway._ollama.generate",
+        side_effect=ollama.ResponseError("model 'nope:1b' not found", 404),
+    )
+    gateway = OllamaGateway()
+    from docket.inference.gateway import ModelNotFoundError
+
+    with pytest.raises(ModelNotFoundError):
+        gateway.describe_image(b"bytes", prompt="p", model="nope:1b")
 
 
 # --- Error translation (mocked, no real Ollama needed) --------------------

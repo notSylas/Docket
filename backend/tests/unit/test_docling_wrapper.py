@@ -231,6 +231,83 @@ def test_insert_page_markers_repeated_text_matches_forward_only():
     assert marker2_idx > first_header_idx
 
 
+# ---------------------------------------------------------------------------
+# Page images (ParsedDocument.page_images) -- visual retrieval checkpoint 2.
+# ---------------------------------------------------------------------------
+
+
+def test_page_images_extracts_png_bytes_and_skips_pages_without_image():
+    from types import SimpleNamespace as NS
+    from PIL import Image
+    from docket.parsing.docling_wrapper import _page_images
+
+    tiny_image = Image.new("RGB", (4, 4))
+    document = NS(
+        pages={
+            1: NS(image=NS(pil_image=tiny_image)),
+            2: NS(image=None),  # generation failed for this page -- must be skipped
+        }
+    )
+
+    images = _page_images(document)
+
+    assert set(images.keys()) == {1}
+    assert isinstance(images[1], bytes)
+    assert len(images[1]) > 0
+    # A real PNG, not just arbitrary bytes.
+    assert images[1].startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_page_images_empty_when_no_pages_have_images():
+    from types import SimpleNamespace as NS
+    from docket.parsing.docling_wrapper import _page_images
+
+    document = NS(pages={1: NS(image=None), 2: NS(image=None)})
+    assert _page_images(document) == {}
+
+
+def test_page_images_missing_pages_attribute_returns_empty():
+    from types import SimpleNamespace as NS
+    from docket.parsing.docling_wrapper import _page_images
+
+    document = NS()
+    assert _page_images(document) == {}
+
+
+def test_parsed_document_page_images_end_to_end_via_fake_converter(tmp_path):
+    """Exercises `DoclingParser.parse()` end to end (same fake-converter
+    technique as `test_parsed_document_text_has_no_markers_fake_docling_result`
+    below), confirming `ParsedDocument.page_images` is populated from
+    `document.pages[n].image.pil_image` and pages with `image=None` are
+    skipped, not errored."""
+    from types import SimpleNamespace as NS
+    from PIL import Image
+    from docket.parsing import docling_wrapper as dw
+
+    tiny_image = Image.new("RGB", (4, 4))
+    document = NS(
+        texts=[],
+        pages={
+            1: NS(image=NS(pil_image=tiny_image)),
+            2: NS(image=None),
+        },
+    )
+    document.export_to_markdown = lambda: "Some page text.\n"
+    fake_result = NS(document=document)
+
+    parser = object.__new__(dw.DoclingParser)
+    parser._converter = NS(convert=lambda path: fake_result)
+    parser._parser_name = "docling"
+    parser._parser_version = "test-version"
+
+    fake_path = tmp_path / "fake.pdf"
+    fake_path.write_text("irrelevant")
+    result = parser.parse("src-fake", fake_path)
+
+    assert set(result.page_images.keys()) == {1}
+    assert result.page_images[1].startswith(b"\x89PNG\r\n\x1a\n")
+
+
 def test_parsed_document_text_has_no_markers_fake_docling_result(monkeypatch, tmp_path):
     """Exercises `DoclingParser.parse()` end to end with a faked converter
     result (no real Docling model load), confirming `ParsedDocument.text`

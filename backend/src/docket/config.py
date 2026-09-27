@@ -10,6 +10,17 @@ class Settings(BaseSettings):
 
     gen_model: str = "qwen3:14b"
     embed_model: str = "qwen3-embedding:0.6b"
+    # Vision-language model used to describe page images for the visual
+    # retrieval index (checkpoint 2) -- pulled locally and confirmed via
+    # `ollama list`. Only ever called when `visual_index_enabled` is True.
+    vision_model: str = "qwen2.5vl:7b"
+
+    # Off by default: this checkpoint builds the page-image capture +
+    # description + embedding infrastructure, but its retrieval value is
+    # unmeasured. Nothing should call the VLM or write to the pages LanceDB
+    # table until this is explicitly turned on (checkpoint 3 or a later
+    # explicit decision).
+    visual_index_enabled: bool = False
 
     # Ollama's default context window is 4096 tokens when a model file sets
     # none (confirmed via `ollama ps` on qwen3:14b) -- an 8-chunk retrieval

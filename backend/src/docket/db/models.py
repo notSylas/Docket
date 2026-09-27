@@ -152,6 +152,13 @@ class EvidenceVersion(Base):
     parser_name: Mapped[str] = mapped_column(String, nullable=False)
     parser_version: Mapped[str] = mapped_column(String, nullable=False)
     formula_regions_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # JSON-encoded {page_no: content_hash} mapping into the same
+    # ContentAddressedStore used for document bytes -- one entry per page
+    # whose rendered image Docling produced (visual retrieval checkpoint 2).
+    # Nullable, same posture as `formula_regions_json`: populated on
+    # ingest/backfill, never retroactively for rows written before this
+    # column existed unless that source is re-ingested.
+    page_images_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_current: Mapped[bool] = mapped_column(default=True, nullable=False)
 
     source: Mapped["Source"] = relationship(back_populates="evidence_versions")

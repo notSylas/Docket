@@ -40,6 +40,7 @@ from docket.evidence.store import ContentAddressedStore
 from docket.index.fts_index import FtsIndexWriter
 from docket.index.manager import IndexManager
 from docket.index.vector_index import LanceIndexWriter
+from docket.index.visual_index import LancePageIndexWriter
 from docket.inference.gateway import OllamaGateway
 from docket.ingestion.pipeline import IngestionPipeline
 from docket.parsing.docling_wrapper import DoclingParser
@@ -145,6 +146,10 @@ class AppContext:
         return LanceIndexWriter(self.settings.lancedb_path)
 
     @cached_property
+    def visual_index_writer(self) -> LancePageIndexWriter:
+        return LancePageIndexWriter(self.settings.lancedb_path)
+
+    @cached_property
     def index_manager(self) -> IndexManager:
         return IndexManager(self.fts_writer, self.vector_writer, self.gateway)
 
@@ -174,6 +179,9 @@ class AppContext:
             parser=self.parser,
             index_manager=self.index_manager,
             chunk_recipe=self.chunk_recipe,
+            gateway=self.gateway,
+            visual_index_writer=self.visual_index_writer,
+            settings=self.settings,
         )
 
 
