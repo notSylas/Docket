@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from docket.parsing.normalize import unescape_markdown
+from docket.infra.parsing.normalize import unescape_markdown
 
 
 def test_unescapes_snake_case_identifier() -> None:

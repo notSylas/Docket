@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from docket.parsing.docling_wrapper import DoclingParser, ParseError, ParsedDocument
+from docket.infra.parsing.docling_wrapper import DoclingParser, ParseError, ParsedDocument
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DOCS_DIR = REPO_ROOT / "Docs"
@@ -89,7 +89,7 @@ def test_parse_real_docx_smoke_test(parser: DoclingParser) -> None:
 
 def test_formula_provenance_preserves_coordinates_without_ocr_text():
     from types import SimpleNamespace as NS
-    from docket.parsing.docling_wrapper import _formula_regions
+    from docket.infra.parsing.docling_wrapper import _formula_regions
     document = NS(texts=[NS(label="formula", self_ref="#/texts/2", text="invented equation",
                            prov=[NS(page_no=3, bbox=NS(l=1, t=2, r=10, b=20, coord_origin="TOPLEFT"))])],
                   pages={3: NS(size=NS(width=600, height=800))})
@@ -115,7 +115,7 @@ def _text_item(text: str, page_no: int):
 
 
 def test_insert_page_markers_at_genuine_transitions_only():
-    from docket.parsing.docling_wrapper import _insert_page_markers
+    from docket.infra.parsing.docling_wrapper import _insert_page_markers
     from types import SimpleNamespace as NS
 
     # Every anchor text is >= _MIN_ANCHOR_LEN (32 chars) -- short strings are
@@ -156,7 +156,7 @@ def test_insert_page_markers_at_genuine_transitions_only():
 
 
 def test_insert_page_markers_skips_unmatched_items_without_error():
-    from docket.parsing.docling_wrapper import _insert_page_markers
+    from docket.infra.parsing.docling_wrapper import _insert_page_markers
     from types import SimpleNamespace as NS
 
     markdown = "Only this sentence survived the exporter.\n"
@@ -175,7 +175,7 @@ def test_insert_page_markers_skips_unmatched_items_without_error():
 
 
 def test_insert_page_markers_never_goes_backwards():
-    from docket.parsing.docling_wrapper import _insert_page_markers
+    from docket.infra.parsing.docling_wrapper import _insert_page_markers
     from types import SimpleNamespace as NS
 
     markdown = (
@@ -196,7 +196,7 @@ def test_insert_page_markers_never_goes_backwards():
 
 
 def test_insert_page_markers_no_duplicate_marker_within_same_page():
-    from docket.parsing.docling_wrapper import _insert_page_markers
+    from docket.infra.parsing.docling_wrapper import _insert_page_markers
     from types import SimpleNamespace as NS
 
     markdown = (
@@ -217,7 +217,7 @@ def test_insert_page_markers_no_duplicate_marker_within_same_page():
 
 
 def test_insert_page_markers_repeated_text_matches_forward_only():
-    from docket.parsing.docling_wrapper import _insert_page_markers
+    from docket.infra.parsing.docling_wrapper import _insert_page_markers
     from types import SimpleNamespace as NS
 
     # The running header appears twice -- once per page -- and must not both
@@ -256,7 +256,7 @@ def test_insert_page_markers_repeated_text_matches_forward_only():
 def test_page_images_extracts_png_bytes_and_skips_pages_without_image():
     from types import SimpleNamespace as NS
     from PIL import Image
-    from docket.parsing.docling_wrapper import _page_images
+    from docket.infra.parsing.docling_wrapper import _page_images
 
     tiny_image = Image.new("RGB", (4, 4))
     document = NS(
@@ -277,7 +277,7 @@ def test_page_images_extracts_png_bytes_and_skips_pages_without_image():
 
 def test_page_images_empty_when_no_pages_have_images():
     from types import SimpleNamespace as NS
-    from docket.parsing.docling_wrapper import _page_images
+    from docket.infra.parsing.docling_wrapper import _page_images
 
     document = NS(pages={1: NS(image=None), 2: NS(image=None)})
     assert _page_images(document) == {}
@@ -285,7 +285,7 @@ def test_page_images_empty_when_no_pages_have_images():
 
 def test_page_images_missing_pages_attribute_returns_empty():
     from types import SimpleNamespace as NS
-    from docket.parsing.docling_wrapper import _page_images
+    from docket.infra.parsing.docling_wrapper import _page_images
 
     document = NS()
     assert _page_images(document) == {}
@@ -299,7 +299,7 @@ def test_parsed_document_page_images_end_to_end_via_fake_converter(tmp_path):
     skipped, not errored."""
     from types import SimpleNamespace as NS
     from PIL import Image
-    from docket.parsing import docling_wrapper as dw
+    from docket.infra.parsing import docling_wrapper as dw
 
     tiny_image = Image.new("RGB", (4, 4))
     document = NS(
@@ -330,7 +330,7 @@ def test_parsed_document_text_has_no_markers_fake_docling_result(monkeypatch, tm
     result (no real Docling model load), confirming `ParsedDocument.text`
     stays marker-free while `text_with_page_markers` carries them."""
     from types import SimpleNamespace as NS
-    from docket.parsing import docling_wrapper as dw
+    from docket.infra.parsing import docling_wrapper as dw
 
     document = NS(texts=[
         _text_item("Page one sentence that is long enough now.", 1),

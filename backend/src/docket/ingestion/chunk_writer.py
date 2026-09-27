@@ -22,7 +22,7 @@ from docket.core.db.models import (
     EvidenceVersion,
 )
 from docket.infra.index.base import ChunkRecord
-from docket.parsing.recipes import ChunkRecipe
+from docket.infra.parsing.recipes import ChunkRecipe
 
 
 class ChunkWriter:

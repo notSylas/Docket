@@ -28,8 +28,8 @@ from docket.infra.index.visual_index import LancePageIndexWriter
 from docket.infra.inference.gateway import FakeInferenceGateway
 from docket.ingestion.pipeline import IngestionPipeline
 from docket.ingestion.visual_indexer import VisualIndexer
-from docket.parsing.docling_wrapper import ParsedDocument
-from docket.parsing.recipes import DEFAULT_SPLITTER, ChunkRecipe
+from docket.infra.parsing.docling_wrapper import ParsedDocument
+from docket.infra.parsing.recipes import DEFAULT_SPLITTER, ChunkRecipe
 from docket.sources.manager import SourceManager
 
 # ---------------------------------------------------------------------------

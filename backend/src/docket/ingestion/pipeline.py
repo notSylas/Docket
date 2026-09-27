@@ -129,9 +129,9 @@ from docket.infra.inference.gateway import InferenceGateway
 from docket.ingestion.chunk_writer import ChunkWriter
 from docket.ingestion.formula_transcriber import FormulaTranscriber
 from docket.ingestion.visual_indexer import VisualIndexer
-from docket.parsing.chunker import chunk_document
-from docket.parsing.docling_wrapper import DoclingParser
-from docket.parsing.recipes import ChunkRecipe
+from docket.infra.parsing.chunker import chunk_document
+from docket.infra.parsing.docling_wrapper import DoclingParser
+from docket.infra.parsing.recipes import ChunkRecipe
 from docket.sources.manager import SourceNotFoundError
 
 # Deliberately narrow, spike-validated set. Broadening this to more of

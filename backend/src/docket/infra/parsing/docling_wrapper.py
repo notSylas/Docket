@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from importlib.metadata import version
 
-from docket.parsing.normalize import unescape_markdown
+from docket.infra.parsing.normalize import unescape_markdown
 
 # Inline, invisible page-boundary sentinel inserted into markdown at points
 # where Docling's page number changes (see `_insert_page_markers`).

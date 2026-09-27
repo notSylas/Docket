@@ -48,7 +48,7 @@ _MIN_COVERAGE_RATIO = 0.85
 
 @pytest.mark.skipif(not PHYSICS_ZIP.exists(), reason="Reference_Books/ physics corpus not present locally")
 def test_page_markers_cover_most_real_pages(tmp_path: Path) -> None:
-    from docket.parsing.docling_wrapper import DoclingParser
+    from docket.infra.parsing.docling_wrapper import DoclingParser
 
     with zipfile.ZipFile(PHYSICS_ZIP) as zf:
         zf.extract("leph103.pdf", tmp_path)

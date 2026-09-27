@@ -22,7 +22,7 @@ import hashlib
 import re
 from dataclasses import dataclass
 
-from docket.parsing.recipes import ChunkRecipe
+from docket.infra.parsing.recipes import ChunkRecipe
 
 _HEADING_RE = re.compile(r"^(#{1,3})[ \t]+(.*)$", re.MULTILINE)
 _PAGE_MARKER_RE = re.compile(r"<!--PAGE:(\d+)-->")

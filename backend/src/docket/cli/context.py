@@ -44,8 +44,8 @@ from docket.infra.index.vector_index import LanceIndexWriter
 from docket.infra.index.visual_index import LancePageIndexWriter
 from docket.infra.inference.gateway import OllamaGateway
 from docket.ingestion.pipeline import IngestionPipeline
-from docket.parsing.docling_wrapper import DoclingParser
-from docket.parsing.recipes import DEFAULT_SPLITTER, ChunkRecipe
+from docket.infra.parsing.docling_wrapper import DoclingParser
+from docket.infra.parsing.recipes import DEFAULT_SPLITTER, ChunkRecipe
 from docket.retrieval.resolver import EvidenceResolver
 from docket.sources.manager import SourceManager
 

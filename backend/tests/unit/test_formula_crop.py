@@ -13,8 +13,8 @@ from io import BytesIO
 
 from PIL import Image
 
-from docket.parsing.docling_wrapper import PAGE_IMAGES_SCALE
-from docket.parsing.formula_crop import (
+from docket.infra.parsing.docling_wrapper import PAGE_IMAGES_SCALE
+from docket.infra.parsing.formula_crop import (
     FORMULA_CROP_PADDING_PX,
     MIN_FORMULA_REGION_AREA_PT2,
     crop_formula_region,

@@ -6,8 +6,8 @@ import hashlib
 
 import pytest
 
-from docket.parsing.chunker import chunk_document, split_into_units
-from docket.parsing.recipes import ChunkRecipe
+from docket.infra.parsing.chunker import chunk_document, split_into_units
+from docket.infra.parsing.recipes import ChunkRecipe
 
 
 def _sha256(text: str) -> str:

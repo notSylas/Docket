@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from io import BytesIO
 
-from docket.parsing.docling_wrapper import PAGE_IMAGES_SCALE
+from docket.infra.parsing.docling_wrapper import PAGE_IMAGES_SCALE
 
 # Minimum bbox area, in PDF points^2 (i.e. *before* PAGE_IMAGES_SCALE is
 # applied -- these are the same units as `region["bbox"]`/`page_width`/
