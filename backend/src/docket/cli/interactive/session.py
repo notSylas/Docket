@@ -5,13 +5,18 @@ or `docket chat`). One `AppContext` per session, multi-turn memory via
 `run_session` takes an injectable `input_fn` and rich `Console` so it is
 testable without a TTY, and a `query_service_factory` so tests can supply a
 fake `QueryService`.
+
+This module owns session lifecycle/wiring, the REPL loop, and command
+dispatch. The actual command *bodies* live in sibling collaborator modules
+(`source_commands`, `ingestion_ui`, `query_flow`) that take the `_Session`
+instance as an argument -- `_Session` remains the single owner of all shared
+mutable state (`context`, `reader`, `console`, `state`, `history`, `mode`,
+`last_citations`, `last_question`); collaborators read/write it through the
+`session` reference they're handed rather than holding their own copies.
 """
 
 from __future__ import annotations
 
-import os
-import re
-import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -19,24 +24,16 @@ from rich.console import Console
 from rich.table import Table
 
 from docket import __version__
-from docket.db.models import SourceStatus
-from docket.inference.gateway import (
-    InferenceError,
-    InferenceUnavailableError,
-    ModelNotFoundError,
-)
 from docket.inference.health import HealthReport, format_health_warning
-from docket.ingestion.pipeline import SUPPORTED_EXTENSIONS, ProgressEvent, SourceNotActiveError
 from docket.query.classifier import QueryMode
 from docket.query.conversation import ConversationTurn
 from docket.query.service import QueryService
-from docket.retrieval.resolver import ChunkNotFoundError
-from docket.sources.manager import SourceNotFoundError
 
+from . import ingestion_ui, query_flow, source_commands
 from .commands import BARE_WORDS, HELP_FOOTER, CommandRegistry, default_registry
+from .errors import handle_error
 from .reader import LineReader, make_reader
 from .state import SessionState
-from .render import number_citations, render
 
 PROMPT = "docket> "
 
@@ -147,36 +144,12 @@ class _Session:
                     if self.command(line):
                         return
                 else:
-                    self.ask(line)
+                    query_flow.ask(self, line)
             except KeyboardInterrupt:
                 self.say()
                 self.say("(interrupted)", style="dim")
             except Exception as exc:  # last resort: never crash the session
-                self.handle_error(exc)
-
-    def handle_error(self, exc: BaseException) -> None:
-        if os.environ.get("DOCKET_DEBUG"):
-            import traceback
-
-            self.error(traceback.format_exc())
-        if isinstance(exc, InferenceUnavailableError):
-            self.error("Can't reach Ollama \u2014 is it running? (ollama serve)")
-            self.say(str(exc), style="dim")
-        elif isinstance(exc, ModelNotFoundError):
-            match = re.search(r"[Mm]odel '([^']+)'", str(exc))
-            model = match.group(1) if match else getattr(
-                getattr(self.context, "settings", None), "gen_model", "<model>"
-            )
-            self.error(f"Model not found: {model} \u2014 run: ollama pull {model}")
-            self.say(str(exc), style="dim")
-        elif isinstance(exc, InferenceError):
-            self.error(f"Inference error: {exc}")
-        elif isinstance(exc, (SourceNotFoundError, SourceNotActiveError)):
-            self.error(f"Error: {exc}")
-        elif isinstance(exc, ValueError):
-            self.error(f"Error: {exc}")
-        else:
-            self.error(f"Unexpected error ({type(exc).__name__}): {exc}")
+                handle_error(self, exc)
 
     # -- commands ----------------------------------------------------------
 
@@ -200,201 +173,45 @@ class _Session:
             return False
         return bool(cmd.handler(self, arg))
 
+    # -- thin forwarders to collaborators -----------------------------------
+    #
+    # `commands.py`'s registry dispatches by looking up a method name on
+    # whatever session object `command()` hands it (see `_call()` there), so
+    # these one-line forwarders are what let the registry keep resolving
+    # `/sources` -> `session.cmd_sources(arg)` etc. without any change to
+    # `commands.py` itself -- only the handler *bodies* moved out.
+
     def cmd_help(self, arg: str) -> None:
         self.say(self.registry.render_help(HELP_FOOTER))
 
     def cmd_sources(self, arg: str) -> None:
-        sources = self.context.source_manager.list_sources()
-        if not sources:
-            self.say("No sources registered. Use /add <folder>.")
-            return
-        table = Table(show_header=True, header_style="bold", box=None, pad_edge=False)
-        table.add_column("ID", no_wrap=True, overflow="fold")
-        table.add_column("Status", no_wrap=True)
-        table.add_column("Path", overflow="fold")
-        for source in sources:
-            table.add_row(str(source.id), source.status.value, str(source.path))
-        self.console.print(table)
+        return source_commands.cmd_sources(self, arg)
 
     def cmd_add(self, arg: str) -> None:
-        if not arg:
-            self.say("Usage: /add <folder>")
-            return
-        self._register(Path(arg).expanduser().resolve())
+        return source_commands.cmd_add(self, arg)
 
-    def _register(self, path: Path) -> Any | None:
-        """Register `path` (or report it's already registered). Returns the
-        source id on success or when already registered, else None."""
-        for existing in self.context.source_manager.list_sources():
-            if Path(existing.path) == path:
-                self.say(f"Already registered: {existing.id}")
-                return existing.id
-        try:
-            source = self.context.source_manager.register_source(path)
-        except ValueError as exc:
-            self.error(f"Error: {exc}")
-            return None
-        self.state.refresh_sources(self.context.source_manager)
-        self.sync_state()
-        self.say(f"Registered source {source.id}")
-        self.say(f"Next: /ingest {source.id}", style="dim")
-        return source.id
-
-    def first_run_offer(self) -> None:
-        """Opt-in guided start: offer to register the cwd when nothing is set up."""
-        if self.context.source_manager.list_sources():
-            return
-        cwd = Path.cwd().resolve()
-        if cwd == Path("/") or cwd == Path.home().resolve():
-            return
-        if not self._confirm(f"No sources yet. Add the current directory ({cwd})? [y/N] "):
-            return
-        source_id = self._register(cwd)
-        if source_id is None:
-            return
-        if self._confirm("Ingest it now? [y/N] "):
-            try:
-                self.cmd_ingest(str(source_id))
-            except KeyboardInterrupt:
-                self.say()
-                self.say("(interrupted)", style="dim")
-            except Exception as exc:  # noqa: BLE001
-                self.handle_error(exc)
+    def cmd_remove(self, arg: str) -> None:
+        return source_commands.cmd_remove(self, arg)
 
     def cmd_ingest(self, arg: str) -> None:
-        if not arg or arg.lower() == "all":
-            target_ids = [
-                s.id
-                for s in self.context.source_manager.list_sources()
-                if s.status == SourceStatus.ACTIVE
-            ]
-            if not target_ids:
-                self.say("No active sources to ingest. Use /add <folder> first.")
-                return
-        else:
-            target_ids = [arg]
-
-        try:
-            self._ingest_targets(target_ids)
-        finally:
-            self.state.refresh_sources(self.context.source_manager)
-            self.sync_state()
-
-    def _ingest_targets(self, target_ids: list[str]) -> None:
-        ctx = self.context
-        vars_ = vars(ctx) if hasattr(ctx, "__dict__") else {}
-        # Constructing the pipeline builds the Docling parser, which loads
-        # models (slow the first time). Say so before it happens.
-        cold = "pipeline" not in vars_ and "parser" not in vars_
-        for target_id in target_ids:
-            status = None
-            try:
-                with self.console.status(f"Ingesting {target_id}...") as status:
-                    if cold:
-                        self.say(
-                            "Loading document parser (first time only \u2014 "
-                            "this can take a moment)\u2026",
-                            style="dim",
-                        )
-                    pipeline = ctx.pipeline
-                    cold = False
-
-                    def on_progress(event: ProgressEvent, status=status) -> None:
-                        if event.kind == "start":
-                            status.update(
-                                f"Ingesting {event.index}/{event.total}: {event.path.name}"
-                            )
-                        elif event.result is not None and event.result.status == "failed":
-                            self.error(f"FAILED: {event.path} -- {event.result.error}")
-
-                    result = pipeline.run_ingestion_for_source(target_id, progress=on_progress)
-            except (SourceNotFoundError, SourceNotActiveError) as exc:
-                self.error(f"Error ingesting {target_id}: {exc}")
-                continue
-            self._summarize(target_id, result)
-
-    def _summarize(self, target_id: str, result: Any) -> None:
-        if result.files_processed == 0 and result.status == "failed":
-            folder = next(
-                (str(s.path) for s in self.context.source_manager.list_sources()
-                 if s.id == result.source_id),
-                result.source_id,
-            )
-            exts = ", ".join(sorted(SUPPORTED_EXTENSIONS))
-            self.say(f"No supported files found in {folder} (supported: {exts}).")
-            return
-        ingested = sum(1 for r in result.file_results if r.status == "ingested")
-        unchanged = sum(1 for r in result.file_results if r.status == "unchanged")
-        chunks = sum(r.chunks_written for r in result.file_results)
-        self.say(
-            f"{result.source_id}: {ingested} ingested, {unchanged} unchanged, "
-            f"{result.files_failed} failed \u2014 {chunks} chunks written"
-        )
+        return ingestion_ui.cmd_ingest(self, arg)
 
     def cmd_mode(self, arg: str) -> None:
-        arg = arg.lower()
-        if not arg:
-            self.say(f"Mode: {self.mode.value if self.mode else 'auto'}")
-            return
-        if arg == "auto":
-            self.mode = None
-        elif arg in ("fast", "agent"):
-            self.mode = QueryMode(arg)
-        else:
-            self.say("Usage: /mode [auto|fast|agent]")
-            return
-        self.state.mode = arg
-        self.say(f"Mode set to {arg}.")
+        return query_flow.cmd_mode(self, arg)
 
     def cmd_clear(self, arg: str) -> None:
-        self.history.clear()
-        self._set_citations([], None)
-        self.sync_state()
-        self.say("Conversation history cleared.")
-
-    def _set_citations(self, citations: list[Any], question: str | None) -> None:
-        self.last_citations = citations
-        self.last_question = question
-        self.state.citations = tuple(
-            (n, c.source_display_name) for n, c in enumerate(citations, 1)
-        )
+        return query_flow.cmd_clear(self, arg)
 
     def cmd_show(self, arg: str) -> None:
-        if not self.last_citations:
-            self.say("No answer yet \u2014 ask a question first.")
-            return
-        try:
-            n = int(arg)
-        except ValueError:
-            self.say("Usage: /show <n>")
-            return
-        total = len(self.last_citations)
-        if not 1 <= n <= total:
-            self.say(f"No citation {n} in the last answer (it has {total}).")
-            return
-        citation = self.last_citations[n - 1]
-        try:
-            evidence = self.context.resolver.resolve(citation.chunk_id)
-        except ChunkNotFoundError:
-            self.say("That evidence is no longer available (source changed or removed).")
-            return
-        header = f"[{n}] {evidence.source_display_name}"
-        if evidence.heading:
-            header += f" \u2014 {evidence.heading}"
-        self.console.print(header, style="bold", markup=False, highlight=False)
-        self.say()
-        self.say(evidence.text)
-        self.say()
-        self.say(f"chunk {evidence.chunk_id}", style="dim")
+        return query_flow.cmd_show(self, arg)
 
     def cmd_retry(self, arg: str) -> None:
-        question = self.last_question
-        if not question:
-            self.say("Nothing to retry yet.")
-            return
-        if self.history and self.history[-1].question == question:
-            self.history.pop()
-        self.ask(question)
+        return query_flow.cmd_retry(self, arg)
+
+    def first_run_offer(self) -> None:
+        return source_commands.first_run_offer(self)
+
+    # -- status --------------------------------------------------------------
 
     def cmd_status(self, arg: str) -> None:
         settings = self.context.settings
@@ -414,64 +231,6 @@ class _Session:
         if history_file.exists():
             table.add_row("History", str(history_file))
         self.console.print(table)
-
-    def _confirm(self, prompt: str) -> bool:
-        read = getattr(self.reader, "confirm", None) or self.reader.read
-        try:
-            reply = read(prompt)
-        except (EOFError, KeyboardInterrupt):
-            self.say()
-            return False
-        return reply.strip().lower() in ("y", "yes")
-
-    def cmd_remove(self, arg: str) -> None:
-        if not arg:
-            self.say("Usage: /remove <source-id>")
-            return
-        manager = self.context.source_manager
-        match = next((s for s in manager.list_sources() if s.id == arg), None)
-        if match is None:
-            self.error(f"Error: source not found: {arg}")
-            return
-        if not self._confirm(f"Remove source {arg} ({match.path})? [y/N] "):
-            self.say("Cancelled.", style="dim")
-            return
-        try:
-            manager.deactivate_source(arg)
-        except SourceNotFoundError:
-            self.error(f"Error: source not found: {arg}")
-            return
-        finally:
-            self.state.refresh_sources(manager)
-            self.sync_state()
-        self.say(f"Removed {arg}. Its evidence is no longer searched.")
-
-    # -- questions ---------------------------------------------------------
-
-    def get_service(self) -> Any | None:
-        if self._service is not None:
-            return self._service
-        table = self.context.vector_writer.table
-        if table is None:
-            return None
-        self._service = self.factory(self.context, table)
-        return self._service
-
-    def ask(self, question: str) -> None:
-        service = self.get_service()
-        if service is None:
-            self.say("Nothing indexed yet -- /add a folder and /ingest it first.")
-            return
-        start = time.perf_counter()
-        with self.console.status("Thinking..."):
-            result = service.ask(question, mode=self.mode, history=list(self.history))
-        elapsed = time.perf_counter() - start
-        text, numbered = number_citations(result.answer, list(result.citations))
-        render(self.console, result, elapsed, text, numbered)
-        # History keeps the ORIGINAL tagged answer so follow-ups stay consistent.
-        self.history.append(ConversationTurn(question=question, answer=result.answer))
-        self._set_citations(numbered, question)
-        self.sync_state()
 
 
 def run_session(

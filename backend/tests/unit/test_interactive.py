@@ -360,10 +360,10 @@ def test_state_indexed_flips_after_ingest(ctx, tmp_path):
 def test_footer_timing_and_agent(ctx, monkeypatch):
     import itertools
 
-    from docket.cli.interactive import session as session_mod
+    from docket.cli.interactive import query_flow as query_flow_mod
 
     ticks = itertools.count(0, 8)  # each perf_counter call advances 8s -> ask takes 8s
-    monkeypatch.setattr(session_mod.time, "perf_counter", lambda: next(ticks))
+    monkeypatch.setattr(query_flow_mod.time, "perf_counter", lambda: next(ticks))
     out, _ = drive(ctx, ["q"])
     assert "quick search \u00b7 8.0s" in out
     out, _ = drive(ctx, ["/mode agent", "q"])
