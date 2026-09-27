@@ -199,8 +199,35 @@ def _combine(supported: list[bool | None]) -> JudgeVerdict:
     return JudgeVerdict.PASS
 
 
-def run_verdict(claims: list[ClaimResult], primary_model: str) -> JudgeVerdict:
-    return _combine([c.verdicts[primary_model].supported for c in claims])
+def _effective_supported(
+    claim: ClaimResult, primary_model: str, cross_check_model: str | None
+) -> bool | None:
+    """The value a claim contributes to the run verdict.
+
+    A claim the primary alone judged decides the run exactly as it always
+    has. A claim a cross-check model also judged only fails the run when
+    both models agree it fails; when the two disagree (one True, one False),
+    the claim is unresolved rather than settled by whichever way the
+    primary happened to call it, so it contributes doubt instead.
+    """
+    primary_supported = claim.verdicts[primary_model].supported
+    if cross_check_model is not None and cross_check_model in claim.verdicts:
+        cross_supported = claim.verdicts[cross_check_model].supported
+        if (
+            primary_supported is not None
+            and cross_supported is not None
+            and primary_supported != cross_supported
+        ):
+            return None
+    return primary_supported
+
+
+def run_verdict(
+    claims: list[ClaimResult], primary_model: str, cross_check_model: str | None = None
+) -> JudgeVerdict:
+    return _combine(
+        [_effective_supported(c, primary_model, cross_check_model) for c in claims]
+    )
 
 
 def _has_disagreement(claims: list[ClaimResult], models: list[str]) -> bool:
@@ -265,7 +292,9 @@ def judge_runs(
                 JudgedRun(
                     question_id=record.question_id,
                     repeat=record.repeat,
-                    verdict=run_verdict(claim_results, primary.model),
+                    verdict=run_verdict(
+                        claim_results, primary.model, cross_check.model if cross_check else None
+                    ),
                     source="judge",
                     claims=claim_results,
                     judge_models=models,

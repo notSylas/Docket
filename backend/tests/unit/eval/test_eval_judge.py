@@ -135,9 +135,86 @@ def test_cross_check_records_disagreement(make_record):
     cross = ClaimJudge(QueueGateway([yes(), yes(), NO, yes()]), "small")  # agrees on a, disagrees on b
     judged = {j.question_id: j for j in judge_runs(gold, records, primary, cross)}
     assert not judged["a"].disagreement and judged["b"].disagreement
-    assert judged["b"].verdict is JudgeVerdict.PASS  # primary verdict wins
+    # A disagreement no longer lets the primary's call settle it alone: an
+    # unresolved (one True, one False) claim is doubt, not a free pass.
+    assert judged["b"].verdict is JudgeVerdict.DOUBT
     assert judged["b"].judge_models == ["big", "small"]
     assert set(judged["b"].claims[0].verdicts) == {"big", "small"}
+
+
+def test_no_cross_check_primary_alone_still_decides(make_record):
+    """Regression: with a single judge, a primary False still fails the run."""
+    gold = GoldSet(questions=[_q("f")])
+    records = [_paraphrase(make_record, "f")]
+    judged = judge_runs(gold, records, ClaimJudge(QueueGateway([NO]), "j"))
+    assert judged[0].verdict is JudgeVerdict.FAIL
+    assert not judged[0].disagreement
+
+
+def test_cross_check_agree_false_still_fails(make_record):
+    """Both models confirming a claim is wrong must still fail the run."""
+    gold = GoldSet(questions=[_q("a")])
+    records = [_paraphrase(make_record, "a")]
+    primary = ClaimJudge(QueueGateway([NO]), "big")
+    cross = ClaimJudge(QueueGateway([NO]), "small")
+    judged = judge_runs(gold, records, primary, cross)[0]
+    assert judged.verdict is JudgeVerdict.FAIL
+    assert not judged.disagreement
+
+
+def test_cross_check_agree_true_still_passes(make_record):
+    gold = GoldSet(questions=[_q("a")])
+    records = [_paraphrase(make_record, "a")]
+    primary = ClaimJudge(QueueGateway([yes()]), "big")
+    cross = ClaimJudge(QueueGateway([yes()]), "small")
+    judged = judge_runs(gold, records, primary, cross)[0]
+    assert judged.verdict is JudgeVerdict.PASS
+    assert not judged.disagreement
+
+
+def test_cross_check_disagreement_primary_false_is_doubt_not_fail(make_record):
+    """The real bug pattern: primary says fail, cross-check says pass.
+
+    The claim must not auto-fail the run just because the primary happened
+    to call it that way -- it should read as doubt until the two agree.
+    """
+    gold = GoldSet(questions=[_q("a")])
+    records = [_paraphrase(make_record, "a")]
+    primary = ClaimJudge(QueueGateway([NO]), "big")
+    cross = ClaimJudge(QueueGateway([yes()]), "small")
+    judged = judge_runs(gold, records, primary, cross)[0]
+    assert judged.verdict is JudgeVerdict.DOUBT
+    assert judged.disagreement
+
+
+def test_cross_check_disagreement_primary_true_is_doubt_not_pass(make_record):
+    """Mirror case: primary says pass, cross-check says fail -- still doubt,
+    not an automatic pass just because the primary happened to like it."""
+    gold = GoldSet(questions=[_q("a")])
+    records = [_paraphrase(make_record, "a")]
+    primary = ClaimJudge(QueueGateway([yes()]), "big")
+    cross = ClaimJudge(QueueGateway([NO]), "small")
+    judged = judge_runs(gold, records, primary, cross)[0]
+    assert judged.verdict is JudgeVerdict.DOUBT
+    assert judged.disagreement
+
+
+def test_disagreement_on_one_claim_does_not_mask_a_clear_failure_on_another(make_record):
+    """One claim in doubt from disagreement must not hide a run failure that
+    both judges agree on for a different claim -- False still outweighs None."""
+    # Both required facts are word-only (no digits), so a miss is
+    # paraphrase-able and goes to the judge rather than failing outright.
+    q = _q("m", must_contain=["vacation", "insurance"])
+    record = make_record(question_id="m", repeat=0, answer="Staff get time off. [f #c0]",
+                         chunks=[CHUNK], cited=[0])
+    gold = GoldSet(questions=[q])
+    # Two missing facts ("vacation", "insurance") plus one support claim = 3 claims.
+    # Primary: disagree(pass), agree-false, agree-false.
+    primary = ClaimJudge(QueueGateway([yes(), NO, NO]), "big")
+    cross = ClaimJudge(QueueGateway([NO, NO, NO]), "small")
+    judged = judge_runs(gold, [record], primary, cross)[0]
+    assert judged.disagreement
+    assert judged.verdict is JudgeVerdict.FAIL
 
 
 def test_judged_results_replace_bracket_in_report(make_record):
