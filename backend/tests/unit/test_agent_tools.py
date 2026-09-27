@@ -1,4 +1,4 @@
-"""Unit tests for `docket.agent.tools` -- the real `search_knowledge`/
+"""Unit tests for `docket.services.agent.tools` -- the real `search_knowledge`/
 `read_evidence` tool factories.
 
 These prove the tools call real `hybrid_search`/`EvidenceResolver` code

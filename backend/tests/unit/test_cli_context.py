@@ -1,4 +1,4 @@
-"""Unit tests for `docket.cli.context.AppContext` -- specifically
+"""Unit tests for `docket.interfaces.cli.context.AppContext` -- specifically
 `page_table_for_query`, the read-side wiring visual retrieval checkpoint 3
 adds for query-time access to the `pages` LanceDB table.
 

@@ -1,6 +1,6 @@
 """Deterministic LaTeX-to-plain-text normalization for generated answers.
 
-The system prompt (`docket.query.prompts.SYSTEM_PROMPT`) already tells the
+The system prompt (`docket.services.query.prompts.SYSTEM_PROMPT`) already tells the
 model never to use LaTeX/markdown math syntax. It doesn't reliably comply:
 a real eval run (93 physics questions, `docket eval run` against
 `gold_physics.yaml`) came back with 28/93 answers (30%) still containing
@@ -24,7 +24,7 @@ task called out explicitly (theta, pi, mu, lambda, Delta, sigma). It never
 guesses at commands it hasn't seen a real example of -- an unrecognized
 `\\command` is left alone rather than mangled.
 
-Must never touch a real citation tag (`docket.retrieval.resolver
+Must never touch a real citation tag (`docket.infra.retrieval.resolver
 ._citation_label`'s ``[source.pdf #chunk_id]`` format): those never contain
 `$` or `\\`, so none of the patterns below can match inside one. See
 `test_latex.py::test_citation_tag_survives_untouched`.
@@ -42,7 +42,7 @@ from docket.services.query.citations import CITATION_TAG_PATTERN
 # ---------------------------------------------------------------------------
 
 _MATH_DELIMITER_RE = re.compile(r"\$\$(.*?)\$\$|\$([^$\n]+)\$", re.DOTALL)
-# Same citation-tag shape as `docket.query.citations.CITATION_TAG_RE`, just
+# Same citation-tag shape as `docket.services.query.citations.CITATION_TAG_RE`, just
 # wrapped in a capture group so `re.split` below keeps the tags themselves
 # (odd-indexed parts) in its result alongside the surrounding text.
 _CITATION_RE = re.compile(f"({CITATION_TAG_PATTERN})")

@@ -24,7 +24,7 @@ Example (Phase 7, move 1):
 
 Each OLD:NEW pair is a dotted-prefix mapping, e.g. `docket.db:docket.core.db`.
 Matching is prefix-aware and word-boundary-safe: `docket.db` matches
-`docket.db`, `docket.db.models`, and `docket.db as db_pkg`, but will NOT
+`docket.db`, `docket.core.db.models`, and `docket.db as db_pkg`, but will NOT
 match an unrelated package that merely starts with the same characters, like
 a hypothetical `docket.database_thing`.
 
@@ -76,7 +76,7 @@ def parse_mapping(spec: str) -> Mapping:
 
 def _boundary_pattern(prefix: str) -> str:
     """A regex fragment matching `prefix` only when NOT followed by another
-    identifier character -- so `docket.db` matches `docket.db.models` and
+    identifier character -- so `docket.db` matches `docket.core.db.models` and
     `docket.db` but not `docket.database_thing`."""
     return re.escape(prefix) + r"(?![A-Za-z0-9_])"
 

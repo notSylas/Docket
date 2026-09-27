@@ -1,4 +1,4 @@
-"""Unit tests for `docket.query.classifier.HeuristicQueryClassifier`.
+"""Unit tests for `docket.services.query.classifier.HeuristicQueryClassifier`.
 
 Pure function, no I/O, no Ollama needed -- just phrasing -> `QueryMode`.
 """

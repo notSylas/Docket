@@ -24,7 +24,7 @@ class Settings(BaseSettings):
 
     # Off by default, same posture as `visual_index_enabled`: this checkpoint
     # builds the formula-region crop + VLM transcription + storage
-    # infrastructure (`docket.parsing.formula_crop`,
+    # infrastructure (`docket.infra.parsing.formula_crop`,
     # `FormulaTranscriber.transcribe`), but produces only
     # unverified transcriptions (`EvidenceVersion.formula_transcriptions_json`)
     # -- never promoted into searchable/citable evidence. Nothing should call
@@ -57,7 +57,7 @@ class Settings(BaseSettings):
 
     # 4, not 3: the minimum a well-behaved investigation needs is 3 agent
     # turns (search_knowledge -> read_evidence -> cited final answer). 3
-    # left no headroom at all for `docket.agent.graph.build_agent`'s
+    # left no headroom at all for `docket.services.agent.graph.build_agent`'s
     # `force_tool_use` retry (added so the model can't skip straight to an
     # uncited answer -- see that module's docstring for the real-eval bug
     # this closes), which costs one extra turn whenever the model tries to

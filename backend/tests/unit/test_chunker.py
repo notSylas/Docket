@@ -1,4 +1,4 @@
-"""Tests for docket.parsing.chunker (split_into_units, chunk_document)."""
+"""Tests for docket.infra.parsing.chunker (split_into_units, chunk_document)."""
 
 from __future__ import annotations
 

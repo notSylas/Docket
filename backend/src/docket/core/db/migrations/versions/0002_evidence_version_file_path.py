@@ -1,8 +1,8 @@
 """evidence_versions.file_path
 
 CP8 introduces "local_folder" sources that can contain many files under one
-`Source` row (see `docket.sources.manager.SourceManager.register_source` /
-`docket.ingestion.pipeline.IngestionPipeline`). `EvidenceManager`'s
+`Source` row (see `docket.services.sources.manager.SourceManager.register_source` /
+`docket.services.ingestion.pipeline.IngestionPipeline`). `EvidenceManager`'s
 "current version" lookup was previously scoped only by `source_id`, which is
 correct for a source that maps to exactly one file but silently wrong for a
 multi-file folder source: ingesting file B under the same source would flip

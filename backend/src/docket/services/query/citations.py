@@ -39,7 +39,7 @@ def build_context_block(resolved_chunks: list[ResolvedEvidence]) -> str:
 # Matches a bracketed substring that "looks like" a citation tag in this
 # codebase's format -- i.e. it contains a "#" somewhere inside the brackets,
 # the one structural feature every real `citation_label` has (see
-# `docket.retrieval.resolver._citation_label`). Restricting to "contains a
+# `docket.infra.retrieval.resolver._citation_label`). Restricting to "contains a
 # hash" (rather than matching any `[...]`) avoids flagging ordinary bracketed
 # asides in the model's prose (e.g. "[roughly]" or "[1]") as fabricated
 # citations. The accepted false-positive risk: a bracketed aside that happens

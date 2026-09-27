@@ -1,4 +1,4 @@
-"""Unit tests for `docket.query.prompts` (pure functions -- no DB/gateway
+"""Unit tests for `docket.services.query.prompts` (pure functions -- no DB/gateway
 needed, hand-built `ResolvedEvidence` lists only)."""
 
 from __future__ import annotations

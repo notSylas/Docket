@@ -1,4 +1,4 @@
-"""Unit tests for `docket.config.Settings` -- defaults and environment
+"""Unit tests for `docket.core.config.Settings` -- defaults and environment
 variable overrides (`DOCKET_` prefix, via `pydantic_settings`)."""
 
 from __future__ import annotations

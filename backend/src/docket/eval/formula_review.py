@@ -1,8 +1,8 @@
 """Human verification of unverified formula transcriptions (Phase B
 checkpoint 2 of "verified formula transcription").
 
-Checkpoint 1 (`docket.parsing.formula_crop`, wired into
-`docket.ingestion.formula_transcriber.FormulaTranscriber.transcribe`)
+Checkpoint 1 (`docket.infra.parsing.formula_crop`, wired into
+`docket.services.ingestion.formula_transcriber.FormulaTranscriber.transcribe`)
 crops each above-threshold detected formula region and stores an UNVERIFIED
 VLM transcription on `EvidenceVersion.formula_transcriptions_json`, traceable
 back to its source region (`EvidenceVersion.formula_regions_json`) via

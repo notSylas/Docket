@@ -17,7 +17,7 @@ from docket.infra.parsing.normalize import unescape_markdown
 
 # Inline, invisible page-boundary sentinel inserted into markdown at points
 # where Docling's page number changes (see `_insert_page_markers`).
-# `docket.parsing.chunker` recognizes and strips these; they must never
+# `docket.infra.parsing.chunker` recognizes and strips these; they must never
 # reach `ParsedDocument.text` or anything downstream of it.
 _PAGE_MARKER_RE = re.compile(r"<!--PAGE:(\d+)-->")
 
@@ -27,7 +27,7 @@ _PAGE_MARKER_RE = re.compile(r"<!--PAGE:(\d+)-->")
 # below (see `DoclingParser.__init__`'s comment on why 2.0, not Docling's
 # default of 1.0). Exposed as a module constant, not just inlined there, so
 # any code converting a formula region's point-based bbox into this same
-# page image's pixel coordinates (`docket.parsing.formula_crop`) uses the
+# page image's pixel coordinates (`docket.infra.parsing.formula_crop`) uses the
 # exact value actually used to render -- never a second hardcoded "2.0"
 # that could silently drift out of sync with the real render call.
 PAGE_IMAGES_SCALE = 2.0
@@ -46,13 +46,13 @@ class ParsedDocument:
     formula_regions: list[dict] = field(default_factory=list)  # source coordinates, not recognized text
     # page_no -> raw PNG bytes of that page's rendered image (visual
     # retrieval checkpoint 2). Only used as a VLM-description input
-    # (`docket.index.visual_index`) -- never citable evidence, never shown to
+    # (`docket.infra.index.visual_index`) -- never citable evidence, never shown to
     # a user. A page missing from this dict means Docling couldn't produce an
     # image for it (see `_page_images`); callers must skip it, not error.
     page_images: dict[int, bytes] = field(default_factory=dict)
     # Same content as `text`, but with `<!--PAGE:N-->` markers left in at
     # each genuine page transition -- consumed only by
-    # `docket.parsing.chunker.chunk_document` to derive per-chunk
+    # `docket.infra.parsing.chunker.chunk_document` to derive per-chunk
     # page_start/page_end. `None` when no page-boundary information could
     # be recovered (e.g. a fixture/fake `ParsedDocument` built without it);
     # callers should fall back to `text` in that case, which chunks exactly

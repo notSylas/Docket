@@ -1,4 +1,4 @@
-"""Unit tests for `docket.retrieval.hybrid` (RRF fusion + FTS5/vector search
+"""Unit tests for `docket.infra.retrieval.hybrid` (RRF fusion + FTS5/vector search
 orchestration)."""
 
 from __future__ import annotations

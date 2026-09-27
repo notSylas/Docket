@@ -25,13 +25,13 @@ _eval_click_command: click.Command | None = None
 def _eval_click() -> click.Command:
     """Builds the `docket eval ...` sub-app's click command, importing
     `docket.eval.cli` for the first time right here -- not at
-    `docket.cli.main` module-import time (see `_LazyEvalGroup`).
+    `docket.interfaces.cli.main` module-import time (see `_LazyEvalGroup`).
 
     `docket.eval.cli` itself already defers every *heavy* import (ollama,
     docling) into its own command bodies; the only thing this function
     defers is the module import of `docket.eval.cli`, which is what let
     `eval/runner.py` end up with a fragile, accidental-import-order
-    dependency on `docket.cli.context` (see that module's `for_testing`
+    dependency on `docket.interfaces.cli.context` (see that module's `for_testing`
     classmethod, and this project's Phase 5 restructuring notes).
     """
     global _eval_click_command
@@ -50,7 +50,7 @@ def _eval_click() -> click.Command:
 class _LazyEvalGroup(typer.core.TyperGroup):
     """`TyperGroup` that resolves the `eval` sub-app on demand instead of via
     `app.add_typer()`, so mounting it doesn't require importing
-    `docket.eval.cli` merely because someone imported `docket.cli.main`
+    `docket.eval.cli` merely because someone imported `docket.interfaces.cli.main`
     (e.g. to reuse `build_context`) -- only actually running `docket eval
     ...` (or `docket --help`, which needs every subcommand's one-line help)
     does.

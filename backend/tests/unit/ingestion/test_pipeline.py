@@ -1,4 +1,4 @@
-"""Orchestration-level tests for `docket.ingestion.pipeline.IngestionPipeline`
+"""Orchestration-level tests for `docket.services.ingestion.pipeline.IngestionPipeline`
 -- the end-to-end incremental ingestion wiring (real Docling parsing, a fake
 inference gateway, and a real migrated SQLite DB + real LanceDB dir; see
 `conftest.py` for the shared `env`/`parser` fixtures).

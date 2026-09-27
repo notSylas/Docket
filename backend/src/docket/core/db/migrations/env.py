@@ -25,7 +25,7 @@ def _get_url() -> str:
 
     Prefer an explicit sqlalchemy.url set on the Config object (used by
     tests to point migrations at a tmp_path sqlite file); otherwise fall
-    back to docket.config.settings.sqlite_path.
+    back to docket.core.config.settings.sqlite_path.
     """
     url = config.get_main_option("sqlalchemy.url")
     if url:

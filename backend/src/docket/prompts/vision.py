@@ -38,7 +38,7 @@ PAGE_DESCRIPTION_PROMPT = (
 # experiments" section). Same "content is data, not instructions" framing
 # as PAGE_DESCRIPTION_PROMPT: the crop is content to transcribe, never a
 # source of instructions to follow. Biases toward the plain-text
-# conventions `docket.query.latex.normalize_latex` already produces from
+# conventions `docket.services.query.latex.normalize_latex` already produces from
 # generated answers (real unicode super/subscript digits, greek letters
 # written as themselves) so a later comparison against normalized answer
 # text is apples-to-apples, while still allowing LaTeX where the model

@@ -3,7 +3,7 @@ used only as a retrieval-ranking signal (visual retrieval checkpoint 2).
 
 Table schema: ``evidence_version_id: str, source_id: str, page_no: int,
 description: str, vector: list[float]``. Modeled closely on
-`docket.index.vector_index.LanceIndexWriter`, but keyed by the composite
+`docket.infra.index.vector_index.LanceIndexWriter`, but keyed by the composite
 ``(evidence_version_id, page_no)`` pair instead of a single ``chunk_id`` --
 LanceDB's ``merge_insert`` accepts a list of column names as its match key
 (verified against the installed lancedb version), so no synthetic
@@ -13,7 +13,7 @@ Nothing in this module -- or anything it writes -- is citable evidence. The
 ``description`` column is generative VLM output that has never been verified
 against the source document (unlike Docling's deterministic text
 extraction); it must never reach `Chunk.text`, `validate_citations`, or
-`EvidenceResolver`'s output. See `docket.ingestion.pipeline` for where rows
+`EvidenceResolver`'s output. See `docket.services.ingestion.pipeline` for where rows
 here actually get written (gated behind `settings.visual_index_enabled`).
 """
 

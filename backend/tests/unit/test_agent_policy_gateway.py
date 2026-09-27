@@ -1,4 +1,4 @@
-"""Unit tests for `docket.agent.policy_gateway.make_policy_gateway`.
+"""Unit tests for `docket.services.agent.policy_gateway.make_policy_gateway`.
 
 Ported almost directly from `spike/test_agent_policy_gateway.py`'s Case 3 --
 see `spike/RESULTS.md`'s "Tier 3 — Agent Policy Gateway" section. These are

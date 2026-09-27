@@ -8,7 +8,7 @@ that spike was actually validating), but useless for a real investigation:
 nothing in them touched the real retrieval/resolution stack.
 
 Here, `search_knowledge`/`read_evidence` need to call real code
-(`docket.retrieval.hybrid.hybrid_search`, `docket.retrieval.resolver.
+(`docket.infra.retrieval.hybrid.hybrid_search`, `docket.infra.retrieval.resolver.
 EvidenceResolver`), which in turn depend on an `Engine`, a LanceDB `table`,
 an `InferenceGateway`, and a `session_factory` -- none of which exist at
 import time. They're only known once an agent is actually being built for a

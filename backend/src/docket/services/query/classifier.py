@@ -2,14 +2,14 @@
 
 `QueryService.ask()` used to always do direct retrieve->generate (the "fast
 path", validated at 12/12 correct in the spike's eval -- see
-`docket.query.service`'s module docstring). Now that the bounded LangGraph
-agent (`docket.agent.graph.build_investigation_agent`) exists as a second,
+`docket.services.query.service`'s module docstring). Now that the bounded LangGraph
+agent (`docket.services.agent.graph.build_investigation_agent`) exists as a second,
 already-tested query mechanism, something has to decide -- per question --
 which one actually answers it. That's this module's job, and only this
 module's job: it makes a routing decision and nothing else, so `QueryService`
 never has to know *how* the decision is made.
 
-`QueryClassifier` is a `Protocol` (mirroring `docket.inference.gateway
+`QueryClassifier` is a `Protocol` (mirroring `docket.infra.inference.gateway
 .InferenceGateway`'s pattern: depend on the interface, swap the
 implementation) specifically so a smarter classifier -- e.g. one that asks a
 small/cheap LLM call "does this need multi-step investigation?" -- can

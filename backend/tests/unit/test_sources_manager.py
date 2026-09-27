@@ -1,4 +1,4 @@
-"""Tests for `docket.sources.manager.SourceManager`."""
+"""Tests for `docket.services.sources.manager.SourceManager`."""
 
 from __future__ import annotations
 

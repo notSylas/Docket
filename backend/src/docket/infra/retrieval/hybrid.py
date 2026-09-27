@@ -4,7 +4,7 @@ Reciprocal Rank Fusion (RRF).
 This replaces `spike/query.py`'s CLI-only, hardcoded-path version with a
 library-shaped one: callers pass in an already-open SQLAlchemy `Engine`
 (pointed at the `fts_chunks` FTS5 table), an already-open LanceDB `table`
-(the `chunks` vector table -- see `docket.index.vector_index`), and an
+(the `chunks` vector table -- see `docket.infra.index.vector_index`), and an
 `InferenceGateway` for embedding the query.
 
 `reciprocal_rank_fusion` itself is a pure function with no I/O: it operates
@@ -14,7 +14,7 @@ independent of any real search backend. `fts_search`/`vector_search`/
 
 Visual retrieval checkpoint 3 adds a third, optional leg: `visual_search`
 queries the `pages` LanceDB table (per-page VLM descriptions -- see
-`docket.index.visual_index`) for nearest-neighbor pages, then resolves each
+`docket.infra.index.visual_index`) for nearest-neighbor pages, then resolves each
 surviving page down to real chunk_ids via `Chunk.page_start`/`page_end`
 (checkpoint 1's page provenance) before handing them to RRF, which never
 operates on anything but chunk_id lists. This leg only runs when a caller
@@ -132,7 +132,7 @@ def _sanitize_fts_query(query: str) -> str:
 # regardless of how well it ranks lexically or semantically -- the CLI tells
 # the user a revoked source's "evidence is no longer searched", and that has
 # to actually be true. `fts_chunks` has no `source_id`/`evidence_version_id`
-# columns of its own (see `docket.index.fts_index`'s module docstring), but it
+# columns of its own (see `docket.infra.index.fts_index`'s module docstring), but it
 # lives in the same SQLite database as the `chunks`/`sources`/
 # `evidence_versions` ORM tables (both are reached through the same `Engine`),
 # so the FTS query below joins straight through to them. `SourceStatus.ACTIVE`
@@ -193,7 +193,7 @@ def _filter_active_and_current(engine: Engine, chunk_ids: list[str]) -> list[str
     source is ACTIVE and whose evidence version is current.
 
     The LanceDB vector table has no `evidence_version_id`/status columns of
-    its own (see `docket.index.vector_index`'s schema note -- it only carries
+    its own (see `docket.infra.index.vector_index`'s schema note -- it only carries
     `chunk_id`/`source_id`/`text`/`vector`), so unlike `fts_search` (which can
     join and filter inside the SQL query itself), vector search's result has
     to be post-filtered against the real `chunks`/`sources`/`evidence_versions`
@@ -291,7 +291,7 @@ def visual_search(
     page_table: Any, engine: Engine, gateway: InferenceGateway, query: str, top_k: int
 ) -> list[str]:
     """Embed `query` via `gateway` and run a nearest-neighbor search against
-    `page_table` (a LanceDB `pages` table -- see `docket.index.visual_index`),
+    `page_table` (a LanceDB `pages` table -- see `docket.infra.index.visual_index`),
     resolving each surviving page down to real chunk_ids and returning them
     ranked best-page-first (a page's own chunks, when it has several, are
     ordered by `ordinal` within that page -- there's no finer-grained score).

@@ -61,7 +61,7 @@ def test_cli_add_ingest_query_end_to_end(tmp_path: Path, monkeypatch: pytest.Mon
     # A real, grounded answer: mentions the product's own defining language...
     assert "evidence" in output.lower()
     # ...and is actually cited back to the ingested document, using the
-    # centralized citation format from `docket.retrieval.resolver`
+    # centralized citation format from `docket.infra.retrieval.resolver`
     # ("[filename #chunk_id_prefix]").
     assert SAMPLE_DOCX.name in output
     assert "Citations:" in output

@@ -1,4 +1,4 @@
-"""Tests for docket.parsing.normalize.unescape_markdown."""
+"""Tests for docket.infra.parsing.normalize.unescape_markdown."""
 
 from __future__ import annotations
 

@@ -6,8 +6,8 @@ this docstring): always direct retrieve->generate, the spike's validated
 "fast path" (`spike/query.py`, see `spike/RESULTS.md` "Retrieval Quality" --
 12/12 correct on the eval set). That routing decision depended on the Agent
 Runtime Manager / Policy Gateway pattern (CP9), which is now done
-(`docket.agent.graph.build_investigation_agent`) -- so `ask()` now classifies
-each question (`docket.query.classifier.QueryClassifier`) and routes it to
+(`docket.services.agent.graph.build_investigation_agent`) -- so `ask()` now classifies
+each question (`docket.services.query.classifier.QueryClassifier`) and routes it to
 either:
 
 - FAST: the original hybrid retrieval -> evidence resolution ->
@@ -73,11 +73,11 @@ def _citations_from_agent_messages(
     Walks `messages` for `ToolMessage`s produced by a *successful*
     `read_evidence` call: one whose corresponding `AIMessage` tool_call was
     named "read_evidence" (correlated via `tool_call_id`, not
-    `ToolMessage.name` -- `docket.agent.policy_gateway.make_policy_gateway`
+    `ToolMessage.name` -- `docket.services.agent.policy_gateway.make_policy_gateway`
     never sets `name` on the `ToolMessage`s it builds, only `tool_call_id`,
     so that id is the only reliable link back to which tool was called) and
     whose JSON content does NOT contain an "error" key (an invented/mistyped
-    chunk_id -- see `docket.agent.tools.make_read_evidence_tool`). Each
+    chunk_id -- see `docket.services.agent.tools.make_read_evidence_tool`). Each
     surviving call's `chunk_id` (present in that JSON since the fix in this
     same change) is collected in first-seen order, deduped, then resolved in
     one batch via `resolver.resolve_many`.
@@ -151,7 +151,7 @@ class QueryService:
         deterministic routing with no dependencies of its own.
 
         `page_table` (visual retrieval checkpoint 3) is an optional LanceDB
-        `pages` table (see `docket.index.visual_index`), threaded straight
+        `pages` table (see `docket.infra.index.visual_index`), threaded straight
         through to `hybrid_search`'s own `page_table` parameter on the FAST
         path. Defaults to `None`, in which case `_ask_fast` calls
         `hybrid_search` exactly as it did before this parameter existed --
@@ -160,7 +160,7 @@ class QueryService:
         when `settings.visual_index_enabled` is `True` (see `cli/main.py`'s
         `query` command and `cli/interactive/session.py`'s
         `_default_factory` for the two real wiring sites); the AGENT path's
-        `search_knowledge` tool (`docket.agent.tools`) is unaffected and
+        `search_knowledge` tool (`docket.services.agent.tools`) is unaffected and
         still runs 2-way fusion only -- out of scope for this checkpoint.
 
         The investigation agent is deliberately NOT built here. Building one
@@ -177,7 +177,7 @@ class QueryService:
 
         `agent` is an escape hatch accepting an already-compiled agent graph
         (anything with an `.invoke(state, config=...)` method returning a
-        state dict shaped like `docket.agent.policy_gateway.AgentState`)
+        state dict shaped like `docket.services.agent.policy_gateway.AgentState`)
         directly, instead of having `QueryService` build one. Two reasons
         this exists as its own parameter rather than folding into the lazy
         path: (1) tests -- unit-testing the AGENT branch's citation
@@ -244,7 +244,7 @@ class QueryService:
             else self._ask_fast(question, trimmed)
         )
         # Deterministic belt-and-suspenders for the system prompt's "no
-        # LaTeX" instruction (see `docket.query.latex`'s docstring for why):
+        # LaTeX" instruction (see `docket.services.query.latex`'s docstring for why):
         # applied here, once, so neither path can add a new way to return an
         # answer without it. Citation tags are never a `normalize_latex`
         # target (see that module), so this can't disturb `result.citations`

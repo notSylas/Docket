@@ -2,9 +2,9 @@
 
 `SYSTEM_PROMPT`/`AGENT_SYSTEM_PROMPT` (and friends) and `ABSTENTION_PHRASE`
 moved to `docket.prompts.query`/`docket.prompts.shared`; `build_context_block`/
-`validate_citations` moved to `docket.query.citations` (prompt-adjacent
+`validate_citations` moved to `docket.services.query.citations` (prompt-adjacent
 logic, not prompt text -- see that module). This module stays as a thin
-re-export so existing `from docket.query.prompts import ...` call sites
+re-export so existing `from docket.services.query.prompts import ...` call sites
 (`query/service.py`'s prompt-name imports, `eval/scoring.py`'s
 `ABSTENTION_PHRASE` import) need zero changes. Mirrors the
 `cli/interactive/__init__.py` re-export precedent.

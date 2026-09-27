@@ -1,4 +1,4 @@
-"""Tests for `docket.parsing.formula_crop` -- cropping and size-filtering of
+"""Tests for `docket.infra.parsing.formula_crop` -- cropping and size-filtering of
 individual detected formula regions (Phase B checkpoint 1 of "verified
 formula transcription").
 

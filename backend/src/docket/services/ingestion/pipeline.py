@@ -44,7 +44,7 @@ CP8 brief to be documented in code, not just in a report):
    per-file. `IndexManager.reconcile_source(source_id, current_chunk_ids)`
    treats `current_chunk_ids` as the *complete* desired chunk_id set for the
    *entire* source (it diffs against `chunk_ids_for_source`, which has no
-   per-file granularity -- see `docket.index.vector_index`). Calling it
+   per-file granularity -- see `docket.infra.index.vector_index`). Calling it
    per-file with only that one file's chunk_ids would therefore delete every
    *other* file's already-indexed chunks on each file's turn -- actively
    wrong, not just less efficient. So this pipeline processes every file

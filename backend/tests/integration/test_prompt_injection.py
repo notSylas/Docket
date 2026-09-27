@@ -1,5 +1,5 @@
 """Live-Ollama regression test for the prompt-injection / context-as-data
-guard added to `docket.query.prompts` (`SYSTEM_PROMPT`/`AGENT_SYSTEM_PROMPT`).
+guard added to `docket.services.query.prompts` (`SYSTEM_PROMPT`/`AGENT_SYSTEM_PROMPT`).
 
 Ports the CLI e2e pattern from `test_cli_e2e.py` (`docket sources add` ->
 `docket ingest` -> `docket query`, real Ollama, temp `DOCKET_DATA_DIR`) rather

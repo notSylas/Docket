@@ -1,4 +1,4 @@
-"""Unit tests for `docket.query.service.QueryService`.
+"""Unit tests for `docket.services.query.service.QueryService`.
 
 Uses `FakeInferenceGateway` throughout -- no Ollama/GPU dependency. The
 retrieval side is real (a `migrated_sqlite_engine` SQLite DB with CP1's

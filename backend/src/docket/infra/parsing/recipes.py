@@ -3,7 +3,7 @@
 A ``ChunkRecipe`` here is the pure-data description of "how a document was
 chunked" (size, overlap, splitter strategy, parser identity). Its ``id`` is
 the same deterministic id that would land in the ``chunk_recipes`` table (see
-``docket.db.identity.compute_recipe_id`` / ``docket.db.models.ChunkRecipe``),
+``docket.core.db.identity.compute_recipe_id`` / ``docket.core.db.models.ChunkRecipe``),
 computed here rather than redefined so callers can key/dedupe recipes before
 any DB row exists.
 """

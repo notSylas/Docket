@@ -1,8 +1,8 @@
 """Shared types and the `IndexWriter` protocol for Docket's index backends.
 
-Both the lexical index (SQLite FTS5, see `docket.index.fts_index`) and the
-vector index (LanceDB, see `docket.index.vector_index`) implement
-`IndexWriter`. `docket.index.manager.IndexManager` orchestrates both writers
+Both the lexical index (SQLite FTS5, see `docket.infra.index.fts_index`) and the
+vector index (LanceDB, see `docket.infra.index.vector_index`) implement
+`IndexWriter`. `docket.infra.index.manager.IndexManager` orchestrates both writers
 plus embedding via an `InferenceGateway` so callers never talk to either
 backend directly.
 """
@@ -32,7 +32,7 @@ class ChunkRecord:
     text: str
     content_hash: str
     # 1-indexed page numbers this chunk spans, or None when no page marker
-    # was ever matched before/within it (see docket.parsing.chunker). Not
+    # was ever matched before/within it (see docket.infra.parsing.chunker). Not
     # consumed by any index backend yet (checkpoint 1 of the visual
     # retrieval plan) -- carried here so a later checkpoint can map a page
     # image back to the chunk_ids on that page without a DB round trip.

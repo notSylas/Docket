@@ -1,4 +1,4 @@
-"""Unit tests for `docket.query.latex.normalize_latex`.
+"""Unit tests for `docket.services.query.latex.normalize_latex`.
 
 The bulk of these use REAL answer text pulled verbatim from a physics eval
 run (`docket eval run` against `gold_physics.yaml`, 93 questions, 28 of which
@@ -253,7 +253,7 @@ def test_idempotent_on_already_normalized_text() -> None:
 
 
 def test_citation_tag_survives_untouched() -> None:
-    """A real citation_label (docket.retrieval.resolver._citation_label's
+    """A real citation_label (docket.infra.retrieval.resolver._citation_label's
     "[source.pdf #chunk_id]" format) never contains "$" or "\\", so it must
     come out byte-for-byte identical even embedded in heavily-LaTeX'd text."""
     tag = "[report.pdf #a1b2c3d4e5f6]"

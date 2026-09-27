@@ -12,7 +12,7 @@ answers), just parameterized instead of hardcoded:
   model can't even attempt an unbound tool name because it was never told
   the tool exists)
 - an `agent` node that calls the model
-- a `gateway` node (`docket.agent.policy_gateway.make_policy_gateway`) that
+- a `gateway` node (`docket.services.agent.policy_gateway.make_policy_gateway`) that
   is the second, independent enforcement layer -- it doesn't trust the
   first layer's cooperation (spike Case 3)
 - a conditional edge routing to `gateway` while there are pending tool
@@ -41,7 +41,7 @@ citation) only ever appears in a `read_evidence` result, never in
 `search_knowledge`'s.
 
 `build_investigation_agent()` is the real-use convenience wrapper: it builds
-the real `search_knowledge`/`read_evidence` tools (via `docket.agent.tools`)
+the real `search_knowledge`/`read_evidence` tools (via `docket.services.agent.tools`)
 bound to a caller-supplied engine/table/gateway/resolver, and assembles them
 into a graph via `build_agent()`, pulling its model/iteration/call-budget/
 context config from `Settings` (`gen_model`, `max_agent_iterations`,
@@ -50,7 +50,7 @@ module-level constants. This
 is the function a later milestone's Agent Runtime Manager / QueryService
 routing would call to hand off a question to the bounded-investigation path
 -- not wired into the CLI yet (routing fast-path-vs-agent-path is out of
-scope here, per CP7's design note in `docket.query.service`), but it must
+scope here, per CP7's design note in `docket.services.query.service`), but it must
 work end-to-end when called directly.
 """
 
@@ -83,7 +83,7 @@ def _has_successful_call(messages: list, tool_name: str) -> bool:
     budget-exhausted -- `content` starts with "POLICY DENIED", see
     `make_policy_gateway`) or one the tool itself reported failing (a JSON
     body with an "error" key, e.g. `read_evidence` on an invented chunk_id --
-    see `docket.agent.tools.make_read_evidence_tool`).
+    see `docket.services.agent.tools.make_read_evidence_tool`).
 
     Same matching technique as `query.service._citations_from_agent_
     messages`, generalized from "collect read_evidence's chunk_ids" to "did

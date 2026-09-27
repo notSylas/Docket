@@ -1,7 +1,7 @@
 """`ChunkWriter` -- persists parsed content as `EvidenceUnit`/`Chunk` rows and
 answers the two lookups `IngestionPipeline` needs around that: the id of a
 source+file's *current* `EvidenceVersion` (used for the before/after
-unchanged-vs-changed snapshot -- see `docket.ingestion.pipeline`'s module
+unchanged-vs-changed snapshot -- see `docket.services.ingestion.pipeline`'s module
 docstring, point 1) and the full set of chunk_ids currently reachable from a
 source's current versions (used for the single end-of-run reconcile pass --
 see that same docstring, point 2). Extracted from `IngestionPipeline` (Phase

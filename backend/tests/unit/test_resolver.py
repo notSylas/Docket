@@ -1,4 +1,4 @@
-"""Unit tests for `docket.retrieval.resolver.EvidenceResolver`."""
+"""Unit tests for `docket.infra.retrieval.resolver.EvidenceResolver`."""
 
 from __future__ import annotations
 

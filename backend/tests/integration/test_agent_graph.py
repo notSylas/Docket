@@ -1,4 +1,4 @@
-"""Integration tests for `docket.agent.graph.build_investigation_agent` --
+"""Integration tests for `docket.services.agent.graph.build_investigation_agent` --
 the bounded agent loop wired to REAL `search_knowledge`/`read_evidence`
 tools, run against a real Ollama chat model.
 

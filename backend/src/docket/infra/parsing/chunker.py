@@ -5,7 +5,7 @@ Pure functions only: no DB access, no id minting beyond the derivable
 responsible for turning these drafts into real ``EvidenceUnit``/``Chunk``
 rows, which requires ``evidence_version_id`` that this module never has.
 
-Page provenance: ``docket.parsing.docling_wrapper`` inserts inline sentinel
+Page provenance: ``docket.infra.parsing.docling_wrapper`` inserts inline sentinel
 comments of the form ``<!--PAGE:{page_no}-->`` into the markdown at points
 where Docling's page number changes (see that module's ``_insert_page_markers``).
 This module recognizes those markers, strips them out of every unit's/chunk's

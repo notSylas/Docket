@@ -57,7 +57,7 @@ class InferenceGateway(Protocol):
         """Returns a short text description of an image, produced by a
         vision-language model.
 
-        Used only as a retrieval-ranking signal (`docket.index.visual_index`)
+        Used only as a retrieval-ranking signal (`docket.infra.index.visual_index`)
         -- the returned description is never citable evidence and must never
         be shown to a user or flow into `validate_citations`/
         `EvidenceResolver`."""

@@ -1,5 +1,5 @@
 """Confirms the citation-tag-shaped regex, now defined once in
-`docket.query.citations`, still behaves identically at its three call
+`docket.services.query.citations`, still behaves identically at its three call
 sites: `query.citations.validate_citations` (via `CITATION_TAG_RE`),
 `eval.scoring.strip_citations` (imports `CITATION_TAG_RE`), and
 `query.latex.normalize_latex` (builds its own capture-group-wrapped

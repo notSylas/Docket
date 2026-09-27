@@ -1,11 +1,11 @@
-"""Unit tests for `docket.agent.graph` GRAPH CONSTRUCTION only -- specifically
+"""Unit tests for `docket.services.agent.graph` GRAPH CONSTRUCTION only -- specifically
 that `num_ctx`/`num_predict` (M1, context-window fix) reach `ChatOllama`.
 
 `ChatOllama` is mocked out (`mocker.patch.object`) so these run with no real
 Ollama/GPU dependency, unlike `tests/integration/test_agent_graph.py`, which
 covers the agent LOOP actually running against a real model.
 `engine`/`table`/`gateway`/`resolver` in `build_investigation_agent` are only
-closed over by the tool factories (see `docket.agent.tools`), never called at
+closed over by the tool factories (see `docket.services.agent.tools`), never called at
 construction time, so plain placeholders are fine here.
 """
 

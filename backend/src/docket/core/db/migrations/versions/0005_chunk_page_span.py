@@ -2,7 +2,7 @@
 
 Nullable on purpose, same posture as 0004's `formula_regions_json`: existing
 `Chunk` rows stay NULL until the next natural re-ingest re-derives them from
-page-marker-annotated text (see `docket.parsing.chunker`); nothing backfills
+page-marker-annotated text (see `docket.infra.parsing.chunker`); nothing backfills
 them retroactively.
 """
 from typing import Sequence, Union

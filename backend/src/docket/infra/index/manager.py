@@ -3,7 +3,7 @@ keep the FTS5 and LanceDB indexes in sync, replacing the validation spike's
 "re-embed and re-index the whole corpus on every run" behavior with true
 incremental upsert/delete.
 
-Design note (continues the one in `docket.index.fts_index`): `FtsIndexWriter`
+Design note (continues the one in `docket.infra.index.fts_index`): `FtsIndexWriter`
 cannot resolve "which chunk_ids belong to source X" on its own (the FTS5
 table has no `source_id` column), so `IndexManager` resolves that via the
 vector writer -- whose table *does* carry `source_id` -- and then drives both

@@ -1,4 +1,4 @@
-"""Tests for docket.parsing.docling_wrapper.DoclingParser.
+"""Tests for docket.infra.parsing.docling_wrapper.DoclingParser.
 
 No Ollama/GPU dependency here -- everything runs locally through Docling's
 own models, so nothing in this file needs the ``integration`` marker. The

@@ -13,7 +13,7 @@ The only real change here is that `ALLOWED_TOOLS`/`MAX_TOOL_CALLS` are no
 longer module-level constants (the spike only ever needed one fixed pair of
 fake tools) -- they're per-agent-instance configuration now, since a real
 `allowed_tools` dict is built per query session (see
-`docket.agent.tools`/`docket.agent.graph.build_investigation_agent`) and
+`docket.services.agent.tools`/`docket.services.agent.graph.build_investigation_agent`) and
 `max_tool_calls` comes from `Settings.max_agent_tool_calls`. `make_policy_gateway`
 binds them via closure and returns the gateway node function, which stays a
 plain, directly-testable callable -- state in, state-update dict out, no

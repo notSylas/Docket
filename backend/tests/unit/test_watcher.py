@@ -1,4 +1,4 @@
-"""Tests for `docket.sources.watcher.SourceWatcher`.
+"""Tests for `docket.services.sources.watcher.SourceWatcher`.
 
 Primary tests stub `watchfiles.watch` so they run instantly and
 deterministically -- they prove the *dispatch logic* (each yielded change

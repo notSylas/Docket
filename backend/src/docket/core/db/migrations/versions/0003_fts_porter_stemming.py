@@ -16,12 +16,12 @@ change a virtual table's tokenizer is drop-and-recreate; hyphenated ids like
 "nfr"/"003") under plain `unicode61` (hyphen is a separator, not a token
 char, and this migration doesn't change that), so re-tokenizing preserves the
 same splitting behavior application code already assumes -- see
-`docket.retrieval.hybrid._sanitize_fts_query`, which tokenizes queries the
+`docket.infra.retrieval.hybrid._sanitize_fts_query`, which tokenizes queries the
 same way (`\\w+`, splitting on the hyphen too) so ingest-side and query-side
 tokenization stay symmetric.
 
 `fts_chunks` has no `source_id`/foreign keys of its own (see
-`docket.index.fts_index`'s module docstring), so the safe backfill is a
+`docket.infra.index.fts_index`'s module docstring), so the safe backfill is a
 straight copy from the `chunks` table (the source of truth for chunk text)
 keyed by `id`/`text` -- every row in `fts_chunks` before this migration is,
 by construction, a 1:1 mirror of a `chunks` row (`FtsIndexWriter.upsert`

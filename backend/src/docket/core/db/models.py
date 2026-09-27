@@ -201,7 +201,7 @@ class EvidenceUnit(Base):
 
 class ChunkRecipe(Base):
     """A chunking configuration. ``id`` is the content-derived recipe id
-    (see :func:`docket.db.identity.compute_recipe_id`); there is no separate
+    (see :func:`docket.core.db.identity.compute_recipe_id`); there is no separate
     surrogate key.
     """
 
@@ -220,7 +220,7 @@ class ChunkRecipe(Base):
 
 class Chunk(Base):
     """A single chunk of text. ``id`` is the content-derived chunk id (see
-    :func:`docket.db.identity.compute_chunk_id`); there is no separate
+    :func:`docket.core.db.identity.compute_chunk_id`); there is no separate
     surrogate key. Re-ingesting identical content with the same recipe
     produces the same id, so the primary key doubles as the dedup guard.
     """
@@ -249,7 +249,7 @@ class Chunk(Base):
     # EvidenceUnit doesn't. Nullable: existing rows (ingested before this
     # column existed) and any chunk for which no page marker was ever
     # matched stay NULL rather than guessing -- see
-    # docket.parsing.chunker's module docstring.
+    # docket.infra.parsing.chunker's module docstring.
     page_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
     page_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
 

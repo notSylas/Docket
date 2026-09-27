@@ -1,4 +1,4 @@
-"""Unit tests for the tool-use-enforcement fix in `docket.agent.graph.build_agent`.
+"""Unit tests for the tool-use-enforcement fix in `docket.services.agent.graph.build_agent`.
 
 Root cause this covers (found via a real 93-run Physics eval, not
 speculative): once a question got misrouted to the agent path, the original

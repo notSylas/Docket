@@ -1,11 +1,11 @@
 """Builds the runtime dependency graph (engine, session_factory, store,
 gateway, index writers, parser, pipeline, ...) for the CLI, from
-`docket.config.Settings`.
+`docket.core.config.Settings`.
 
 Two deliberate choices:
 
 1. `AppContext.__init__` constructs its own fresh `Settings()` instance
-   instead of importing the process-wide `docket.config.settings` singleton.
+   instead of importing the process-wide `docket.core.config.settings` singleton.
    The singleton is built once, at first import of `docket.config` -- if
    that happens to occur before a caller sets `DOCKET_DATA_DIR` (e.g. a test
    harness that `monkeypatch.setenv`s it right before invoking the CLI, or

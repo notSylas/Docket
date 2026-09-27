@@ -1,4 +1,4 @@
-"""Resolves chunk_ids (as returned by `docket.retrieval.hybrid`) into
+"""Resolves chunk_ids (as returned by `docket.infra.retrieval.hybrid`) into
 citation-ready evidence.
 
 This is the ONE place in the codebase that builds citation tags. The
