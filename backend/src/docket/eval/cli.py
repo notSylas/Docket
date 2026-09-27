@@ -246,7 +246,7 @@ def review_cmd(
     file: Path = typer.Argument(..., help="Draft/gold YAML to review (progress is saved after every decision)."),
 ) -> None:
     """Accept / edit / reject drafted questions one at a time; resumable."""
-    from docket.cli.interactive.reader import CallableReader
+    from docket.interfaces.cli.interactive.reader import CallableReader
     from docket.eval.draft import format_summary, review_gold
 
     try:

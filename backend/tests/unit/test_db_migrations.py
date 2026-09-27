@@ -192,7 +192,7 @@ def test_ensure_schema_migrates_an_existing_pre_head_db(tmp_path: Path) -> None:
     existed, so a schema change (like 0003's FTS5 retokenization) would
     never reach an existing install unless someone ran `alembic upgrade
     head` by hand. It must now bring an existing DB forward to head too."""
-    from docket.cli.context import ensure_schema
+    from docket.interfaces.cli.context import ensure_schema
 
     sqlite_path = tmp_path / "docket.sqlite3"
     config = _alembic_config(sqlite_path)
@@ -223,7 +223,7 @@ def test_ensure_schema_is_a_safe_no_op_when_already_at_head(tmp_path: Path) -> N
     """Calling `ensure_schema` twice (e.g. two CLI invocations in a row)
     must not error or reset data -- alembic upgrade("head") is a no-op once
     the DB is already current."""
-    from docket.cli.context import ensure_schema
+    from docket.interfaces.cli.context import ensure_schema
 
     sqlite_path = tmp_path / "docket.sqlite3"
     ensure_schema(sqlite_path)

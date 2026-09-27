@@ -1,6 +1,6 @@
 import pytest
 
-from docket.cli.interactive.commands import (
+from docket.interfaces.cli.interactive.commands import (
     CommandRegistry,
     SlashCommand,
     default_registry,

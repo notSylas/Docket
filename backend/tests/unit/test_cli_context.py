@@ -10,7 +10,7 @@ no_vlm_or_index_calls`): with `settings.visual_index_enabled` at its default
 
 from __future__ import annotations
 
-from docket.cli.context import AppContext
+from docket.interfaces.cli.context import AppContext
 
 
 def test_page_table_for_query_disabled_by_default_never_touches_visual_index_writer(

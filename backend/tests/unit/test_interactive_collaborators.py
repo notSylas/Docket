@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from docket.cli.interactive import errors, ingestion_ui, query_flow, source_commands
+from docket.interfaces.cli.interactive import errors, ingestion_ui, query_flow, source_commands
 from docket.services.ingestion.pipeline import FileIngestResult, IngestionJobResult
 from docket.infra.inference.gateway import InferenceUnavailableError, ModelNotFoundError
 

@@ -27,7 +27,7 @@ from typing import Any
 import ollama as _ollama
 from sqlalchemy import select
 
-from docket.cli.context import AppContext
+from docket.interfaces.cli.context import AppContext
 from docket.core.config import settings
 from docket.core.db.models import Chunk, EvidenceVersion, Source, SourceStatus
 from docket.eval.schema import (

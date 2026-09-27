@@ -5,10 +5,10 @@ import pytest
 from rich.console import Console
 from typer.testing import CliRunner
 
-from docket.cli.context import AppContext
-from docket.cli.interactive import run_session
-from docket.cli.interactive.state import SessionState
-from docket.cli.main import app
+from docket.interfaces.cli.context import AppContext
+from docket.interfaces.cli.interactive import run_session
+from docket.interfaces.cli.interactive.state import SessionState
+from docket.interfaces.cli.main import app
 from docket.infra.inference.gateway import InferenceUnavailableError
 from docket.services.ingestion.pipeline import FileIngestResult, IngestionJobResult, SourceNotFoundError
 from docket.services.query.classifier import QueryMode
@@ -316,7 +316,7 @@ def test_add_dot_is_absolute_and_duplicate_detected(ctx, tmp_path, monkeypatch):
 
 
 def test_state_turns_and_clear(ctx):
-    from docket.cli.interactive.state import SessionState
+    from docket.interfaces.cli.interactive.state import SessionState
 
     st = SessionState()
     drive(ctx, ["a", "b"], state=st)
@@ -327,7 +327,7 @@ def test_state_turns_and_clear(ctx):
 
 
 def test_state_errored_turn_not_counted(ctx):
-    from docket.cli.interactive.state import SessionState
+    from docket.interfaces.cli.interactive.state import SessionState
 
     st = SessionState()
     drive(ctx, ["q1"], service=FakeService(error=InferenceUnavailableError("down")), state=st)
@@ -335,7 +335,7 @@ def test_state_errored_turn_not_counted(ctx):
 
 
 def test_state_mode_follows_command(ctx):
-    from docket.cli.interactive.state import SessionState
+    from docket.interfaces.cli.interactive.state import SessionState
 
     st = SessionState()
     drive(ctx, ["/mode agent"], state=st)
@@ -345,7 +345,7 @@ def test_state_mode_follows_command(ctx):
 
 
 def test_state_indexed_flips_after_ingest(ctx, tmp_path):
-    from docket.cli.interactive.state import SessionState
+    from docket.interfaces.cli.interactive.state import SessionState
 
     folder = tmp_path / "docs"
     folder.mkdir()
@@ -360,7 +360,7 @@ def test_state_indexed_flips_after_ingest(ctx, tmp_path):
 def test_footer_timing_and_agent(ctx, monkeypatch):
     import itertools
 
-    from docket.cli.interactive import query_flow as query_flow_mod
+    from docket.interfaces.cli.interactive import query_flow as query_flow_mod
 
     ticks = itertools.count(0, 8)  # each perf_counter call advances 8s -> ask takes 8s
     monkeypatch.setattr(query_flow_mod.time, "perf_counter", lambda: next(ticks))
@@ -371,7 +371,7 @@ def test_footer_timing_and_agent(ctx, monkeypatch):
 
 
 def test_footer_no_elapsed_or_tiny():
-    from docket.cli.interactive.render import footer_text
+    from docket.interfaces.cli.interactive.render import footer_text
 
     assert footer_text("fast") == "quick search"
     assert footer_text("agent", 0.01) == "investigated with agent"

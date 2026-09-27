@@ -10,8 +10,8 @@ import typer.core
 import typer.main
 
 from docket import __version__
-from docket.cli.context import build_context
-from docket.cli.interactive import run_session
+from docket.interfaces.cli.context import build_context
+from docket.interfaces.cli.interactive import run_session
 from docket.core.db.models import SourceStatus
 from docket.services.ingestion.pipeline import SourceNotActiveError
 from docket.services.query.service import QueryService

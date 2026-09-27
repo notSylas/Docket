@@ -11,7 +11,7 @@ from conftest import PlainTextParser, ScriptedGateway
 from test_eval_judge import QueueGateway, yes
 from typer.testing import CliRunner
 
-from docket.cli.main import app
+from docket.interfaces.cli.main import app
 from docket.eval import cli as eval_cli
 from docket.eval.schema import load_gold_set
 

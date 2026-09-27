@@ -8,11 +8,11 @@ from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 
-from docket.cli.interactive import reader as reader_mod
-from docket.cli.interactive.commands import default_registry
-from docket.cli.interactive.completer import DocketCompleter
-from docket.cli.interactive.reader import CallableReader, PtkReader, build_history, make_reader
-from docket.cli.interactive.state import SessionState
+from docket.interfaces.cli.interactive import reader as reader_mod
+from docket.interfaces.cli.interactive.commands import default_registry
+from docket.interfaces.cli.interactive.completer import DocketCompleter
+from docket.interfaces.cli.interactive.reader import CallableReader, PtkReader, build_history, make_reader
+from docket.interfaces.cli.interactive.state import SessionState
 
 
 def run(text, history=None, completer=None, chunks=None):
@@ -111,7 +111,7 @@ def test_gate_term_dumb(monkeypatch):
 
 
 def test_prompt_and_toolbar_fns_with_mode_change():
-    from docket.cli.interactive.reader import prompt_for_mode
+    from docket.interfaces.cli.interactive.reader import prompt_for_mode
 
     state = SessionState(mode="auto")
     seen = []

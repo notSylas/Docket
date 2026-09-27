@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from docket.cli.main import app
+from docket.interfaces.cli.main import app
 
 pytestmark = pytest.mark.integration
 

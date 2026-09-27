@@ -1,9 +1,9 @@
 from prompt_toolkit.completion import CompleteEvent
 from prompt_toolkit.document import Document
 
-from docket.cli.interactive.commands import default_registry
-from docket.cli.interactive.completer import DocketCompleter
-from docket.cli.interactive.state import SessionState, SourceInfo
+from docket.interfaces.cli.interactive.commands import default_registry
+from docket.interfaces.cli.interactive.completer import DocketCompleter
+from docket.interfaces.cli.interactive.state import SessionState, SourceInfo
 
 
 def complete(completer, text):

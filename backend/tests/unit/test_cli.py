@@ -5,7 +5,7 @@ import sys
 
 from typer.testing import CliRunner
 
-from docket.cli.main import app
+from docket.interfaces.cli.main import app
 
 runner = CliRunner()
 
@@ -33,7 +33,7 @@ def test_importing_cli_main_does_not_import_eval_cli() -> None:
     each other at module top, which only avoided a hard circular-import
     failure by accident of `cli/main.py`'s own internal import order."""
     result = subprocess.run(
-        [sys.executable, "-c", "import sys; import docket.cli.main; "
+        [sys.executable, "-c", "import sys; import docket.interfaces.cli.main; "
          "assert 'docket.eval.cli' not in sys.modules, sys.modules.keys()"],
         capture_output=True, text=True,
     )
@@ -51,7 +51,7 @@ def test_eval_runner_importable_before_cli_main_in_a_fresh_interpreter() -> None
     would not have been protected by `cli/main.py`'s own internal ordering."""
     result = subprocess.run(
         [sys.executable, "-c",
-         "import docket.eval.runner; import docket.cli.main; print('ok')"],
+         "import docket.eval.runner; import docket.interfaces.cli.main; print('ok')"],
         capture_output=True, text=True,
     )
     assert result.returncode == 0, result.stderr

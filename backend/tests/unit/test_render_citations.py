@@ -1,4 +1,4 @@
-from docket.cli.interactive.render import number_citations
+from docket.interfaces.cli.interactive.render import number_citations
 from docket.services.query.service import Citation
 
 

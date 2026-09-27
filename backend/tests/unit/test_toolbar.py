@@ -1,4 +1,4 @@
-from docket.cli.interactive.state import SessionState, SourceInfo
+from docket.interfaces.cli.interactive.state import SessionState, SourceInfo
 
 HINT = "/ for commands · /exit to quit"
 
