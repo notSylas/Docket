@@ -118,19 +118,23 @@ def test_insert_page_markers_at_genuine_transitions_only():
     from docket.parsing.docling_wrapper import _insert_page_markers
     from types import SimpleNamespace as NS
 
+    # Every anchor text is >= _MIN_ANCHOR_LEN (32 chars) -- short strings are
+    # deliberately skipped as untrustworthy anchors (see _MIN_ANCHOR_LEN's
+    # docstring), so a real transition-marking test has to use realistic,
+    # sentence-length text, not short placeholders.
     markdown = (
-        "Intro paragraph on page one.\n\n"
-        "Still page one, second paragraph.\n\n"
-        "First paragraph on page two.\n\n"
-        "Still page two.\n\n"
-        "First paragraph on page three.\n"
+        "Intro paragraph opening the whole first page.\n\n"
+        "Still page one, a second paragraph here.\n\n"
+        "First paragraph starting the second page.\n\n"
+        "Still page two, a second paragraph here.\n\n"
+        "First paragraph starting the third page.\n"
     )
     document = NS(texts=[
-        _text_item("Intro paragraph on page one.", 1),
-        _text_item("Still page one, second paragraph.", 1),
-        _text_item("First paragraph on page two.", 2),
-        _text_item("Still page two.", 2),
-        _text_item("First paragraph on page three.", 3),
+        _text_item("Intro paragraph opening the whole first page.", 1),
+        _text_item("Still page one, a second paragraph here.", 1),
+        _text_item("First paragraph starting the second page.", 2),
+        _text_item("Still page two, a second paragraph here.", 2),
+        _text_item("First paragraph starting the third page.", 3),
     ])
 
     annotated = _insert_page_markers(markdown, document)
@@ -145,8 +149,8 @@ def test_insert_page_markers_at_genuine_transitions_only():
         < annotated.index("<!--PAGE:3-->")
     )
     # Markers sit immediately before the matched text, not scattered.
-    assert "<!--PAGE:2-->First paragraph on page two." in annotated
-    assert "<!--PAGE:3-->First paragraph on page three." in annotated
+    assert "<!--PAGE:2-->First paragraph starting the second page." in annotated
+    assert "<!--PAGE:3-->First paragraph starting the third page." in annotated
     # Stripping markers reproduces the original markdown exactly.
     assert re.sub(r"<!--PAGE:\d+-->", "", annotated) == markdown
 
@@ -174,17 +178,20 @@ def test_insert_page_markers_never_goes_backwards():
     from docket.parsing.docling_wrapper import _insert_page_markers
     from types import SimpleNamespace as NS
 
-    markdown = "First on page five.\n\nThen an out-of-order item.\n"
+    markdown = (
+        "First sentence appearing here on page five.\n\n"
+        "Then an out-of-order item appears right here.\n"
+    )
     document = NS(texts=[
-        _text_item("First on page five.", 5),
+        _text_item("First sentence appearing here on page five.", 5),
         # Docling/layout quirk: a later item claims an earlier page number.
-        _text_item("Then an out-of-order item.", 2),
+        _text_item("Then an out-of-order item appears right here.", 2),
     ])
 
     annotated = _insert_page_markers(markdown, document)
 
     assert annotated.count("<!--PAGE:") == 1
-    assert "<!--PAGE:5-->First on page five." in annotated
+    assert "<!--PAGE:5-->First sentence appearing here on page five." in annotated
     assert "<!--PAGE:2-->" not in annotated
 
 
@@ -192,41 +199,51 @@ def test_insert_page_markers_no_duplicate_marker_within_same_page():
     from docket.parsing.docling_wrapper import _insert_page_markers
     from types import SimpleNamespace as NS
 
-    markdown = "Sentence A.\n\nSentence B.\n\nSentence C.\n"
+    markdown = (
+        "Sentence A appears first in this short test.\n\n"
+        "Sentence B appears second in this short test.\n\n"
+        "Sentence C appears third in this short test.\n"
+    )
     document = NS(texts=[
-        _text_item("Sentence A.", 1),
-        _text_item("Sentence B.", 1),
-        _text_item("Sentence C.", 1),
+        _text_item("Sentence A appears first in this short test.", 1),
+        _text_item("Sentence B appears second in this short test.", 1),
+        _text_item("Sentence C appears third in this short test.", 1),
     ])
 
     annotated = _insert_page_markers(markdown, document)
 
     assert annotated.count("<!--PAGE:1-->") == 1
-    assert annotated.startswith("<!--PAGE:1-->Sentence A.")
+    assert annotated.startswith("<!--PAGE:1-->Sentence A appears first in this short test.")
 
 
 def test_insert_page_markers_repeated_text_matches_forward_only():
     from docket.parsing.docling_wrapper import _insert_page_markers
     from types import SimpleNamespace as NS
 
-    # "Running Header" appears twice -- once per page -- and must not both
+    # The running header appears twice -- once per page -- and must not both
     # collapse onto the first occurrence.
-    markdown = "Running Header\n\nBody on page one.\n\nRunning Header\n\nBody on page two.\n"
+    header = "Running Header For This Whole Chapter"
+    markdown = (
+        f"{header}\n\n"
+        "Body text that only appears on page one.\n\n"
+        f"{header}\n\n"
+        "Body text that only appears on page two.\n"
+    )
     document = NS(texts=[
-        _text_item("Running Header", 1),
-        _text_item("Body on page one.", 1),
-        _text_item("Running Header", 2),
-        _text_item("Body on page two.", 2),
+        _text_item(header, 1),
+        _text_item("Body text that only appears on page one.", 1),
+        _text_item(header, 2),
+        _text_item("Body text that only appears on page two.", 2),
     ])
 
     annotated = _insert_page_markers(markdown, document)
 
     assert annotated.count("<!--PAGE:1-->") == 1
     assert annotated.count("<!--PAGE:2-->") == 1
-    first_header_idx = annotated.index("Running Header")
+    first_header_idx = annotated.index(header)
     marker2_idx = annotated.index("<!--PAGE:2-->")
-    second_header_idx = annotated.index("Running Header", first_header_idx + 1)
-    # The page-2 marker precedes the *second* "Running Header", not the first.
+    second_header_idx = annotated.index(header, first_header_idx + 1)
+    # The page-2 marker precedes the *second* header, not the first.
     assert marker2_idx < second_header_idx
     assert marker2_idx > first_header_idx
 
@@ -316,12 +333,12 @@ def test_parsed_document_text_has_no_markers_fake_docling_result(monkeypatch, tm
     from docket.parsing import docling_wrapper as dw
 
     document = NS(texts=[
-        _text_item("Page one sentence.", 1),
-        _text_item("Page two sentence.", 2),
+        _text_item("Page one sentence that is long enough now.", 1),
+        _text_item("Page two sentence that is long enough now.", 2),
     ], pages={})
 
     def fake_export_to_markdown():
-        return "Page one sentence.\n\nPage two sentence.\n"
+        return "Page one sentence that is long enough now.\n\nPage two sentence that is long enough now.\n"
 
     document.export_to_markdown = fake_export_to_markdown
     fake_result = NS(document=document)

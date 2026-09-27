@@ -117,6 +117,53 @@ def _page_images(document: object) -> dict[int, bytes]:
     return images
 
 
+#: Minimum length (in whitespace-collapsed characters) a `document.texts`
+#: item's text must have before it's trusted as a search anchor for marker
+#: insertion. Below this length, an item is skipped entirely -- neither
+#: used to place a marker nor allowed to advance the forward search cursor.
+#:
+#: Root-caused against two real 26/29-page NCERT physics chapter PDFs
+#: (see docling_wrapper fix history): short, generic, or per-page-repeating
+#: strings -- single-letter formula variable labels docling splits into
+#: their own text item ("A", "E", "l", ...), running headers/footers
+#: ("Physics", "Reprint 2026-27", "EXAMPLE 3.1"), and even a full repeated
+#: chapter-title running header ("Moving Charges and Magnetism", 28 chars)
+#: -- recur dozens of times across a chapter. Forward-searching for one of
+#: these can land on a wildly wrong (much-too-far-ahead) occurrence instead
+#: of the intended one, since "first match forward of the cursor" is a
+#: near-arbitrary occurrence when the text repeats constantly. Once that
+#: happens the shared search cursor overshoots real content that never gets
+#: revisited (search is forward-only), and every subsequent item silently
+#: stops matching -- observed in practice as markers correctly appearing for
+#: the first few pages and then permanently stopping for the rest of the
+#: document. 32 was chosen empirically: it comfortably exceeds every
+#: generic/repeating string observed in either fixture (max 28 chars) while
+#: still being well under typical prose sentence length, so real transition
+#: text on ordinary pages is essentially never excluded by it.
+_MIN_ANCHOR_LEN = 32
+
+
+def _anchor_pattern(normalized: str) -> re.Pattern[str]:
+    """Build a regex that finds ``normalized`` in raw markdown tolerant of
+    exactly how much whitespace separates each word.
+
+    ``normalized`` has already collapsed every run of whitespace in the
+    source ``item.text`` to a single space. Docling's raw markdown export
+    does not reliably mirror that whitespace one-for-one -- confirmed
+    against the same two real PDFs noted on ``_MIN_ANCHOR_LEN``: ordinary
+    prose is routinely exported with runs of two or more literal spaces
+    between words (hundreds of occurrences per document) where the
+    whitespace-collapsed item text has only one. A plain ``str.find`` of
+    the collapsed needle against the raw haystack silently fails on any
+    such item -- not a rare edge case here, but the majority of prose items
+    past the first page or two. Escaping the needle for regex safety and
+    then turning each of *those* single spaces into ``\\s+`` matches either
+    representation without needing to build (and index-map back from) a
+    whitespace-collapsed copy of the whole markdown string.
+    """
+    return re.compile(re.escape(normalized).replace(r"\ ", r"\s+"))
+
+
 def _insert_page_markers(markdown: str, document: object) -> str:
     """Insert ``<!--PAGE:N-->`` right before the first (forward) occurrence
     of each text item's content in ``markdown``, at every point where the
@@ -124,13 +171,17 @@ def _insert_page_markers(markdown: str, document: object) -> str:
 
     Walks ``document.texts`` in order (the same field/shape
     ``_formula_regions`` reads for ``.prov[0].page_no``) and, for each
-    item's whitespace-collapsed ``.text``, searches for it in ``markdown``
-    strictly forward of the previous match -- documents can repeat text
-    (e.g. running headers), so searching forward avoids re-matching an
-    earlier occurrence. Tables/formulas/images are transformed by the
-    markdown exporter and typically won't be found verbatim; those items
-    are simply skipped (this only needs to catch transitions on ordinary
-    prose/heading text, which is the overwhelming majority of content).
+    item's whitespace-collapsed ``.text`` long enough to trust as an anchor
+    (see ``_MIN_ANCHOR_LEN``), searches for it in ``markdown`` strictly
+    forward of the previous match, whitespace-tolerantly (see
+    ``_anchor_pattern``) -- documents can repeat text (e.g. running
+    headers), so searching forward avoids re-matching an earlier
+    occurrence. Tables/formulas/images are transformed by the markdown
+    exporter and typically won't be found verbatim; those items are simply
+    skipped (this only needs to catch transitions on ordinary prose/heading
+    text, which is the overwhelming majority of content) -- as are items
+    below the minimum anchor length, which skip searching *and* leave the
+    cursor untouched, so they can never corrupt it (see ``_MIN_ANCHOR_LEN``).
 
     Runs against the *raw* (still CommonMark-escaped) markdown, before
     ``unescape_markdown`` -- Docling's own exported text is un-escaped, so
@@ -163,14 +214,17 @@ def _insert_page_markers(markdown: str, document: object) -> str:
         if not item_text:
             continue
         normalized = " ".join(item_text.split())
-        if not normalized:
+        if len(normalized) < _MIN_ANCHOR_LEN:
+            # Too short/generic to trust as a search anchor -- skip without
+            # touching the cursor (see _MIN_ANCHOR_LEN).
             continue
 
-        idx = result.find(normalized, search_from)
-        if idx == -1:
+        match = _anchor_pattern(normalized).search(result, search_from)
+        if match is None:
             continue
 
-        search_from = idx + len(normalized)
+        idx = match.start()
+        search_from = match.end()
 
         if current_page is not None and page_no <= current_page:
             # Same page (no-op) or a backwards/out-of-order page number --
