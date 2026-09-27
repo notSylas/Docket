@@ -156,6 +156,22 @@ _SYMBOL_RE = re.compile(
 # plain "-19" for gold-fact matching, whereas a bare "^-19" would introduce a
 # literal "^" character the gold text never has.
 _NUMERIC_BRACED_RE = re.compile(r"[_^]\{\s*([+-]?\d+)\s*\}")
+
+# The same notation, but without braces -- the model emits "10^-14" as
+# often as "10^{-14}" (see the real example in this module's docstring:
+# "~10^-14 m" from a live eval run). Restricted to a digit *immediately
+# before* the `^`/`_` (lookbehind) so it only fires on genuine power-of-ten
+# / numeric notation ("10^-14", "2^10") and never on an algebraic bare
+# exponent whose base is a variable letter, e.g. "R^2" or "x^2" in
+# "\frac{\mu_0 I R^2}{2(x^2 + R^2)^{3/2}}" or the subscript "q_1" in
+# "q_1, q_2, \dots, q_n" -- both real eval examples (see
+# test_biot_savart_frac_with_nested_braces and
+# test_electric_field_mathbf_dots) that require the letter-based form to
+# survive completely untouched. Subscripts get the same treatment for
+# symmetry with the braced case above and in case a numeric subscript
+# ("H_2" style) shows up in bare form too, even though no real eval sample
+# has one yet -- the digit-lookbehind guard makes this safe either way.
+_NUMERIC_BARE_RE = re.compile(r"(?<=\d)[_^]([+-]?\d+)")
 _SUPERSCRIPT_RE = re.compile(r"\^\{([^{}]*)\}")
 _SUBSCRIPT_RE = re.compile(r"_\{([^{}]*)\}")
 
@@ -242,7 +258,13 @@ def _replace_numeric_exponents(text: str) -> str:
         table = _SUPER_DIGITS if is_super else _SUB_DIGITS
         return match.group(1).translate(table)
 
-    return _NUMERIC_BRACED_RE.sub(render, text)
+    # Braced form first (e.g. "10^{-14}" -> "10⁻¹⁴"). Doing this first means
+    # the bare-form pass below can never see a "^{"/"_{" left over from a
+    # braced exponent that didn't get replaced -- by the time it runs, any
+    # digit immediately after "^"/"_" is genuinely bare, not the first
+    # character inside a brace.
+    text = _NUMERIC_BRACED_RE.sub(render, text)
+    return _NUMERIC_BARE_RE.sub(render, text)
 
 
 def _replace_remaining_braced_exponents(text: str) -> str:

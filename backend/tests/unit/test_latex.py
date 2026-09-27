@@ -296,3 +296,86 @@ def test_math_and_currency_can_coexist():
 
 def test_vector_and_hat_notation_keep_their_meaning():
     assert normalize_latex(r"$\vec{r} = r \hat{r}$") == "vec(r) = r hat(r)"
+
+
+# ---------------------------------------------------------------------------
+# Bare (unbraced) numeric exponent/subscript -- "10^-14" as opposed to
+# "10^{-14}". The model emits both forms; only the braced one was handled
+# before this fix, so a literal "^" survived into the final answer and
+# broke the whitespace-insensitive substring match against gold facts
+# (e.g. gold "~10 -14 m" never matches answer "~10^-14 m" post-normalize
+# because "^" has no counterpart to strip).
+# ---------------------------------------------------------------------------
+
+
+def test_bare_numeric_exponent_renders_as_unicode_superscript() -> None:
+    assert normalize_latex("10^-14") == "10⁻¹⁴"
+
+
+def test_strong_force_range_bare_unbraced_exponent_real_example() -> None:
+    """The exact real answer from the task: physically correct, correctly
+    cited, but previously failed the deterministic gold-fact check because
+    of the literal "^" left behind by the unbraced "10^-14" form."""
+    answer = (
+        "The range of distance where the strong force is effective is "
+        "approximately ~10^-14 m. [leph101.pdf #chk_3a322f74]"
+    )
+    normalized = normalize_latex(answer)
+
+    assert "^" not in normalized
+    assert "approximately ~10⁻¹⁴ m." in normalized
+    assert "[leph101.pdf #chk_3a322f74]" in normalized
+
+
+def test_bare_numeric_exponent_inside_longer_sentence() -> None:
+    answer = "One electron volt is 1.6 \\times 10^-19 J, a very small amount."
+    normalized = normalize_latex(answer)
+    assert "10⁻¹⁹" in normalized
+    assert "^" not in normalized
+    assert "1.6 × 10⁻¹⁹ J" in normalized
+
+
+def test_bare_numeric_subscript_after_a_digit_renders_as_unicode() -> None:
+    # Symmetric with the exponent case above -- a bare numeric subscript is
+    # only converted when it follows a digit (genuine numeric notation),
+    # mirroring the braced regex's support for both "^" and "_".
+    assert normalize_latex("10_2") == "10₂"
+
+
+def test_bare_algebraic_exponent_on_a_variable_is_left_alone() -> None:
+    """Bare "R^2"/"x^2" (base is a letter, not a digit) must NOT be
+    converted -- this is genuine algebraic notation, not a power-of-ten, and
+    converting it would break the existing letter-based cases like
+    "R^2" in test_biot_savart_frac_with_nested_braces. The digit-lookbehind
+    guard is what tells these two apart."""
+    assert normalize_latex("R^2") == "R^2"
+    assert normalize_latex("x^-3") == "x^-3"
+
+
+def test_bare_subscript_on_a_variable_letter_is_left_alone() -> None:
+    """Bare "q_1" (letter base) stays untouched, same as the existing
+    test_electric_field_mathbf_dots real-data case (q_1, q_2, ..., q_n)."""
+    assert normalize_latex("q_1, q_2, \\dots, q_n") == "q_1, q_2, …, q_n"
+
+
+def test_braced_exponents_still_work_unchanged_regression() -> None:
+    assert normalize_latex("10^{-14}") == "10⁻¹⁴"
+    assert normalize_latex(r"\times 10^{-19}") == "× 10⁻¹⁹"
+
+
+def test_bare_exponent_next_to_citation_tag_does_not_touch_the_tag() -> None:
+    """A citation label ([source.pdf #chunk_id]) is split out before
+    fragment normalization runs (`normalize_latex`'s `_CITATION_RE.split`),
+    so even a chunk id that happens to contain "^" followed by digits must
+    survive completely untouched, while a bare exponent just outside the
+    brackets still gets normalized."""
+    answer = "approximately 10^-14 m [file.pdf #chk_abc123^9]"
+    normalized = normalize_latex(answer)
+    assert "10⁻¹⁴" in normalized
+    assert "[file.pdf #chk_abc123^9]" in normalized
+
+
+def test_bare_exponent_idempotent() -> None:
+    once = normalize_latex("10^-14")
+    twice = normalize_latex(once)
+    assert once == twice == "10⁻¹⁴"
