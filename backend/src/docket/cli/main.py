@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 import typer
@@ -23,6 +24,8 @@ app = typer.Typer(name="docket", help=(
 sources_app = typer.Typer(help="Manage registered sources (local folders).")
 app.add_typer(sources_app, name="sources")
 app.add_typer(eval_app, name="eval")
+formulas_app = typer.Typer(help="Verify a sample of formula transcriptions against their source crops.")
+app.add_typer(formulas_app, name="formulas")
 
 
 @app.callback(invoke_without_command=True)
@@ -201,6 +204,56 @@ def watch(source_id: str = typer.Argument(..., help="Source id to watch for chan
         watcher.watch(source_id, Path(source.path))
     except KeyboardInterrupt:
         typer.echo("Stopped watching.")
+
+
+# -- formulas ------------------------------------------------------------
+#
+# Human verification of unverified formula transcriptions (checkpoint 1's
+# `EvidenceVersion.formula_transcriptions_json`) against their source crops.
+# Measures agreement only -- it never writes anything back into `Chunk.text`,
+# an index, or a "verified" flag anywhere (see `formula_review`'s docstring).
+
+
+@formulas_app.command("export")
+def formulas_export(
+    source_id: str = typer.Option(None, "--source-id", help="Only this source's transcriptions (default: every source)."),
+    out: Path = typer.Option(None, "--out", help="Output directory (default <data_dir>/formula_review/<time>)."),
+    n: int = typer.Option(30, "--n", min=1, help="Sample size."),
+    seed: int = typer.Option(0, "--seed"),
+) -> None:
+    """Sample transcribed formula regions, crop them, and write a labels YAML to fill in."""
+    from docket.parsing.formula_review import FormulaReviewError, export_labels
+
+    context = build_context()
+    out_dir = out or context.settings.data_dir / "formula_review" / time.strftime("%Y%m%d-%H%M%S")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        count = export_labels(
+            context.session_factory, context.store, out_dir, source_id=source_id, n=n, seed=seed
+        )
+    except FormulaReviewError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    labels_path = out_dir / "labels.yaml"
+    typer.echo(f"Exported {count} items to {labels_path} (crops under {out_dir / 'crops'}).")
+    typer.echo("Open each crop_path, fill in `correct: true/false` (and `notes` when false), then run:")
+    typer.echo(f"  docket formulas score --labels {labels_path}")
+
+
+@formulas_app.command("score")
+def formulas_score(
+    labels: Path = typer.Option(..., "--labels", help="The filled-in labels YAML from `docket formulas export`."),
+) -> None:
+    """Aggregate agreement across your true/false labels; print every failure."""
+    from docket.parsing.formula_review import FormulaReviewError, format_review, score_labels
+
+    try:
+        result = score_labels(labels)
+    except FormulaReviewError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(format_review(result))
 
 
 if __name__ == "__main__":
