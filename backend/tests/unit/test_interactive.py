@@ -10,7 +10,7 @@ from docket.cli.interactive import run_session
 from docket.cli.interactive.state import SessionState
 from docket.cli.main import app
 from docket.infra.inference.gateway import InferenceUnavailableError
-from docket.ingestion.pipeline import FileIngestResult, IngestionJobResult, SourceNotFoundError
+from docket.services.ingestion.pipeline import FileIngestResult, IngestionJobResult, SourceNotFoundError
 from docket.services.query.classifier import QueryMode
 from docket.services.query.service import Citation, QueryResult
 from docket.infra.retrieval.resolver import ChunkNotFoundError, ResolvedEvidence
@@ -534,7 +534,7 @@ def test_ingest_shows_failures_and_summary(ctx, tmp_path):
 
     class P:
         def run_ingestion_for_source(self, source_id, progress=None):
-            from docket.ingestion.pipeline import ProgressEvent
+            from docket.services.ingestion.pipeline import ProgressEvent
 
             ok = FileIngestResult(path=Path("a.pdf"), status="ingested", chunks_written=5)
             bad = FileIngestResult(path=Path("b.pdf"), status="failed", error="corrupt")

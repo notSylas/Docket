@@ -13,7 +13,7 @@ from docket import __version__
 from docket.cli.context import build_context
 from docket.cli.interactive import run_session
 from docket.core.db.models import SourceStatus
-from docket.ingestion.pipeline import SourceNotActiveError
+from docket.services.ingestion.pipeline import SourceNotActiveError
 from docket.services.query.service import QueryService
 from docket.services.sources.manager import SourceNotFoundError
 from docket.services.sources.watcher import SourceWatcher

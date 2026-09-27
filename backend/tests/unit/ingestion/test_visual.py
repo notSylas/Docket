@@ -26,8 +26,8 @@ from docket.infra.index.manager import IndexManager
 from docket.infra.index.vector_index import LanceIndexWriter
 from docket.infra.index.visual_index import LancePageIndexWriter
 from docket.infra.inference.gateway import FakeInferenceGateway
-from docket.ingestion.pipeline import IngestionPipeline
-from docket.ingestion.visual_indexer import VisualIndexer
+from docket.services.ingestion.pipeline import IngestionPipeline
+from docket.services.ingestion.visual_indexer import VisualIndexer
 from docket.infra.parsing.docling_wrapper import ParsedDocument
 from docket.infra.parsing.recipes import DEFAULT_SPLITTER, ChunkRecipe
 from docket.services.sources.manager import SourceManager

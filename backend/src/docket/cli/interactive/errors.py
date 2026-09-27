@@ -17,7 +17,7 @@ from docket.infra.inference.gateway import (
     InferenceUnavailableError,
     ModelNotFoundError,
 )
-from docket.ingestion.pipeline import SourceNotActiveError
+from docket.services.ingestion.pipeline import SourceNotActiveError
 from docket.services.sources.manager import SourceNotFoundError
 
 

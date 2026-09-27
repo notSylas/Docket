@@ -7,7 +7,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from docket.eval.schema import GoldSet, GoldSetError, fingerprint, require_corpus_dir
-from docket.ingestion.pipeline import SUPPORTED_EXTENSIONS
+from docket.services.ingestion.pipeline import SUPPORTED_EXTENSIONS
 
 
 class FrozenBenchmark(BaseModel):

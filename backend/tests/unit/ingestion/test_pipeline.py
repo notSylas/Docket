@@ -21,7 +21,7 @@ from sqlalchemy import select
 from conftest import _chunk_ids_for_file, _job_status, _write_docx
 from docket.core.db.engine import get_session_factory
 from docket.core.db.models import Chunk, EvidenceVersion, IngestionJob, IngestionJobStatus
-from docket.ingestion.chunk_writer import ChunkWriter
+from docket.services.ingestion.chunk_writer import ChunkWriter
 from docket.infra.parsing.chunker import ChunkDraft, EvidenceUnitDraft
 from docket.infra.parsing.recipes import DEFAULT_SPLITTER, ChunkRecipe
 from docket.services.sources.manager import SourceManager

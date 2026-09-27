@@ -10,7 +10,7 @@ from docket.eval.calibration import CalibrationResult
 from docket.eval.judge import ClaimJudge, judge_runs
 from docket.eval.report import build_report
 from docket.eval.schema import GoldSet, GoldSetError, Question, fingerprint
-from docket.ingestion.pipeline import SUPPORTED_EXTENSIONS
+from docket.services.ingestion.pipeline import SUPPORTED_EXTENSIONS
 from docket.services.query.prompts import ABSTENTION_PHRASE
 
 

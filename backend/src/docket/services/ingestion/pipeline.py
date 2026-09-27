@@ -126,9 +126,9 @@ from docket.infra.evidence.manager import EvidenceManager
 from docket.infra.index.manager import IndexManager
 from docket.infra.index.visual_index import LancePageIndexWriter
 from docket.infra.inference.gateway import InferenceGateway
-from docket.ingestion.chunk_writer import ChunkWriter
-from docket.ingestion.formula_transcriber import FormulaTranscriber
-from docket.ingestion.visual_indexer import VisualIndexer
+from docket.services.ingestion.chunk_writer import ChunkWriter
+from docket.services.ingestion.formula_transcriber import FormulaTranscriber
+from docket.services.ingestion.visual_indexer import VisualIndexer
 from docket.infra.parsing.chunker import chunk_document
 from docket.infra.parsing.docling_wrapper import DoclingParser
 from docket.infra.parsing.recipes import ChunkRecipe

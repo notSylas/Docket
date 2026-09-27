@@ -19,7 +19,7 @@ from pathlib import Path
 
 import watchfiles
 
-from docket.ingestion.pipeline import IngestionPipeline
+from docket.services.ingestion.pipeline import IngestionPipeline
 
 
 class SourceWatcher:
