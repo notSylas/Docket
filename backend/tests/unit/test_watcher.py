@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from docket.sources.watcher import SourceWatcher
+from docket.services.sources.watcher import SourceWatcher
 
 
 class _RecordingPipeline:
@@ -36,7 +36,7 @@ def test_watch_dispatches_ingestion_on_synthetic_event(monkeypatch, tmp_path: Pa
         captured["stop_event"] = stop_event
         yield {("modified", str(Path(path) / "f.txt"))}
 
-    monkeypatch.setattr("docket.sources.watcher.watchfiles.watch", fake_watch)
+    monkeypatch.setattr("docket.services.sources.watcher.watchfiles.watch", fake_watch)
 
     pipeline = _RecordingPipeline()
     watcher = SourceWatcher(pipeline)
@@ -57,7 +57,7 @@ def test_watch_dispatches_once_per_change_batch(monkeypatch, tmp_path: Path) -> 
         yield {("modified", "a.txt")}
         yield {("deleted", "a.txt")}
 
-    monkeypatch.setattr("docket.sources.watcher.watchfiles.watch", fake_watch)
+    monkeypatch.setattr("docket.services.sources.watcher.watchfiles.watch", fake_watch)
 
     pipeline = _RecordingPipeline()
     watcher = SourceWatcher(pipeline)
@@ -72,7 +72,7 @@ def test_watch_no_events_never_dispatches(monkeypatch, tmp_path: Path) -> None:
         return
         yield  # pragma: no cover -- makes this a generator function
 
-    monkeypatch.setattr("docket.sources.watcher.watchfiles.watch", fake_watch)
+    monkeypatch.setattr("docket.services.sources.watcher.watchfiles.watch", fake_watch)
 
     pipeline = _RecordingPipeline()
     watcher = SourceWatcher(pipeline)

@@ -24,7 +24,7 @@ from docket.core.db.models import Chunk, EvidenceVersion, IngestionJob, Ingestio
 from docket.ingestion.chunk_writer import ChunkWriter
 from docket.infra.parsing.chunker import ChunkDraft, EvidenceUnitDraft
 from docket.infra.parsing.recipes import DEFAULT_SPLITTER, ChunkRecipe
-from docket.sources.manager import SourceManager
+from docket.services.sources.manager import SourceManager
 
 # ---------------------------------------------------------------------------
 # First run: everything is new.

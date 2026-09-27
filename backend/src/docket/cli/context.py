@@ -47,7 +47,7 @@ from docket.ingestion.pipeline import IngestionPipeline
 from docket.infra.parsing.docling_wrapper import DoclingParser
 from docket.infra.parsing.recipes import DEFAULT_SPLITTER, ChunkRecipe
 from docket.infra.retrieval.resolver import EvidenceResolver
-from docket.sources.manager import SourceManager
+from docket.services.sources.manager import SourceManager
 
 if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
     # Running as a PyInstaller-frozen binary: `__file__`-based nesting no

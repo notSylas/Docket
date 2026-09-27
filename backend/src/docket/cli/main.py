@@ -15,8 +15,8 @@ from docket.cli.interactive import run_session
 from docket.core.db.models import SourceStatus
 from docket.ingestion.pipeline import SourceNotActiveError
 from docket.services.query.service import QueryService
-from docket.sources.manager import SourceNotFoundError
-from docket.sources.watcher import SourceWatcher
+from docket.services.sources.manager import SourceNotFoundError
+from docket.services.sources.watcher import SourceWatcher
 
 _EVAL_COMMAND_NAME = "eval"
 _eval_click_command: click.Command | None = None

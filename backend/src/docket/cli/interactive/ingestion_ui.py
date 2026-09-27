@@ -12,7 +12,7 @@ from typing import Any
 
 from docket.core.db.models import SourceStatus
 from docket.ingestion.pipeline import SUPPORTED_EXTENSIONS, ProgressEvent, SourceNotActiveError
-from docket.sources.manager import SourceNotFoundError
+from docket.services.sources.manager import SourceNotFoundError
 
 
 def cmd_ingest(session: Any, arg: str) -> None:

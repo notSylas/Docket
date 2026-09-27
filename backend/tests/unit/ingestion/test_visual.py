@@ -30,7 +30,7 @@ from docket.ingestion.pipeline import IngestionPipeline
 from docket.ingestion.visual_indexer import VisualIndexer
 from docket.infra.parsing.docling_wrapper import ParsedDocument
 from docket.infra.parsing.recipes import DEFAULT_SPLITTER, ChunkRecipe
-from docket.sources.manager import SourceManager
+from docket.services.sources.manager import SourceManager
 
 # ---------------------------------------------------------------------------
 # Page provenance (Chunk.page_start/page_end) -- visual retrieval checkpoint 1.

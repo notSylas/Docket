@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 
 from docket.core.db.engine import get_engine, get_session_factory
 from docket.core.db.models import Base, SourceStatus
-from docket.sources.manager import SourceManager, SourceNotFoundError
+from docket.services.sources.manager import SourceManager, SourceNotFoundError
 
 
 @pytest.fixture()

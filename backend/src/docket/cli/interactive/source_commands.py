@@ -17,7 +17,7 @@ from typing import Any
 
 from rich.table import Table
 
-from docket.sources.manager import SourceNotFoundError
+from docket.services.sources.manager import SourceNotFoundError
 
 from .errors import handle_error
 

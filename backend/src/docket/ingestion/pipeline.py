@@ -132,7 +132,7 @@ from docket.ingestion.visual_indexer import VisualIndexer
 from docket.infra.parsing.chunker import chunk_document
 from docket.infra.parsing.docling_wrapper import DoclingParser
 from docket.infra.parsing.recipes import ChunkRecipe
-from docket.sources.manager import SourceNotFoundError
+from docket.services.sources.manager import SourceNotFoundError
 
 # Deliberately narrow, spike-validated set. Broadening this to more of
 # Docling's supported formats is a one-line change (add to the set); each

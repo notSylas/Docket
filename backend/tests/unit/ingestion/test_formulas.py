@@ -31,7 +31,7 @@ from docket.ingestion.formula_transcriber import FormulaTranscriber
 from docket.ingestion.pipeline import IngestionPipeline
 from docket.infra.parsing.docling_wrapper import ParsedDocument
 from docket.infra.parsing.recipes import DEFAULT_SPLITTER, ChunkRecipe
-from docket.sources.manager import SourceManager
+from docket.services.sources.manager import SourceManager
 
 
 def test_formula_regions_persist_and_legacy_backfill_keeps_chunks(env, monkeypatch):

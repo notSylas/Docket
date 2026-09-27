@@ -18,7 +18,7 @@ from docket.infra.inference.gateway import (
     ModelNotFoundError,
 )
 from docket.ingestion.pipeline import SourceNotActiveError
-from docket.sources.manager import SourceNotFoundError
+from docket.services.sources.manager import SourceNotFoundError
 
 
 def handle_error(session: Any, exc: BaseException) -> None:

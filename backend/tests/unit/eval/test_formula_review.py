@@ -30,7 +30,7 @@ from docket.eval.formula_review import (
     load_labels,
     score_labels,
 )
-from docket.sources.manager import SourceManager
+from docket.services.sources.manager import SourceManager
 
 
 def _page_png(width_px: int = 600, height_px: int = 800) -> bytes:
@@ -202,7 +202,7 @@ def test_export_raises_when_no_transcriptions_exist(env, tmp_path: Path):
 
 
 def test_export_scoped_to_source_id_ignores_other_sources(env, tmp_path: Path):
-    from docket.sources.manager import SourceManager
+    from docket.services.sources.manager import SourceManager
 
     other_folder = tmp_path / "other-docs"
     other_folder.mkdir()
