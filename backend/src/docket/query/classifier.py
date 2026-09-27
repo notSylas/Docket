@@ -107,13 +107,90 @@ _AGENT_PATTERNS = [
 _AGENT_RE = re.compile("|".join(_AGENT_PATTERNS), re.IGNORECASE)
 
 
+# Real Physics-eval false positives (see the eval that found this: 3/93 runs
+# misrouted to AGENT, all three from `\bdifference between\b` /
+# `\brelationship between\b` firing on ordinary single-quantity technical
+# phrasing rather than an actual comparison) exposed that those two patterns
+# are ambiguous: "difference between"/"relationship between" is both (a) how
+# you phrase a genuine comparison of two distinct things ("difference
+# between socialism and capitalism", "relationship between inflation and
+# unemployment") AND (b) standard scientific/technical terminology for
+# specifying or relating a SINGLE quantity ("potential difference between
+# conductors 1 and 2" names one value, at two points; "relationship between
+# the potential difference across R and the current I according to Ohm's
+# law" asks to recall one named law/formula, not to investigate and weigh
+# two separate things against each other). A pure regex can't reliably tell
+# those apart in general -- there's no syntactic marker that distinguishes
+# "between X and Y" where X/Y are two points defining one measurement from
+# "between X and Y" where X/Y are two different things being compared -- so
+# rather than deleting the patterns (losing real comparison detection) or
+# leaving them as-is (the false-positive-costly failure mode this file's
+# module docstring says to avoid), this narrows them with two conservative,
+# documented carve-outs for the two shapes that actually showed up in real
+# data:
+#
+# 1. "<quantity> difference between ..." where <quantity> is one of a short
+#    list of physical/technical quantities that conventionally form a fixed
+#    compound noun with "difference" (potential difference, temperature
+#    difference, pressure difference, phase difference, voltage difference,
+#    energy difference, concentration/density/pH difference) -- in that
+#    shape "between ..." specifies which two points/objects the ONE named
+#    quantity is measured between, not two different things being
+#    contrasted. Plain "difference between X and Y" (no such quantity word
+#    immediately before it) is untouched and still routes to AGENT.
+# 2. "relationship between ... according to ... law" -- the "according to
+#    <named law>" framing is a strong, general signal that the question is
+#    asking to recall one named scientific law/formula (a single-fact
+#    lookup), not to investigate how two independent things relate. Plain
+#    "relationship between X and Y" with no law/formula reference is
+#    untouched and still routes to AGENT (e.g. "relationship between the two
+#    subsidiaries", "relationship between inflation and unemployment").
+# 3. "<quantity>/difference across ..." -- found the same way as (1)/(2)
+#    (re-checking the same real eval's third misrouted question after fixing
+#    the first two): `\bacross\b` is meant as a cross-document/breadth
+#    signal ("across the contracts", "across all documents" -- see that
+#    pattern's comment above), but "across" is also the ordinary spatial
+#    preposition technical writing uses for a quantity measured between two
+#    points of ONE object ("induced emf across the ends of a rod", "voltage
+#    across a resistor", "potential difference across a membrane") -- not a
+#    request to reason over multiple documents/sources at all. Excluded the
+#    same way as (1): only when "across" is immediately preceded by one of a
+#    short list of quantity words (reusing most of the same list) or by
+#    "difference". Plain "across" elsewhere (documents, sources, contracts,
+#    departments, ...) is untouched and still routes to AGENT.
+#
+# This is a deliberately narrow fix, not a general "same entity type"
+# detector -- e.g. "temperature difference between room A and the freezer"
+# without the word "temperature" directly before "difference between", or a
+# law-reference phrase that happens to appear in a genuinely comparative
+# question, will not be caught/excluded by this. That's an accepted gap
+# given the asymmetry this file already leans on (false negative here still
+# gets an answer via FAST; forcing a fragile, over-fitted regex to close
+# every gap would risk the opposite, costlier failure mode instead).
+_QUANTITY_WORDS = (
+    r"(?:potential|temperature|pressure|phase|voltage|energy|concentration|density|ph"
+    r"|emf|current|field|force|charge|resistance|capacitance)"
+)
+
+_FALSE_POSITIVE_PATTERNS = [
+    rf"\b{_QUANTITY_WORDS}\s+difference between\b",
+    r"\brelationship between\b.{0,100}\baccording to\b.{0,60}\blaw\b",
+    rf"\b(?:{_QUANTITY_WORDS}|difference)\s+across\b",
+]
+
+_FALSE_POSITIVE_RE = re.compile("|".join(_FALSE_POSITIVE_PATTERNS), re.IGNORECASE)
+
+
 class HeuristicQueryClassifier:
     """Rule-based classifier, no LLM call -- deterministic, zero added
     latency/cost on every query. Routes to AGENT when the question's phrasing
     matches `_AGENT_PATTERNS` (comparisons, history/change-over-time,
     causal "why", impact/relationship tracing, exhaustive enumeration, or
     explicit cross-document breadth -- see the module-level comment above
-    each pattern group for the reasoning behind each one). Routes to FAST
+    each pattern group for the reasoning behind each one) AND does not also
+    match `_FALSE_POSITIVE_PATTERNS` (the narrow, documented carve-outs for
+    single-quantity technical phrasing that looks like but isn't a genuine
+    comparison -- see the comment above that list). Routes to FAST
     otherwise, which is the default and the common case: most real questions
     are single-fact lookups, and the fast path was validated at 12/12 correct
     in the spike's eval, so an unmatched question should stay on it rather
@@ -121,6 +198,6 @@ class HeuristicQueryClassifier:
     """
 
     def classify(self, question: str) -> QueryMode:
-        if _AGENT_RE.search(question):
+        if _AGENT_RE.search(question) and not _FALSE_POSITIVE_RE.search(question):
             return QueryMode.AGENT
         return QueryMode.FAST

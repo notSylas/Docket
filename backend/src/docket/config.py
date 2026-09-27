@@ -23,7 +23,19 @@ class Settings(BaseSettings):
     chunk_size_words: int = 200
     chunk_overlap_words: int = 40
 
-    max_agent_iterations: int = 3
+    # 4, not 3: the minimum a well-behaved investigation needs is 3 agent
+    # turns (search_knowledge -> read_evidence -> cited final answer). 3
+    # left no headroom at all for `docket.agent.graph.build_agent`'s
+    # `force_tool_use` retry (added so the model can't skip straight to an
+    # uncited answer -- see that module's docstring for the real-eval bug
+    # this closes), which costs one extra turn whenever the model tries to
+    # answer before actually calling read_evidence. Confirmed against a real
+    # regression: `test_agent_mode_end_to_end_answers_with_real_tool_trace_
+    # citations` started failing at 3 (truncated mid-tool-call, empty
+    # answer) once that retry was added, and passes again at 4. Only
+    # matters when a retry actually happens -- the common case (tools called
+    # correctly from turn 1) is unaffected either way.
+    max_agent_iterations: int = 4
     max_agent_tool_calls: int = 8
 
     @property

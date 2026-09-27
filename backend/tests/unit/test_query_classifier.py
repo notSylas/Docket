@@ -97,3 +97,85 @@ def test_question_with_superlative_but_no_investigative_phrasing_routes_to_fast(
         classifier.classify("What is the largest expense category in the Q3 report?")
         == QueryMode.FAST
     )
+
+
+# ---------------------------------------------------------------------------
+# Real Physics-eval false positives: "difference between"/"relationship
+# between" firing on single-quantity technical phrasing, not an actual
+# comparison. See the `_FALSE_POSITIVE_PATTERNS` comment in classifier.py
+# for the full rationale -- these are the exact two sentences from the real
+# 93-run eval that were misrouted to AGENT and then produced uncited/
+# inconsistent answers there.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "What is the relationship between the potential difference across R "
+        "and the current I according to Ohm's law?",
+        "What is the potential difference between conductors 1 and 2 when "
+        "they have charges Q' and -Q' respectively?",
+        # The third question from the same real eval run: this one was
+        # misrouted not by "difference between"/"relationship between" but
+        # by `\bacross\b` firing on the ordinary spatial sense of "across"
+        # ("emf across the ends of a rod"), not the cross-document/breadth
+        # sense the pattern is meant for.
+        "What is the formula for the induced emf across the ends of a metal "
+        "rod moving in a magnetic field?",
+    ],
+)
+def test_single_quantity_technical_phrasing_routes_to_fast(question: str) -> None:
+    assert classifier.classify(question) == QueryMode.FAST
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        # Other "<quantity> difference between" shapes should also be caught
+        # by the same carve-out, not just the one real example above.
+        "What is the temperature difference between the two rooms?",
+        "What is the phase difference between the current and the voltage "
+        "in a purely inductive circuit?",
+        # A "relationship between ... according to ... law" question about a
+        # different named law should also stay FAST, confirming the
+        # carve-out isn't hardcoded to "Ohm's law".
+        "What is the relationship between pressure and volume according to "
+        "Boyle's law?",
+        # Other "<quantity> across" shapes beyond the one real example.
+        "What is the voltage across the resistor in this circuit?",
+        "What is the potential difference across the capacitor plates?",
+    ],
+)
+def test_other_single_quantity_technical_phrasings_route_to_fast(question: str) -> None:
+    assert classifier.classify(question) == QueryMode.FAST
+
+
+def test_genuine_cross_document_breadth_with_across_still_routes_to_agent() -> None:
+    # The `\bacross\b` pattern's actual intended use case (see its comment
+    # in classifier.py) must still work once it's narrowed to exclude the
+    # physics-quantity-spatial sense -- this has no quantity word or
+    # "difference" directly before "across", so it's untouched by the new
+    # carve-out.
+    assert (
+        classifier.classify(
+            "Which practices are consistent across all documents in the corpus?"
+        )
+        == QueryMode.AGENT
+    )
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        # Genuine comparisons phrased with "difference between"/"relationship
+        # between" but WITHOUT the single-quantity carve-out shape must still
+        # route to AGENT -- the fix must not blunt real detection.
+        "What is the difference between socialism and capitalism?",
+        "What is the relationship between inflation and unemployment?",
+        "What is the relationship between the two subsidiaries?",
+        "What is the difference between the draft and final contract?",
+    ],
+)
+def test_genuine_comparisons_still_route_to_agent(question: str) -> None:
+    assert classifier.classify(question) == QueryMode.AGENT
