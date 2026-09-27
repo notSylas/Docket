@@ -24,7 +24,7 @@ from docket.eval.scoring import (
     score_run,
     strip_citations,
 )
-from docket.inference.gateway import InferenceGateway
+from docket.infra.inference.gateway import InferenceGateway
 from docket.prompts.judge import JUDGE_SYSTEM, fact_prompt, support_prompt
 
 DEFAULT_JUDGE_MODEL = "qwen3:30b"

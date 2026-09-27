@@ -40,7 +40,7 @@ from docket.eval.schema import (
     load_gold_set,
 )
 from docket.eval.scoring import normalize_text
-from docket.inference.gateway import InferenceGateway
+from docket.infra.inference.gateway import InferenceGateway
 from docket.prompts.draft import DRAFT_SYSTEM, draft_prompt
 
 MIN_CHUNK_CHARS = 80

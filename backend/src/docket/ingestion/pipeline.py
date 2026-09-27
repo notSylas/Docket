@@ -125,7 +125,7 @@ from docket.core.db.models import (
 from docket.infra.evidence.manager import EvidenceManager
 from docket.infra.index.manager import IndexManager
 from docket.infra.index.visual_index import LancePageIndexWriter
-from docket.inference.gateway import InferenceGateway
+from docket.infra.inference.gateway import InferenceGateway
 from docket.ingestion.chunk_writer import ChunkWriter
 from docket.ingestion.formula_transcriber import FormulaTranscriber
 from docket.ingestion.visual_indexer import VisualIndexer

@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 from docket.cli.interactive import errors, ingestion_ui, query_flow, source_commands
 from docket.ingestion.pipeline import FileIngestResult, IngestionJobResult
-from docket.inference.gateway import InferenceUnavailableError, ModelNotFoundError
+from docket.infra.inference.gateway import InferenceUnavailableError, ModelNotFoundError
 
 
 class FakeSession:

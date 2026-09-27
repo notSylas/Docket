@@ -36,7 +36,7 @@ from docket.core.db.models import (
 from docket.infra.index.base import ChunkRecord
 from docket.infra.index.fts_index import FtsIndexWriter
 from docket.infra.index.vector_index import LanceIndexWriter
-from docket.inference.gateway import FakeInferenceGateway
+from docket.infra.inference.gateway import FakeInferenceGateway
 from docket.retrieval.resolver import EvidenceResolver
 
 CHUNK_TEXT = "Reciprocal Rank Fusion combines multiple ranked search results into one."

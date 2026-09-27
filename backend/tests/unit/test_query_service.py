@@ -34,7 +34,7 @@ from docket.core.db.models import (
 from docket.infra.index.base import ChunkRecord
 from docket.infra.index.fts_index import FtsIndexWriter
 from docket.infra.index.vector_index import LanceIndexWriter
-from docket.inference.gateway import FakeInferenceGateway
+from docket.infra.inference.gateway import FakeInferenceGateway
 from docket.query.classifier import QueryMode
 from docket.query.prompts import ABSTENTION_PHRASE
 from docket.query.service import QueryService, _citations_from_agent_messages

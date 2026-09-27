@@ -6,7 +6,7 @@ import ollama
 import pytest
 
 from docket.core.config import settings
-from docket.inference.gateway import (
+from docket.infra.inference.gateway import (
     FakeInferenceGateway,
     InferenceGateway,
     InferenceUnavailableError,
@@ -125,7 +125,7 @@ def test_ollama_gateway_explicit_args_override_settings() -> None:
 
 def test_generate_passes_settings_num_ctx_and_num_predict_by_default(mocker) -> None:
     mock_generate = mocker.patch(
-        "docket.inference.gateway._ollama.generate",
+        "docket.infra.inference.gateway._ollama.generate",
         return_value={"response": "ok"},
     )
     gateway = OllamaGateway()
@@ -138,7 +138,7 @@ def test_generate_passes_settings_num_ctx_and_num_predict_by_default(mocker) -> 
 
 def test_generate_merges_num_ctx_into_caller_supplied_options(mocker) -> None:
     mock_generate = mocker.patch(
-        "docket.inference.gateway._ollama.generate",
+        "docket.infra.inference.gateway._ollama.generate",
         return_value={"response": "ok"},
     )
     gateway = OllamaGateway()
@@ -152,7 +152,7 @@ def test_generate_merges_num_ctx_into_caller_supplied_options(mocker) -> None:
 
 def test_generate_does_not_override_caller_supplied_num_ctx(mocker) -> None:
     mock_generate = mocker.patch(
-        "docket.inference.gateway._ollama.generate",
+        "docket.infra.inference.gateway._ollama.generate",
         return_value={"response": "ok"},
     )
     gateway = OllamaGateway()
@@ -167,7 +167,7 @@ def test_generate_does_not_override_caller_supplied_num_ctx(mocker) -> None:
 
 def test_generate_passes_through_non_options_kwargs(mocker) -> None:
     mock_generate = mocker.patch(
-        "docket.inference.gateway._ollama.generate",
+        "docket.infra.inference.gateway._ollama.generate",
         return_value={"response": "ok"},
     )
     gateway = OllamaGateway()
@@ -184,7 +184,7 @@ def test_generate_passes_through_non_options_kwargs(mocker) -> None:
 
 def test_describe_image_calls_ollama_generate_with_images_arg(mocker) -> None:
     mock_generate = mocker.patch(
-        "docket.inference.gateway._ollama.generate",
+        "docket.infra.inference.gateway._ollama.generate",
         return_value={"response": "a page showing a chart"},
     )
     gateway = OllamaGateway()
@@ -203,7 +203,7 @@ def test_describe_image_calls_ollama_generate_with_images_arg(mocker) -> None:
 
 def test_describe_image_merges_caller_supplied_options(mocker) -> None:
     mock_generate = mocker.patch(
-        "docket.inference.gateway._ollama.generate",
+        "docket.infra.inference.gateway._ollama.generate",
         return_value={"response": "ok"},
     )
     gateway = OllamaGateway()
@@ -218,7 +218,7 @@ def test_describe_image_merges_caller_supplied_options(mocker) -> None:
 
 def test_describe_image_wraps_connection_failure(mocker) -> None:
     mocker.patch(
-        "docket.inference.gateway._ollama.generate",
+        "docket.infra.inference.gateway._ollama.generate",
         side_effect=ConnectionError("Failed to connect to Ollama."),
     )
     gateway = OllamaGateway()
@@ -228,11 +228,11 @@ def test_describe_image_wraps_connection_failure(mocker) -> None:
 
 def test_describe_image_wraps_model_not_found(mocker) -> None:
     mocker.patch(
-        "docket.inference.gateway._ollama.generate",
+        "docket.infra.inference.gateway._ollama.generate",
         side_effect=ollama.ResponseError("model 'nope:1b' not found", 404),
     )
     gateway = OllamaGateway()
-    from docket.inference.gateway import ModelNotFoundError
+    from docket.infra.inference.gateway import ModelNotFoundError
 
     with pytest.raises(ModelNotFoundError):
         gateway.describe_image(b"bytes", prompt="p", model="nope:1b")
@@ -243,7 +243,7 @@ def test_describe_image_wraps_model_not_found(mocker) -> None:
 
 def test_generate_wraps_connection_failure(mocker) -> None:
     mocker.patch(
-        "docket.inference.gateway._ollama.generate",
+        "docket.infra.inference.gateway._ollama.generate",
         side_effect=ConnectionError("Failed to connect to Ollama."),
     )
     gateway = OllamaGateway()
@@ -253,7 +253,7 @@ def test_generate_wraps_connection_failure(mocker) -> None:
 
 def test_embed_wraps_connection_failure(mocker) -> None:
     mocker.patch(
-        "docket.inference.gateway._ollama.embed",
+        "docket.infra.inference.gateway._ollama.embed",
         side_effect=ConnectionError("Failed to connect to Ollama."),
     )
     gateway = OllamaGateway()
@@ -263,11 +263,11 @@ def test_embed_wraps_connection_failure(mocker) -> None:
 
 def test_generate_wraps_model_not_found(mocker) -> None:
     mocker.patch(
-        "docket.inference.gateway._ollama.generate",
+        "docket.infra.inference.gateway._ollama.generate",
         side_effect=ollama.ResponseError("model 'nope:1b' not found", 404),
     )
     gateway = OllamaGateway(gen_model="nope:1b")
-    from docket.inference.gateway import ModelNotFoundError
+    from docket.infra.inference.gateway import ModelNotFoundError
 
     with pytest.raises(ModelNotFoundError):
         gateway.generate(system="sys", prompt="hello")
@@ -275,7 +275,7 @@ def test_generate_wraps_model_not_found(mocker) -> None:
 
 def test_generate_does_not_leak_raw_ollama_exception(mocker) -> None:
     mocker.patch(
-        "docket.inference.gateway._ollama.generate",
+        "docket.infra.inference.gateway._ollama.generate",
         side_effect=ollama.ResponseError("some server error", 500),
     )
     gateway = OllamaGateway()
@@ -309,7 +309,7 @@ def test_real_ollama_generate_returns_nonempty_string(ollama_available) -> None:
 
 @pytest.mark.integration
 def test_real_ollama_model_not_found_is_typed(ollama_available) -> None:
-    from docket.inference.gateway import ModelNotFoundError
+    from docket.infra.inference.gateway import ModelNotFoundError
 
     gateway = OllamaGateway(gen_model="definitely-not-a-real-model:latest")
     with pytest.raises(ModelNotFoundError):

@@ -122,7 +122,7 @@ def test_draft_then_review_via_cli(monkeypatch, fake_env, tmp_path):
     )
     reply = json.dumps({"question": "How many vacation days do employees get per year?",
                         "quote": "25 days of paid vacation per year", "facts": ["25"], "type": "single_fact"})
-    from docket.inference.gateway import FakeInferenceGateway
+    from docket.infra.inference.gateway import FakeInferenceGateway
 
     class DraftGateway(FakeInferenceGateway):
         def generate(self, *, system, prompt, **opts):

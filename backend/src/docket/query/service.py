@@ -32,7 +32,7 @@ from sqlalchemy import Engine
 from docket.agent.graph import build_investigation_agent
 from docket.core.config import Settings
 from docket.core.config import settings as default_settings
-from docket.inference.gateway import InferenceGateway
+from docket.infra.inference.gateway import InferenceGateway
 from docket.query.classifier import HeuristicQueryClassifier, QueryClassifier, QueryMode
 from docket.query.conversation import ConversationTurn, format_history_block, trim_history
 from docket.query.citations import build_context_block, validate_citations

@@ -42,7 +42,7 @@ from docket.eval.schema import (
     require_corpus_dir,
 )
 from docket.eval.scoring import normalize_text
-from docket.inference.gateway import (
+from docket.infra.inference.gateway import (
     InferenceError,
     InferenceGateway,
     OllamaGateway,

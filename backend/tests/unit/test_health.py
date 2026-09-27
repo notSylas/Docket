@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from docket.inference.health import HealthReport, check_ollama, format_health_warning
+from docket.infra.inference.health import HealthReport, check_ollama, format_health_warning
 
 
 class Client:

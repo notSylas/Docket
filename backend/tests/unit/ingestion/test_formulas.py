@@ -26,7 +26,7 @@ from docket.infra.evidence.store import ContentAddressedStore
 from docket.infra.index.fts_index import FtsIndexWriter
 from docket.infra.index.manager import IndexManager
 from docket.infra.index.vector_index import LanceIndexWriter
-from docket.inference.gateway import FakeInferenceGateway
+from docket.infra.inference.gateway import FakeInferenceGateway
 from docket.ingestion.formula_transcriber import FormulaTranscriber
 from docket.ingestion.pipeline import IngestionPipeline
 from docket.parsing.docling_wrapper import ParsedDocument

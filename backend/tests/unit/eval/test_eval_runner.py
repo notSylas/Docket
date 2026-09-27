@@ -18,7 +18,7 @@ from docket.eval.runner import (
     select_questions,
 )
 from docket.eval.schema import Split, load_gold_set, load_records
-from docket.inference.gateway import FakeInferenceGateway
+from docket.infra.inference.gateway import FakeInferenceGateway
 from docket.query.classifier import QueryMode
 from docket.query.prompts import ABSTENTION_PHRASE
 
@@ -157,7 +157,7 @@ def test_temp_data_dir_is_removed_and_data_dir_can_be_supplied(fixtures_dir, tmp
 
 
 def test_inference_error_is_recorded_not_raised(fixtures_dir, gold):
-    from docket.inference.gateway import InferenceUnavailableError
+    from docket.infra.inference.gateway import InferenceUnavailableError
 
     class Down(ScriptedGateway):
         def generate(self, **kw):

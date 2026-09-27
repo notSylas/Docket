@@ -24,7 +24,7 @@ from rich.console import Console
 from rich.table import Table
 
 from docket import __version__
-from docket.inference.health import HealthReport, format_health_warning
+from docket.infra.inference.health import HealthReport, format_health_warning
 from docket.query.classifier import QueryMode
 from docket.query.conversation import ConversationTurn
 from docket.query.service import QueryService

@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Sequence
 
 from docket.infra.index.base import ChunkRecord, IndexWriteStats, IndexWriter
-from docket.inference.gateway import InferenceGateway
+from docket.infra.inference.gateway import InferenceGateway
 
 
 class IndexManager:

@@ -95,7 +95,7 @@ def main(
 
 
 def _run_interactive() -> None:
-    from docket.inference.health import check_ollama
+    from docket.infra.inference.health import check_ollama
 
     context = build_context()
     settings = context.settings

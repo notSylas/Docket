@@ -18,7 +18,7 @@ from sqlalchemy.orm import sessionmaker
 from docket.core.config import Settings
 from docket.core.db.models import EvidenceVersion
 from docket.infra.evidence.store import ContentAddressedStore
-from docket.inference.gateway import InferenceGateway
+from docket.infra.inference.gateway import InferenceGateway
 from docket.parsing.formula_crop import crop_formula_region, is_transcribable
 from docket.prompts.vision import FORMULA_TRANSCRIPTION_PROMPT
 

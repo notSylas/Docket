@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from docket.eval.schema import RecordedChunk, RecordedCitation, RunRecord
-from docket.inference.gateway import FakeInferenceGateway
+from docket.infra.inference.gateway import FakeInferenceGateway
 from docket.parsing.docling_wrapper import ParsedDocument
 from docket.query.prompts import ABSTENTION_PHRASE
 

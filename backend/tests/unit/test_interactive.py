@@ -9,7 +9,7 @@ from docket.cli.context import AppContext
 from docket.cli.interactive import run_session
 from docket.cli.interactive.state import SessionState
 from docket.cli.main import app
-from docket.inference.gateway import InferenceUnavailableError
+from docket.infra.inference.gateway import InferenceUnavailableError
 from docket.ingestion.pipeline import FileIngestResult, IngestionJobResult, SourceNotFoundError
 from docket.query.classifier import QueryMode
 from docket.query.service import Citation, QueryResult
@@ -503,8 +503,8 @@ def test_sources_table_after_remove(tctx, tmp_path):
 
 from pathlib import Path  # noqa: E402
 
-from docket.inference.gateway import ModelNotFoundError  # noqa: E402
-from docket.inference.health import HealthReport  # noqa: E402
+from docket.infra.inference.gateway import ModelNotFoundError  # noqa: E402
+from docket.infra.inference.health import HealthReport  # noqa: E402
 
 
 def test_banner_shows_health_warnings(ctx):

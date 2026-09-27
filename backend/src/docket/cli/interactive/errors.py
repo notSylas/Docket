@@ -12,7 +12,7 @@ import os
 import re
 from typing import Any
 
-from docket.inference.gateway import (
+from docket.infra.inference.gateway import (
     InferenceError,
     InferenceUnavailableError,
     ModelNotFoundError,
