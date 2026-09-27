@@ -23,7 +23,7 @@ from sqlalchemy import Engine
 
 from docket.core.db.engine import get_session_factory
 from docket.core.db.models import EvidenceVersion
-from docket.evidence.store import ContentAddressedStore
+from docket.infra.evidence.store import ContentAddressedStore
 from docket.eval.formula_review import (
     FormulaReviewError,
     export_labels,

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from docket.evidence.store import ContentAddressedStore, ObjectNotFoundError
+from docket.infra.evidence.store import ContentAddressedStore, ObjectNotFoundError
 
 
 @pytest.fixture()

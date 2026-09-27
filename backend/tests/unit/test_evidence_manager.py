@@ -9,8 +9,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from docket.core.db.engine import get_engine, get_session_factory
 from docket.core.db.models import Base, EvidenceVersion, Source, SourceStatus, Workspace
-from docket.evidence.manager import EvidenceManager
-from docket.evidence.store import ContentAddressedStore
+from docket.infra.evidence.manager import EvidenceManager
+from docket.infra.evidence.store import ContentAddressedStore
 
 
 @pytest.fixture()

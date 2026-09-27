@@ -49,7 +49,7 @@ from sqlalchemy.orm import sessionmaker
 
 from docket.core.db.models import EvidenceVersion
 from docket.eval.review import DEFAULT_SAMPLE_SIZE, ReviewResult, bucket_sample, load_labels_yaml
-from docket.evidence.store import ContentAddressedStore
+from docket.infra.evidence.store import ContentAddressedStore
 from docket.parsing.formula_crop import crop_formula_region
 
 _ID_SANITIZE_RE = re.compile(r"[^A-Za-z0-9]+")

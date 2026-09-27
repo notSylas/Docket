@@ -21,8 +21,8 @@ from conftest import _write_docx
 from docket.core.config import Settings
 from docket.core.db.engine import get_session_factory
 from docket.core.db.models import Chunk, EvidenceVersion
-from docket.evidence.manager import EvidenceManager
-from docket.evidence.store import ContentAddressedStore
+from docket.infra.evidence.manager import EvidenceManager
+from docket.infra.evidence.store import ContentAddressedStore
 from docket.index.fts_index import FtsIndexWriter
 from docket.index.manager import IndexManager
 from docket.index.vector_index import LanceIndexWriter

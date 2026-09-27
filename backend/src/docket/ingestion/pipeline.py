@@ -122,7 +122,7 @@ from docket.core.db.models import (
     Source,
     SourceStatus,
 )
-from docket.evidence.manager import EvidenceManager
+from docket.infra.evidence.manager import EvidenceManager
 from docket.index.manager import IndexManager
 from docket.index.visual_index import LancePageIndexWriter
 from docket.inference.gateway import InferenceGateway
