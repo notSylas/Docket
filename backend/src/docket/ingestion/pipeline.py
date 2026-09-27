@@ -123,8 +123,8 @@ from docket.core.db.models import (
     SourceStatus,
 )
 from docket.infra.evidence.manager import EvidenceManager
-from docket.index.manager import IndexManager
-from docket.index.visual_index import LancePageIndexWriter
+from docket.infra.index.manager import IndexManager
+from docket.infra.index.visual_index import LancePageIndexWriter
 from docket.inference.gateway import InferenceGateway
 from docket.ingestion.chunk_writer import ChunkWriter
 from docket.ingestion.formula_transcriber import FormulaTranscriber

@@ -27,7 +27,7 @@ from typing import Sequence
 
 from sqlalchemy import Engine, bindparam, text
 
-from docket.index.base import ChunkRecord
+from docket.infra.index.base import ChunkRecord
 
 _NOT_IMPLEMENTED_MSG = (
     "FtsIndexWriter.{method}() is not implemented: the fts_chunks FTS5 table "

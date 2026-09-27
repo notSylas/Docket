@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from docket.index.visual_index import LancePageIndexWriter, PageRecord
+from docket.infra.index.visual_index import LancePageIndexWriter, PageRecord
 
 
 def _record(

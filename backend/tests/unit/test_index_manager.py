@@ -12,10 +12,10 @@ from pathlib import Path
 
 from sqlalchemy import Engine
 
-from docket.index.base import ChunkRecord
-from docket.index.fts_index import FtsIndexWriter
-from docket.index.manager import IndexManager
-from docket.index.vector_index import LanceIndexWriter
+from docket.infra.index.base import ChunkRecord
+from docket.infra.index.fts_index import FtsIndexWriter
+from docket.infra.index.manager import IndexManager
+from docket.infra.index.vector_index import LanceIndexWriter
 from docket.inference.gateway import FakeInferenceGateway
 
 

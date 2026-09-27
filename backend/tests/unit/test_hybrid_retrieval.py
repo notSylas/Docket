@@ -18,10 +18,10 @@ from docket.core.db.models import (
     SourceStatus,
     Workspace,
 )
-from docket.index.base import ChunkRecord
-from docket.index.fts_index import FtsIndexWriter
-from docket.index.vector_index import LanceIndexWriter
-from docket.index.visual_index import LancePageIndexWriter, PageRecord
+from docket.infra.index.base import ChunkRecord
+from docket.infra.index.fts_index import FtsIndexWriter
+from docket.infra.index.vector_index import LanceIndexWriter
+from docket.infra.index.visual_index import LancePageIndexWriter, PageRecord
 from docket.inference.gateway import FakeInferenceGateway
 from docket.retrieval.hybrid import (
     RankedChunk,

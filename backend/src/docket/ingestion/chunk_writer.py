@@ -21,7 +21,7 @@ from docket.core.db.models import (
     EvidenceUnit,
     EvidenceVersion,
 )
-from docket.index.base import ChunkRecord
+from docket.infra.index.base import ChunkRecord
 from docket.parsing.recipes import ChunkRecipe
 
 

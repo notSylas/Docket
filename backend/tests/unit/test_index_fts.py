@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import Engine
 
-from docket.index.base import ChunkRecord
-from docket.index.fts_index import FtsIndexWriter
+from docket.infra.index.base import ChunkRecord
+from docket.infra.index.fts_index import FtsIndexWriter
 
 
 def _record(chunk_id: str, text: str, source_id: str = "src_1") -> ChunkRecord:

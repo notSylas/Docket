@@ -21,10 +21,10 @@ from docket.core.db.engine import get_session_factory
 from docket.core.db.models import Chunk, EvidenceVersion
 from docket.infra.evidence.manager import EvidenceManager
 from docket.infra.evidence.store import ContentAddressedStore
-from docket.index.fts_index import FtsIndexWriter
-from docket.index.manager import IndexManager
-from docket.index.vector_index import LanceIndexWriter
-from docket.index.visual_index import LancePageIndexWriter
+from docket.infra.index.fts_index import FtsIndexWriter
+from docket.infra.index.manager import IndexManager
+from docket.infra.index.vector_index import LanceIndexWriter
+from docket.infra.index.visual_index import LancePageIndexWriter
 from docket.inference.gateway import FakeInferenceGateway
 from docket.ingestion.pipeline import IngestionPipeline
 from docket.ingestion.visual_indexer import VisualIndexer

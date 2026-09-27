@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Sequence
 
-from docket.index.base import ChunkRecord, IndexWriteStats, IndexWriter
+from docket.infra.index.base import ChunkRecord, IndexWriteStats, IndexWriter
 from docket.inference.gateway import InferenceGateway
 
 
