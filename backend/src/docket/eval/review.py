@@ -1,7 +1,7 @@
 """Shared human-labeling review harness: export -> label -> load -> score.
 
 `docket.eval.calibration` (compares a human's label against an automatic
-judge verdict, via Cohen's kappa) and `docket.parsing.formula_review` (pure
+judge verdict, via Cohen's kappa) and `docket.eval.formula_review` (pure
 human aggregation, no automatic verdict to compare against) independently
 implement the same export/label/load/score shape. This module holds exactly
 the parts that are genuinely identical between them -- a stratified,
@@ -129,7 +129,7 @@ def load_labels_yaml(
 @dataclass
 class ReviewResult:
     """Shared shape both `eval.calibration.CalibrationResult` and
-    `parsing.formula_review.FormulaReviewResult` build on: how many items
+    `eval.formula_review.FormulaReviewResult` build on: how many items
     got a human label, how many are still waiting, and what fraction the
     human marked correct. What "agreement" is measured against differs per
     caller (an automatic judge verdict for calibration; nothing, for pure

@@ -1,5 +1,5 @@
 """Unit tests for the shared human-labeling review harness
-(`docket.eval.review`) that `eval.calibration` and `parsing.formula_review`
+(`docket.eval.review`) that `eval.calibration` and `eval.formula_review`
 are both built on top of."""
 
 from __future__ import annotations

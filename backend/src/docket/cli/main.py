@@ -273,7 +273,7 @@ def formulas_export(
     seed: int = typer.Option(0, "--seed"),
 ) -> None:
     """Sample transcribed formula regions, crop them, and write a labels YAML to fill in."""
-    from docket.parsing.formula_review import FormulaReviewError, export_labels
+    from docket.eval.formula_review import FormulaReviewError, export_labels
 
     context = build_context()
     out_dir = out or context.settings.data_dir / "formula_review" / time.strftime("%Y%m%d-%H%M%S")
@@ -297,7 +297,7 @@ def formulas_score(
     labels: Path = typer.Option(..., "--labels", help="The filled-in labels YAML from `docket formulas export`."),
 ) -> None:
     """Aggregate agreement across your true/false labels; print every failure."""
-    from docket.parsing.formula_review import FormulaReviewError, format_review, score_labels
+    from docket.eval.formula_review import FormulaReviewError, format_review, score_labels
 
     try:
         result = score_labels(labels)

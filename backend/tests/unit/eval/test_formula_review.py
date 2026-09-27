@@ -1,4 +1,4 @@
-"""Tests for `docket.parsing.formula_review` -- Phase B checkpoint 2 of
+"""Tests for `docket.eval.formula_review` -- Phase B checkpoint 2 of
 "verified formula transcription": sampling already-stored (unverified) VLM
 transcriptions, re-cropping their exact source pixels for a human to compare
 against, and aggregating the human's true/false labels.
@@ -24,7 +24,7 @@ from sqlalchemy import Engine
 from docket.db.engine import get_session_factory
 from docket.db.models import EvidenceVersion
 from docket.evidence.store import ContentAddressedStore
-from docket.parsing.formula_review import (
+from docket.eval.formula_review import (
     FormulaReviewError,
     export_labels,
     load_labels,
@@ -301,7 +301,7 @@ def test_score_raises_when_nothing_labeled_yet(tmp_path: Path):
 
 
 def test_score_rejects_tampered_fingerprint(tmp_path: Path):
-    from docket.parsing.formula_review import _item_fingerprint
+    from docket.eval.formula_review import _item_fingerprint
 
     entry = {
         "id": "a", "source_document": "x.pdf", "page_no": 1, "crop_path": "crops/a.png",
