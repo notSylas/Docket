@@ -38,7 +38,7 @@ from docket.infra.inference.gateway import FakeInferenceGateway
 from docket.query.classifier import QueryMode
 from docket.query.prompts import ABSTENTION_PHRASE
 from docket.query.service import QueryService, _citations_from_agent_messages
-from docket.retrieval.resolver import EvidenceResolver, ResolvedEvidence
+from docket.infra.retrieval.resolver import EvidenceResolver, ResolvedEvidence
 
 CHUNK_TEXT = "Reciprocal Rank Fusion combines multiple ranked search results into one."
 

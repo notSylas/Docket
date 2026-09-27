@@ -44,7 +44,7 @@ from docket.infra.index.vector_index import LanceIndexWriter
 from docket.infra.inference.gateway import FakeInferenceGateway
 from docket.query.classifier import QueryMode
 from docket.query.service import QueryService
-from docket.retrieval.resolver import EvidenceResolver
+from docket.infra.retrieval.resolver import EvidenceResolver
 
 pytestmark = pytest.mark.integration
 

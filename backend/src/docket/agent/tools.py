@@ -28,8 +28,8 @@ from langchain_core.tools import BaseTool, tool
 from docket.core.config import settings
 from docket.infra.inference.gateway import InferenceGateway
 from docket.prompts.agent import READ_EVIDENCE_DESCRIPTION, SEARCH_KNOWLEDGE_DESCRIPTION
-from docket.retrieval.hybrid import hybrid_search
-from docket.retrieval.resolver import ChunkNotFoundError, EvidenceResolver
+from docket.infra.retrieval.hybrid import hybrid_search
+from docket.infra.retrieval.resolver import ChunkNotFoundError, EvidenceResolver
 
 
 def make_search_knowledge_tool(

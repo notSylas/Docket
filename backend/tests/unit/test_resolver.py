@@ -22,7 +22,7 @@ from docket.core.db.models import (
     SourceStatus,
     Workspace,
 )
-from docket.retrieval.resolver import ChunkNotFoundError, EvidenceResolver, ResolvedEvidence
+from docket.infra.retrieval.resolver import ChunkNotFoundError, EvidenceResolver, ResolvedEvidence
 
 
 @pytest.fixture()

@@ -46,7 +46,7 @@ from docket.infra.inference.gateway import OllamaGateway
 from docket.ingestion.pipeline import IngestionPipeline
 from docket.infra.parsing.docling_wrapper import DoclingParser
 from docket.infra.parsing.recipes import DEFAULT_SPLITTER, ChunkRecipe
-from docket.retrieval.resolver import EvidenceResolver
+from docket.infra.retrieval.resolver import EvidenceResolver
 from docket.sources.manager import SourceManager
 
 if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):

@@ -51,7 +51,7 @@ from docket.infra.inference.gateway import (
 from docket.query.classifier import QueryMode
 from docket.query.conversation import ConversationTurn
 from docket.query.service import QueryService
-from docket.retrieval.resolver import EvidenceResolver, ResolvedEvidence
+from docket.infra.retrieval.resolver import EvidenceResolver, ResolvedEvidence
 
 ProgressFn = Callable[[int, int, RunRecord], None]
 

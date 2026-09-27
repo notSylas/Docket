@@ -44,8 +44,8 @@ from docket.query.prompts import (
     SYSTEM_PROMPT,
     SYSTEM_PROMPT_WITH_HISTORY,
 )
-from docket.retrieval.hybrid import hybrid_search
-from docket.retrieval.resolver import ChunkNotFoundError, EvidenceResolver, ResolvedEvidence
+from docket.infra.retrieval.hybrid import hybrid_search
+from docket.infra.retrieval.resolver import ChunkNotFoundError, EvidenceResolver, ResolvedEvidence
 
 
 class Citation(BaseModel):

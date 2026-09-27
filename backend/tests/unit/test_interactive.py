@@ -13,7 +13,7 @@ from docket.infra.inference.gateway import InferenceUnavailableError
 from docket.ingestion.pipeline import FileIngestResult, IngestionJobResult, SourceNotFoundError
 from docket.query.classifier import QueryMode
 from docket.query.service import Citation, QueryResult
-from docket.retrieval.resolver import ChunkNotFoundError, ResolvedEvidence
+from docket.infra.retrieval.resolver import ChunkNotFoundError, ResolvedEvidence
 
 
 class FakeService:

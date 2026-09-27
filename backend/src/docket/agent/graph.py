@@ -69,7 +69,7 @@ from docket.agent.tools import make_read_evidence_tool, make_search_knowledge_to
 from docket.core.config import Settings, settings as default_settings
 from docket.infra.inference.gateway import InferenceGateway
 from docket.prompts.agent import missing_any_tool_message, missing_required_tool_message
-from docket.retrieval.resolver import EvidenceResolver
+from docket.infra.retrieval.resolver import EvidenceResolver
 
 
 def _has_successful_call(messages: list, tool_name: str) -> bool:

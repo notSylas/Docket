@@ -47,7 +47,7 @@ from docket.infra.index.base import ChunkRecord
 from docket.infra.index.fts_index import FtsIndexWriter
 from docket.infra.index.vector_index import LanceIndexWriter
 from docket.infra.inference.gateway import FakeInferenceGateway
-from docket.retrieval.resolver import EvidenceResolver
+from docket.infra.retrieval.resolver import EvidenceResolver
 
 pytestmark = pytest.mark.integration
 

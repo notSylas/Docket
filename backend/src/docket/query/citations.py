@@ -15,7 +15,7 @@ import re
 from dataclasses import dataclass
 
 from docket.prompts.shared import ABSTENTION_PHRASE
-from docket.retrieval.resolver import ResolvedEvidence
+from docket.infra.retrieval.resolver import ResolvedEvidence
 
 
 def build_context_block(resolved_chunks: list[ResolvedEvidence]) -> str:

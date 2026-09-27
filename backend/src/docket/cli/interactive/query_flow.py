@@ -14,7 +14,7 @@ from typing import Any
 
 from docket.query.classifier import QueryMode
 from docket.query.conversation import ConversationTurn
-from docket.retrieval.resolver import ChunkNotFoundError
+from docket.infra.retrieval.resolver import ChunkNotFoundError
 
 from .render import number_citations, render
 

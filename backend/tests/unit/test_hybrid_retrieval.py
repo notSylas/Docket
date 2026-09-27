@@ -23,7 +23,7 @@ from docket.infra.index.fts_index import FtsIndexWriter
 from docket.infra.index.vector_index import LanceIndexWriter
 from docket.infra.index.visual_index import LancePageIndexWriter, PageRecord
 from docket.infra.inference.gateway import FakeInferenceGateway
-from docket.retrieval.hybrid import (
+from docket.infra.retrieval.hybrid import (
     RankedChunk,
     _filter_active_and_current_versions,
     _sanitize_fts_query,
@@ -1106,7 +1106,7 @@ def test_hybrid_search_default_page_table_none_never_calls_visual_search(
     def _boom(*args, **kwargs):
         raise AssertionError("visual_search must not be called when page_table is None")
 
-    monkeypatch.setattr("docket.retrieval.hybrid.visual_search", _boom)
+    monkeypatch.setattr("docket.infra.retrieval.hybrid.visual_search", _boom)
 
     query = _DOCS[2][1]
     fused_omitted = hybrid_search(engine=migrated_sqlite_engine, table=table, gateway=gateway, query=query, top_k=3)

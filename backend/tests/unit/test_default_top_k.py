@@ -13,7 +13,7 @@ from docket.agent import tools as agent_tools
 from docket.core.config import Settings, settings
 from docket.eval import runner as eval_runner
 from docket.query import service as query_service
-from docket.retrieval import hybrid as retrieval_hybrid
+from docket.infra.retrieval import hybrid as retrieval_hybrid
 
 
 def test_default_top_k_setting_defaults_to_eight():
