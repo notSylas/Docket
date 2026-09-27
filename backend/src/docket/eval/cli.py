@@ -56,12 +56,17 @@ def run_cmd(
     out: Path | None = typer.Option(None, "--out", help="Output JSONL (default <data_dir>/eval/runs-<time>.jsonl)."),
     model: str = typer.Option(None, "--model", help="Generation model (default: settings gen_model)."),
     ids: list[str] = typer.Option(None, "--id", help="Only these question ids (repeatable)."),
+    mode: str = typer.Option("auto", "--mode", help="auto | fast | agent; use forced modes for paired routing comparisons."),
+    manifest: Path | None = typer.Option(None, "--manifest", help="Frozen benchmark manifest; verify inputs before running."),
 ) -> None:
     """Ingest the corpus into a temp dir and record answers for the gold questions."""
     from docket.eval.report import build_report, format_report
     from docket.eval.runner import EvalSetupError, run_eval
     from docket.eval.schema import Split, load_gold_set
+    from docket.query.classifier import QueryMode
 
+    if mode not in ("auto", "fast", "agent"):
+        raise _fail("--mode must be auto, fast or agent")
     if split not in ("dev", "test", "all"):
         raise _fail("--split must be dev, test or all")
     try:
@@ -82,6 +87,8 @@ def run_cmd(
             repeats=repeats,
             split=None if split == "all" else Split(split),
             ids=ids or None,
+            mode=None if mode == "auto" else QueryMode(mode),
+            manifest_path=manifest,
             progress=progress,
         )
     except (GoldSetError, EvalSetupError) as exc:
@@ -99,7 +106,7 @@ def judge_cmd(
     cross_check: bool = typer.Option(False, "--cross-check", help="Also judge with a second model and record disagreements."),
     cross_model: str = typer.Option(None, "--cross-model", help="Cross-check model (default gemma3:12b)."),
 ) -> None:
-    """Resolve the runs the deterministic checks could not decide, with an LLM judge."""
+    """Judge paraphrased facts and every candidate answer's citation support."""
     from docket.eval.judge import (
         DEFAULT_CROSS_CHECK_MODEL,
         DEFAULT_JUDGE_MODEL,
@@ -142,19 +149,33 @@ def report_cmd(
     runs: Path = typer.Option(..., "--runs"),
     judged: Path | None = typer.Option(None, "--judged", help="Judged JSONL; replaces the strict/optimistic bracket."),
     as_json: bool = typer.Option(False, "--json", help="Machine-readable output."),
+    manifest: Path | None = typer.Option(None, "--manifest", help="Frozen input manifest for milestone acceptance."),
+    labels: Path | None = typer.Option(None, "--labels", help="Human calibration labels."),
+    calibration_judged: Path | None = typer.Option(None, "--calibration-judged", help="Judged dev runs used for calibration (defaults to --judged)."),
+    require_milestone: bool = typer.Option(False, "--require-milestone", help="Exit 1 unless the accuracy milestone passes."),
 ) -> None:
     """Print accuracy (with Wilson intervals), retrieval and failure breakdowns."""
     from docket.eval.judge import load_judged
     from docket.eval.report import build_report, format_report, report_to_dict
     from docket.eval.schema import load_gold_set, load_records
 
+    from docket.eval.benchmark import load_benchmark
+    from docket.eval.calibration import score_labels
     try:
+        judgments = load_judged(judged) if judged else None
+        calibration_judgments = load_judged(calibration_judged) if calibration_judged else judgments
+        if labels is not None and calibration_judgments is None:
+            raise GoldSetError("--labels requires --judged")
         report = build_report(
-            load_gold_set(gold), load_records(runs), load_judged(judged) if judged else None
+            load_gold_set(gold), load_records(runs), judgments,
+            benchmark=load_benchmark(manifest) if manifest else None,
+            calibration=score_labels(labels, calibration_judgments) if labels else None,
         )
     except GoldSetError as exc:
         raise _fail(str(exc)) from exc
     typer.echo(json.dumps(report_to_dict(report), indent=2) if as_json else format_report(report))
+    if require_milestone and not report.milestone["passed"]:
+        raise typer.Exit(code=1)
 
 
 @eval_app.command("compare")
@@ -274,3 +295,19 @@ def calibrate_score_cmd(
     except GoldSetError as exc:
         raise _fail(str(exc)) from exc
     typer.echo(format_calibration(result))
+
+
+@eval_app.command("freeze")
+def freeze_cmd(
+    corpus: Path = typer.Option(..., "--corpus"),
+    gold: Path = typer.Option(..., "--gold"),
+    out: Path = typer.Option(..., "--out", help="New manifest path; never overwrites an existing freeze."),
+) -> None:
+    """Freeze reviewed gold questions and the corpus bytes for acceptance runs."""
+    from docket.eval.benchmark import freeze_benchmark
+    from docket.eval.schema import load_gold_set
+    try:
+        manifest = freeze_benchmark(load_gold_set(gold), corpus, out)
+    except (GoldSetError, OSError) as exc:
+        raise _fail(str(exc)) from exc
+    typer.echo(f"Froze {len(manifest.files)} documents to {out}")

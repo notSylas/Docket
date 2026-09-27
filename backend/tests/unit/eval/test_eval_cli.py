@@ -143,3 +143,33 @@ def test_draft_then_review_via_cli(monkeypatch, fake_env, tmp_path):
     # Re-drafting into the same file dedupes against what is there.
     result = runner.invoke(app, ["eval", "draft", "--corpus", str(corpus), "--out", str(out), "--count", "2"])
     assert "0 drafts written" in result.output and "duplicate" in result.output
+
+
+def test_frozen_run_mode_and_acceptance_cli(fake_env, monkeypatch):
+    corpus = fake_env / "corpus"
+    corpus.mkdir()
+    source = corpus / "handbook.pdf"
+    source.write_text("Employees receive 25 days of paid vacation per year.")
+    gold = fake_env / "gold.yaml"
+    gold.write_text(yaml.safe_dump({"version": 1, "population": "real_user_documents", "questions": [{
+        "id": "vacation", "type": "single_fact", "question": "How many days of paid vacation?",
+        "answerable": True, "must_contain": ["25"], "gold_spans": ["25 days of paid vacation per year"],
+        "source_documents": ["handbook.pdf"], "formula_dependent": False, "split": "test", "reviewed": True,
+    }]}))
+    manifest = fake_env / "benchmark.json"
+    result = runner.invoke(app, ["eval", "freeze", "--corpus", str(corpus), "--gold", str(gold), "--out", str(manifest)])
+    assert result.exit_code == 0, result.output
+    runs = fake_env / "runs.jsonl"
+    args = ["eval", "run", "--corpus", str(corpus), "--gold", str(gold), "--split", "test",
+            "--mode", "fast", "--manifest", str(manifest), "--out", str(runs)]
+    result = runner.invoke(app, args)
+    assert result.exit_code == 0, result.output
+    records = lines_of(runs)
+    assert len(records) == 3 and all(r["benchmark_fingerprint"] for r in records)
+    assert all(r["mode"] == "fast" for r in records)
+    result = runner.invoke(app, ["eval", "report", "--gold", str(gold), "--runs", str(runs),
+                                 "--manifest", str(manifest), "--require-milestone"])
+    assert result.exit_code == 1 and "NOT MET" in result.output
+    source.write_text("Changed document")
+    result = runner.invoke(app, args)
+    assert result.exit_code == 1 and "corpus files changed" in result.output

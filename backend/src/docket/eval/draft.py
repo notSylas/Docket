@@ -192,6 +192,7 @@ def build_draft(chunk: ChunkLike, raw: dict) -> tuple[Question | None, str]:
             gold_spans=[quote],
             reviewed=False,
             origin=origin,
+            source_documents=[chunk.source_document] if getattr(chunk, "source_document", None) else [],
         )
     except ValidationError:
         return None, "invalid"
@@ -271,7 +272,6 @@ def draft_questions(
 
 def question_to_dict(question: Question) -> dict:
     data = question.model_dump(mode="json", exclude_defaults=True, exclude_none=True)
-    data.pop("split", None)  # derived from the id when absent
     data["reviewed"] = question.reviewed
     ordered = {k: data[k] for k in ("id", "type", "question", "answerable") if k in data}
     ordered.update({k: v for k, v in data.items() if k not in ordered})
@@ -281,8 +281,9 @@ def question_to_dict(question: Question) -> dict:
 def save_gold_file(path: Path, questions: Sequence[Question]) -> None:
     """Atomically write a gold YAML (tmp file + rename)."""
     path = Path(path)
+    population = load_gold_set(path).population if path.exists() else "unspecified"
     body = yaml.safe_dump(
-        {"version": 1, "questions": [question_to_dict(q) for q in questions]},
+        {"version": 1, "population": population, "questions": [question_to_dict(q) for q in questions]},
         sort_keys=False,
         allow_unicode=True,
         width=100,
@@ -360,6 +361,11 @@ def _edit(question: Question, reader: Reader, out: Callable[[str], None]) -> Que
                 reviewed=True,
                 origin=question.origin,
                 split=question.split,
+                source_documents=question.source_documents,
+                formula_dependent=question.formula_dependent,
+                history=question.history,
+                setup=question.setup,
+                must_not_contain=question.must_not_contain,
             )
             return edited
         except (ValueError, ValidationError) as exc:

@@ -263,10 +263,16 @@ def score_run(question: Question, record: RunRecord) -> RunScore:
         verdict=Verdict.FAIL,
         abstained=is_abstention(record.answer),
         span_retrieved=span_hits(question.gold_spans, chunk_texts),
-        span_in_context=fact_in_context(question.gold_spans, record.prompt),
-        truncated=looks_truncated(record.system, record.prompt, record.prompt_eval_count),
+        span_in_context=(span_hits(question.gold_spans, chunk_texts) if record.mode == "agent"
+                         else fact_in_context(question.gold_spans, record.prompt)),
+        # Agent inputs use a chat template and tool schemas; a character/token
+        # heuristic on their JSON serialization would falsely signal truncation.
+        truncated=record.mode != "agent" and looks_truncated(record.system, record.prompt, record.prompt_eval_count),
     )
-    score.leaked = question.type.value == "revoked" and any(score.span_retrieved)
+    score.leaked = question.type.value == "revoked" and (
+        any(c.source_id in record.revoked_source_ids for c in record.retrieved)
+        or any(score.span_retrieved)
+    )
 
     if record.error:
         score.reasons.append(f"run error: {record.error}")

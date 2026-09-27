@@ -21,14 +21,12 @@ from pathlib import Path
 import yaml
 
 from docket.eval.judge import JudgedRun, JudgeVerdict, judged_index
-from docket.eval.schema import GoldSet, GoldSetError, Question, RunRecord
-from docket.eval.scoring import strip_citations
+from docket.eval.schema import GoldSet, GoldSetError, Question, RunRecord, fingerprint
 from docket.eval.stats import cohen_kappa
 
 KAPPA_TARGET = 0.7
 DEFAULT_SAMPLE_SIZE = 30
 _STRATA = ("judge_pass", "judge_fail", "judge_doubt", "det_pass", "det_fail")
-_MAX_CITED_CHARS = 600
 
 
 def _stratum(run: JudgedRun) -> str:
@@ -100,8 +98,9 @@ def export_labels(
                     "facts": question.must_contain + question.enumeration,
                     "quotes": question.gold_spans,
                 },
-                "answer": strip_citations(record.answer).strip(),
-                "cited_evidence": [c.text[:_MAX_CITED_CHARS] for c in record.retrieved if c.chunk_id in cited],
+                "answer": record.answer.strip(),
+                "record_fingerprint": fingerprint(record),
+                "cited_evidence": [f"{c.citation_label}\n{c.text}" for c in record.retrieved if c.chunk_id in cited],
                 "correct": None,
                 "notes": "",
             }
@@ -128,10 +127,14 @@ class CalibrationResult:
     judge_agreement: float | None
     judge_kappa: float | None  # only runs the judge resolved
     disagreements: list[str] = field(default_factory=list)
+    distinct_judge_questions: int = 0
+    verified_judge_items: int = 0
+    judge_label_classes: int = 0
+    judge_models: list[str] = field(default_factory=list)
 
     @property
     def meets_target(self) -> bool:
-        return self.judge_kappa is not None and self.judge_kappa >= KAPPA_TARGET
+        return self.judge_kappa is not None and self.judge_kappa >= KAPPA_TARGET and self.judge_label_classes >= 2
 
 
 def _label(verdict: JudgeVerdict) -> str:
@@ -151,23 +154,29 @@ def load_labels(path: Path) -> list[dict]:
     items = raw.get("items") if isinstance(raw, dict) else None
     if not isinstance(items, list):
         raise GoldSetError(f"labels file {path} must have an 'items' list")
+    seen: set[str] = set()
     for item in items:
         if not isinstance(item, dict) or "id" not in item:
             raise GoldSetError(f"labels file {path}: every item needs an id")
-        if item.get("correct") not in (True, False, None):
+        if item["id"] in seen:
+            raise GoldSetError(f"duplicate calibration label: {item['id']}")
+        seen.add(item["id"])
+        if item.get("correct") is not None and not isinstance(item["correct"], bool):
             raise GoldSetError(f"item {item['id']}: 'correct' must be true or false, got {item['correct']!r}")
     return items
 
 
 def score_labels(labels_path: Path, judged: list[JudgedRun]) -> CalibrationResult:
     """Cohen's kappa between the automatic verdicts and the user's labels."""
-    index = {item_id(j): j for j in judged}
+    index = {item_id(j): j for j in judged_index(judged).values()}
     all_judge: list[str] = []
     all_user: list[str] = []
     j_judge: list[str] = []
     j_user: list[str] = []
     disagreements: list[str] = []
-    unlabeled = 0
+    unlabeled = verified_judge_items = 0
+    judge_questions: set[str] = set()
+    judge_models: set[str] = set()
     for item in load_labels(labels_path):
         if item.get("correct") is None:
             unlabeled += 1
@@ -175,11 +184,16 @@ def score_labels(labels_path: Path, judged: list[JudgedRun]) -> CalibrationResul
         run = index.get(item["id"])
         if run is None:
             raise GoldSetError(f"label {item['id']!r} has no matching run in the judged file")
+        if run.record_fingerprint is not None and item.get("record_fingerprint") != run.record_fingerprint:
+            raise GoldSetError(f"label {item['id']!r} belongs to a different or unbound run")
         user = "pass" if item["correct"] else "fail"
         auto = _label(run.verdict)
         all_judge.append(auto)
         all_user.append(user)
         if run.source == "judge":
+            judge_questions.add(run.question_id)
+            judge_models.update(run.judge_models)
+            verified_judge_items += run.record_fingerprint is not None
             j_judge.append(auto)
             j_user.append(user)
         if auto != user:
@@ -199,6 +213,10 @@ def score_labels(labels_path: Path, judged: list[JudgedRun]) -> CalibrationResul
         judge_agreement=judge_agreement,
         judge_kappa=judge_kappa,
         disagreements=disagreements,
+        distinct_judge_questions=len(judge_questions),
+        verified_judge_items=verified_judge_items,
+        judge_label_classes=len(set(j_user)),
+        judge_models=sorted(judge_models),
     )
 
 

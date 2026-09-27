@@ -175,3 +175,38 @@ def test_ingest_with_nothing_indexed_raises(tmp_path):
     with EvalRunner(tmp_path, gateway=ScriptedGateway({}), parser=PlainTextParser()) as runner:
         with pytest.raises(EvalSetupError, match="nothing was indexed"):
             runner.ingest()
+
+
+def test_agent_run_records_tool_trace_and_token_metadata(gold, fixtures_dir):
+    from langchain_core.messages import AIMessage, ToolMessage
+    import json
+
+    class FakeAgent:
+        def __init__(self, messages):
+            self.messages = messages
+
+        def invoke(self, state, config=None):
+            return {"messages": state["messages"] + self.messages,
+                    "iterations": 2, "tool_calls_made": 1, "blocked_calls": []}
+
+    with EvalRunner(fixtures_dir / "corpus", gateway=ScriptedGateway({}),
+                    parser=PlainTextParser(), mode=QueryMode.AGENT) as runner:
+        runner.ingest()
+        chunk = next(c for c in runner.corpus_chunks() if "25 days of paid vacation" in c.text)
+        evidence = runner._context.resolver.resolve(chunk.chunk_id)
+        runner._service._agent = FakeAgent([
+            AIMessage(content="", tool_calls=[{"name": "read_evidence",
+                "args": {"chunk_id": chunk.chunk_id}, "id": "read_1"}]),
+            ToolMessage(content=json.dumps({"chunk_id": chunk.chunk_id,
+                "text": evidence.text, "citation_label": evidence.citation_label}),
+                tool_call_id="read_1"),
+            AIMessage(content=f"Employees get 25 days. {evidence.citation_label}",
+                response_metadata={"prompt_eval_count": 321, "eval_count": 24}),
+        ])
+        record = runner.run_once(gold.by_id()["vacation-days"], 0)
+
+    assert record.mode == "agent" and record.citations
+    assert [row["role"] for row in record.agent_trace][-3:] == ["ai", "tool", "ai"]
+    assert record.prompt_eval_count == 321 and record.eval_count == 24
+    assert "25 days of paid vacation" in record.prompt
+    assert record.agent_trace[-1]["response_metadata"]["eval_count"] == 24

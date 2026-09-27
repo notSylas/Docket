@@ -11,12 +11,17 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from docket.eval.judge import JudgedRun, judged_index, verdict_of
-from docket.eval.schema import GoldSet, Question, RunRecord
+from docket.eval.schema import GoldSet, GoldSetError, Question, RunRecord, fingerprint, validate_run_keys
 from docket.eval.scoring import RunScore, Verdict, score_run
 from docket.eval.stats import pass_all, pass_majority, wilson_interval
+
+if TYPE_CHECKING:
+    from docket.eval.benchmark import FrozenBenchmark
+    from docket.eval.calibration import CalibrationResult
+
 
 FAILURE_CATEGORIES = (
     "parse",
@@ -68,6 +73,9 @@ class Report:
     overall: Slice
     by_type: dict[str, Slice]
     by_split: dict[str, Slice]
+    by_document: dict[str, Slice]
+    by_formula: dict[str, Slice]
+    milestone: dict[str, Any]
     recall_k: int
     recall_any: Rate  # runs where >=1 gold span was retrieved
     recall_all: Rate  # runs where every gold span was retrieved
@@ -79,7 +87,7 @@ class Report:
     revoked_answer_leaks: int
     failures: dict[str, int] = field(default_factory=dict)
     failures_by_type: dict[str, dict[str, int]] = field(default_factory=dict)
-    judged_runs: int = 0  # NEEDS_JUDGE runs resolved by the judge
+    judged_runs: int = 0  # semantic fact/support checks applied
     judge_disagreements: int = 0  # ...where the cross-check judge disagreed
 
 
@@ -136,11 +144,11 @@ def _slice(
 def resolve_scores(
     gold: GoldSet, records: list[RunRecord], judged: list[JudgedRun] | None = None
 ) -> list[tuple[Question, RunRecord, RunScore]]:
-    """Score every record; where the deterministic verdict is NEEDS_JUDGE and a
-    judged run exists, the judge's verdict replaces it (a judge doubt stays
-    NEEDS_JUDGE)."""
+    """Apply matching judgments to candidate passes; deterministic failures stand."""
+    validate_run_keys(records)
     questions = gold.by_id()
     index = judged_index(judged) if judged else {}
+    gold_digest = fingerprint(gold)
     resolved: list[tuple[Question, RunRecord, RunScore]] = []
     for record in records:
         question = questions.get(record.question_id)
@@ -148,17 +156,26 @@ def resolve_scores(
             continue  # record for a question no longer in the gold set
         score = score_run(question, record)
         run = index.get((record.question_id, record.repeat))
-        if run is not None and run.source == "judge" and score.verdict is Verdict.NEEDS_JUDGE:
+        if run is not None:
+            if run.record_fingerprint is not None and run.record_fingerprint != fingerprint(record):
+                raise GoldSetError(f"judged result does not match run {record.question_id}#{record.repeat}")
+            if run.gold_fingerprint is not None and run.gold_fingerprint != gold_digest:
+                raise GoldSetError("judged results were produced against a different gold set")
+        if run is not None and run.source == "judge" and score.verdict is not Verdict.FAIL:
             score.verdict = verdict_of(run)
             score.reasons.append(f"judge verdict: {run.verdict.value}")
             score.judged = True
             score.judge_disagreement = run.disagreement
+            if any(c.kind == "support" and any(v.supported is False for v in c.verdicts.values())
+                   for c in run.claims) and score.verdict is Verdict.FAIL:
+                score.citation_ok = False
         resolved.append((question, record, score))
     return resolved
 
 
 def build_report(
-    gold: GoldSet, records: list[RunRecord], judged: list[JudgedRun] | None = None
+    gold: GoldSet, records: list[RunRecord], judged: list[JudgedRun] | None = None,
+    *, benchmark: FrozenBenchmark | None = None, calibration: CalibrationResult | None = None,
 ) -> Report:
     questions = gold.by_id()
     scores: dict[str, list[RunScore]] = defaultdict(list)
@@ -177,6 +194,75 @@ def build_report(
 
     by_type = {k: _slice(v, scores) for k, v in group(lambda q: q.type.value).items()}
     by_split = {k: _slice(v, scores) for k, v in group(lambda q: q.split.value).items()}
+    document_groups: dict[str, list[Question]] = defaultdict(list)
+    for q in scored_questions:
+        for document in q.source_documents or ["unattributed"]:
+            document_groups[document].append(q)
+    by_document = {k: _slice(v, scores) for k, v in sorted(document_groups.items())}
+    by_formula = {
+        k: _slice(v, scores)
+        for k, v in group(lambda q: "unlabeled" if q.formula_dependent is None else "formula_dependent" if q.formula_dependent else "not_formula_dependent").items()
+    }
+
+    test_questions = [q for q in gold.questions if q.split.value == "test"]
+    test_rate = by_split.get("test", _slice([], scores)).strict
+    reasons: list[str] = []
+    if gold.population != "real_user_documents":
+        reasons.append("population is not real_user_documents")
+    test_ids = {q.id for q in test_questions}
+    test_records = [r for r in records if r.question_id in test_ids]
+    if not test_questions or any(
+        {r.repeat for r in test_records if r.question_id == q.id} != {0, 1, 2}
+        for q in test_questions
+    ):
+        reasons.append("test questions need exactly three distinct repeats (0, 1, 2)")
+    if any(q.formula_dependent is None for q in test_questions):
+        reasons.append("test questions need reviewed formula-dependence labels")
+    if any(not q.reviewed for q in test_questions):
+        reasons.append("all test questions must be reviewed")
+    if any(q.answerable and not q.source_documents for q in test_questions):
+        reasons.append("answerable test questions need source_documents")
+    index = judged_index(judged or [])
+    if any((r.question_id, r.repeat) not in index for r in test_records) or judged is None:
+        reasons.append("every test run needs a matching judged result")
+    gold_digest = fingerprint(gold)
+    if any(r.gold_fingerprint != gold_digest for r in test_records):
+        reasons.append("test runs are not bound to this gold set")
+    if any(
+        (j := index.get((r.question_id, r.repeat))) is not None
+        and (j.record_fingerprint != fingerprint(r) or j.gold_fingerprint != gold_digest)
+        for r in test_records
+    ):
+        reasons.append("test judgments need matching run and gold fingerprints")
+    if any(
+        q.id in test_ids and q.answerable and s.verdict is Verdict.PASS
+        and not (index.get((r.question_id, r.repeat)) and index[(r.question_id, r.repeat)].support_checked)
+        for q, r, s in pairs
+    ):
+        reasons.append("passing test answers need semantic citation support checks")
+    if benchmark is None:
+        reasons.append("a frozen benchmark manifest is required")
+    elif benchmark.gold_fingerprint != gold_digest or any(
+        r.benchmark_fingerprint != fingerprint(benchmark) for r in test_records
+    ):
+        reasons.append("test runs do not match the frozen benchmark")
+    if (calibration is None or calibration.distinct_judge_questions < 30
+            or calibration.verified_judge_items != calibration.judge_items or not calibration.meets_target):
+        reasons.append("judge calibration needs 30 distinct, bound judge items, pass/fail labels, and kappa >= 0.7")
+    used_judges = {name for q, r, _ in pairs if q.id in test_ids
+                   for j in [index.get((r.question_id, r.repeat))] if j is not None
+                   for name in j.judge_models}
+    if calibration is not None and (not used_judges or used_judges != set(calibration.judge_models)):
+        reasons.append("calibration and test judgments must use the same judge models")
+    if not any(q.type.value == "revoked" for q in test_questions):
+        reasons.append("the test split needs revoked-source cases")
+    if not any(q.type.value == "out_of_corpus" for q in test_questions):
+        reasons.append("the test split needs out-of-corpus cases")
+    configs = {fingerprint(r.configuration) for r in test_records}
+    if len(configs) > 1 or any(not r.configuration for r in test_records):
+        reasons.append("test runs need one recorded runtime configuration")
+    if test_rate.lo < 0.90:
+        reasons.append("test accuracy 95% lower bound is below 90%")
 
     # Retrieval / context metrics: answerable runs (revoked and out-of-corpus
     # questions have no evidence to retrieve), only where gold spans exist.
@@ -201,12 +287,17 @@ def build_report(
         row[category] += 1
 
     revoked = [(q, r, s) for q, r, s in pairs if q.type.value == "revoked" and not r.error]
+    if any(s.leaked or not s.abstained for _, _, s in revoked):
+        reasons.append("revoked-source evidence or answer leak")
 
     return Report(
         repeats=max((len(v) for v in scores.values()), default=0),
         overall=_slice(scored_questions, scores),
         by_type=by_type,
         by_split=by_split,
+        by_document=by_document,
+        by_formula=by_formula,
+        milestone={"passed": not reasons, "test_rate": asdict(test_rate), "reasons": reasons},
         recall_k=max((len(r.retrieved) for r in records), default=0),
         recall_any=Rate.of(recall_any, len(span_runs)),
         recall_all=Rate.of(recall_all, len(span_runs)),
@@ -263,6 +354,13 @@ def format_report(report: Report) -> str:
         *_slice_lines("By type:", report.by_type),
         "",
         *_slice_lines("By split:", report.by_split),
+        "",
+        *_slice_lines("By document:", report.by_document),
+        "",
+        *_slice_lines("Formula dependence:", report.by_formula),
+        "",
+        "Milestone: " + ("PASS" if report.milestone["passed"] else "NOT MET"),
+        *(f"  {reason}" for reason in report.milestone["reasons"]),
         "",
         f"Retrieval recall@{report.recall_k} (any span)  {report.recall_any.fmt()}",
         f"Retrieval recall@{report.recall_k} (all spans) {report.recall_all.fmt()}",

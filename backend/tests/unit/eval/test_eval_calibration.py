@@ -53,7 +53,7 @@ def test_export_hides_verdicts_and_roundtrips_kappa(make_record, tmp_path):
     data = yaml.safe_load(text)
     items = data["items"]
     assert all(it["correct"] is None for it in items)
-    assert items[0]["gold"]["quotes"] == [SPAN] and "[f #c0]" not in items[0]["answer"]
+    assert items[0]["gold"]["quotes"] == [SPAN] and "[f #c0]" in items[0]["answer"]
 
     with pytest.raises(GoldSetError, match="no labeled items"):
         score_labels(path, judged)

@@ -24,6 +24,7 @@ question id, so adding questions never reshuffles existing ones.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from enum import Enum
 from pathlib import Path
@@ -106,6 +107,8 @@ class Question(BaseModel):
     reviewed: bool = False
     split: Split | None = None
     origin: str | None = None  # where a drafted question came from (informational)
+    source_documents: list[str] = Field(default_factory=list)
+    formula_dependent: bool | None = None  # None means not reviewed for formula dependence
 
     @model_validator(mode="after")
     def _validate(self) -> Question:
@@ -143,7 +146,7 @@ class Question(BaseModel):
             raise ValueError("multi_doc questions need at least two gold_spans")
 
         if self.split is None:
-            self.split = default_split(self.id)
+            self.split = default_split(self.source_documents[0] if len(self.source_documents) == 1 else self.id)
         return self
 
 
@@ -151,15 +154,21 @@ class GoldSet(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     version: int = 1
+    population: str = "unspecified"  # set to real_user_documents for milestone runs
     questions: list[Question]
 
     @model_validator(mode="after")
     def _unique_ids(self) -> GoldSet:
         seen: set[str] = set()
+        document_splits: dict[str, Split] = {}
         for question in self.questions:
             if question.id in seen:
                 raise ValueError(f"duplicate question id: {question.id!r}")
             seen.add(question.id)
+            for document in question.source_documents:
+                if document in document_splits and document_splits[document] != question.split:
+                    raise ValueError(f"source document {document!r} appears in both dev and test")
+                document_splits[document] = question.split
         return self
 
     def by_id(self) -> dict[str, Question]:
@@ -216,6 +225,8 @@ class RecordedCitation(BaseModel):
 
 
 class RecordedChunk(BaseModel):
+    source_id: str = ""
+    formula_regions: list[dict[str, Any]] = Field(default_factory=list)
     chunk_id: str
     text: str
     citation_label: str
@@ -226,7 +237,7 @@ class RunRecord(BaseModel):
     """Everything captured for one (question, repeat) run; one JSONL line."""
 
     question_id: str
-    repeat: int
+    repeat: int = Field(ge=0)
     answer: str = ""
     abstained: bool = False
     citations: list[RecordedCitation] = Field(default_factory=list)
@@ -236,6 +247,13 @@ class RunRecord(BaseModel):
     system: str | None = None  # exact system prompt sent (None if generation never ran)
     prompt: str | None = None  # exact user prompt sent
     prompt_eval_count: int | None = None  # tokens Ollama actually evaluated, if known
+    eval_count: int | None = None  # generated tokens, if known
+    agent_trace: list[dict[str, Any]] = Field(default_factory=list)
+    model_calls: list[dict[str, Any]] = Field(default_factory=list)
+    gold_fingerprint: str | None = None
+    benchmark_fingerprint: str | None = None
+    configuration: dict[str, Any] = Field(default_factory=dict)
+    revoked_source_ids: list[str] = Field(default_factory=list)
     latency_s: float = 0.0
     # Per gold span: does it appear in any indexed chunk of the corpus? Lets the
     # report tell a parse/chunk failure from a retrieval failure.
@@ -253,4 +271,21 @@ def load_records(path: str | Path) -> list[RunRecord]:
                 records.append(RunRecord.model_validate_json(line))
             except ValidationError as exc:
                 raise GoldSetError(f"{path}:{line_no}: bad run record: {exc}") from exc
+    validate_run_keys(records)
     return records
+
+
+def fingerprint(value: BaseModel | dict) -> str:
+    """Stable digest binding evaluation artifacts to the exact inputs scored."""
+    payload = value.model_dump(mode="json") if isinstance(value, BaseModel) else value
+    encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def validate_run_keys(records: list[RunRecord]) -> None:
+    seen: set[tuple[str, int]] = set()
+    for record in records:
+        key = (record.question_id, record.repeat)
+        if key in seen:
+            raise GoldSetError(f"duplicate run {record.question_id}#{record.repeat}; compare mode files separately")
+        seen.add(key)

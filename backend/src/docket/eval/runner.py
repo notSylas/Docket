@@ -20,7 +20,7 @@ import shutil
 import tempfile
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -31,14 +31,16 @@ from sqlalchemy.orm import sessionmaker
 from docket.cli.context import AppContext, _ensure_schema
 from docket.config import Settings, settings
 from docket.db.engine import get_engine, get_session_factory
-from docket.db.models import Chunk, Source, SourceStatus
+from docket.db.models import Chunk, EvidenceVersion, Source, SourceStatus
 from docket.eval.schema import (
     GoldSet,
+    GoldSetError,
     Question,
     RecordedChunk,
     RecordedCitation,
     RunRecord,
     Split,
+    fingerprint,
 )
 from docket.eval.scoring import normalize_text
 from docket.inference.gateway import (
@@ -97,6 +99,7 @@ class GenerateCall:
     response: str
     latency_s: float
     prompt_eval_count: int | None
+    eval_count: int | None
 
 
 class RecordingGateway:
@@ -115,7 +118,7 @@ class RecordingGateway:
         latency = time.perf_counter() - start
         meta = getattr(self.inner, "last_generate_meta", None) or {}
         self.calls.append(
-            GenerateCall(system, prompt, response, latency, meta.get("prompt_eval_count"))
+            GenerateCall(system, prompt, response, latency, meta.get("prompt_eval_count"), meta.get("eval_count"))
         )
         return response
 
@@ -149,7 +152,8 @@ class _EvalContext(AppContext):
     so no environment variable or real user data is involved."""
 
     def __init__(self, data_dir: Path, gateway: InferenceGateway, parser: Any | None):
-        self.settings = Settings(data_dir=data_dir)
+        inner = getattr(gateway, "inner", gateway)
+        self.settings = Settings(data_dir=data_dir, gen_model=getattr(inner, "gen_model", settings.gen_model))
         self.settings.ensure_data_dirs()
         _ensure_schema(self.settings.sqlite_path)
         self.engine = get_engine(self.settings.sqlite_path)
@@ -167,6 +171,7 @@ class CorpusChunk:
     source_name: str
     heading: str | None
     text: str
+    source_document: str | None = None
 
 
 def discover_sources(corpus_dir: Path) -> dict[str, Path]:
@@ -193,6 +198,8 @@ def _to_record_chunks(chunks: list[ResolvedEvidence]) -> list[RecordedChunk]:
             text=c.text,
             citation_label=c.citation_label,
             source_display_name=c.source_display_name,
+            source_id=c.source_id,
+            formula_regions=c.formula_regions,
         )
         for c in chunks
     ]
@@ -211,6 +218,7 @@ class EvalRunner:
         top_k: int = 8,
         mode: QueryMode | None = None,
     ):
+        self._corpus_dir = Path(corpus_dir).resolve()
         self._sources = discover_sources(corpus_dir)
         self._owns_data_dir = data_dir is None
         # mkdtemp (not TemporaryDirectory) so `close()` decides when to delete.
@@ -224,6 +232,8 @@ class EvalRunner:
         self.ingest_failures: list[str] = []
         self._resolver: RecordingResolver | None = None
         self._service: QueryService | None = None
+        self._agent_trace: dict[str, Any] | None = None
+        self._agent_calls: list[dict[str, Any]] = []
 
     # -- lifecycle --------------------------------------------------------
 
@@ -265,6 +275,7 @@ class EvalRunner:
             resolver=self._resolver,  # type: ignore[arg-type]
             top_k=self._top_k,
             settings=ctx.settings,
+            trace_callback=self._capture_agent_trace,
         )
 
     def corpus_chunks(self) -> list[CorpusChunk]:
@@ -272,11 +283,52 @@ class EvalRunner:
         names = {sid: name for name, sid in self._source_ids.items()}
         with self._context.session_factory() as session:
             rows = session.execute(
-                select(Chunk.id, Chunk.source_id, Chunk.heading, Chunk.text).order_by(
-                    Chunk.source_id, Chunk.ordinal
-                )
+                select(Chunk.id, Chunk.source_id, Chunk.heading, Chunk.text, EvidenceVersion.file_path)
+                .join(EvidenceVersion, Chunk.evidence_version_id == EvidenceVersion.id)
+                .where(EvidenceVersion.is_current.is_(True))
+                .order_by(Chunk.source_id, Chunk.ordinal)
             ).all()
-        return [CorpusChunk(cid, names.get(sid, sid), heading, text) for cid, sid, heading, text in rows]
+        return [
+            CorpusChunk(cid, names.get(sid, sid), heading, text,
+                        Path(path).resolve().relative_to(self._corpus_dir).as_posix() if path else None)
+            for cid, sid, heading, text, path in rows
+        ]
+
+    def _capture_agent_trace(self, state: dict[str, Any]) -> None:
+        """Keep the actual agent conversation and model token metadata."""
+        if state.get("event") == "model_call":
+            self._agent_calls.append({
+                "path": "agent",
+                "messages": self._serialize_agent_trace(state["messages"]),
+                "response": self._serialize_agent_trace([state["response"]])[0],
+                "model": state["model"], "options": state["options"],
+                "tools": state["tools"], "latency_s": state["latency_s"],
+            })
+        else:
+            self._agent_trace = state
+
+    @staticmethod
+    def _serialize_agent_trace(messages: list[Any]) -> list[dict[str, Any]]:
+        trace: list[dict[str, Any]] = []
+        for message in messages:
+            row: dict[str, Any] = {
+                "role": message.type,
+                "content": message.content,
+            }
+            if getattr(message, "tool_calls", None):
+                row["tool_calls"] = message.tool_calls
+            if getattr(message, "tool_call_id", None):
+                row["tool_call_id"] = message.tool_call_id
+            meta = getattr(message, "response_metadata", None) or {}
+            if meta:
+                row["response_metadata"] = {
+                    key: meta[key] for key in ("prompt_eval_count", "eval_count") if key in meta
+                }
+            usage = getattr(message, "usage_metadata", None)
+            if usage:
+                row["usage_metadata"] = dict(usage)
+            trace.append(row)
+        return trace
 
     # -- running ----------------------------------------------------------
 
@@ -306,16 +358,29 @@ class EvalRunner:
         assert self._service is not None and self._resolver is not None, "call ingest() first"
         self._gateway.reset()
         self._resolver.reset()
+        self._agent_trace = None
+        self._agent_calls = []
         history = [ConversationTurn(question=t.question, answer=t.answer) for t in question.history]
         record = RunRecord(
             question_id=question.id,
             repeat=repeat,
             spans_indexed=self._spans_indexed(question),
+            revoked_source_ids=[self._source_ids[name] for name in question.setup.revoke],
+            configuration={
+                "gen_model": self._context.settings.gen_model,
+                "embed_model": self._context.settings.embed_model,
+                "num_ctx": self._context.settings.num_ctx,
+                "num_predict": self._context.settings.num_predict,
+                "top_k": self._top_k,
+                "requested_mode": self._mode.value if self._mode else "auto",
+            },
         )
         start = time.perf_counter()
         try:
             result = self._service.ask(question.question, mode=self._mode, history=history or None)
-        except InferenceError as exc:
+        except Exception as exc:
+            record.model_calls = list(self._agent_calls) + [asdict(call) for call in self._gateway.calls]
+            record.retrieved = _to_record_chunks(self._resolver.resolved)
             record.error = f"{type(exc).__name__}: {exc}"
             record.latency_s = time.perf_counter() - start
             return record
@@ -328,10 +393,41 @@ class EvalRunner:
         record.citations = [RecordedCitation(**c.model_dump()) for c in result.citations]
         unique = {c.chunk_id: c for c in self._resolver.resolved}  # first-seen order, deduped
         record.retrieved = _to_record_chunks(list(unique.values()))
+        record.model_calls = list(self._agent_calls) + [
+            {"path": "generate", **asdict(call)} for call in self._gateway.calls
+        ]
         if self._gateway.calls:
             last = self._gateway.calls[-1]  # the answer-generating call
             record.system, record.prompt = last.system, last.prompt
             record.prompt_eval_count = last.prompt_eval_count
+            record.eval_count = last.eval_count
+        if self._agent_trace is not None:
+            trace = self._serialize_agent_trace(self._agent_trace["messages"])
+            record.agent_trace = trace
+            if not self._gateway.calls:
+                final_index = max(
+                    (i for i, row in enumerate(trace) if row["role"] == "ai"),
+                    default=len(trace),
+                )
+                record.system = next(
+                    (row["content"] for row in trace if row["role"] == "system"), None
+                )
+                record.prompt = "\n\n".join(
+                    f"[{row['role']}] {row['content']}" for row in trace[:final_index]
+                    if row["role"] != "system"
+                )
+                if final_index < len(trace):
+                    meta = trace[final_index].get("response_metadata", {})
+                    record.prompt_eval_count = meta.get("prompt_eval_count")
+                    record.eval_count = meta.get("eval_count")
+        if self._agent_calls and not self._gateway.calls:
+            import json
+            last_call = self._agent_calls[-1]
+            record.prompt = json.dumps(last_call["messages"], ensure_ascii=False)
+            meta = last_call["response"].get("response_metadata", {})
+            usage = last_call["response"].get("usage_metadata", {})
+            record.prompt_eval_count = meta.get("prompt_eval_count", usage.get("input_tokens"))
+            record.eval_count = meta.get("eval_count", usage.get("output_tokens"))
         return record
 
     def run(
@@ -341,6 +437,8 @@ class EvalRunner:
         repeats: int = 3,
         out_path: Path | None = None,
         progress: ProgressFn | None = None,
+        gold_digest: str | None = None,
+        benchmark_digest: str | None = None,
     ) -> list[RunRecord]:
         """Run every question `repeats` times; append each record to
         `out_path` (JSONL) as it finishes so an interrupted run keeps its data.
@@ -363,6 +461,8 @@ class EvalRunner:
                 try:
                     for repeat in range(repeats):
                         record = self.run_once(question, repeat)
+                        record.gold_fingerprint = gold_digest
+                        record.benchmark_fingerprint = benchmark_digest
                         records.append(record)
                         done += 1
                         if out:
@@ -406,10 +506,21 @@ def run_eval(
     top_k: int = 8,
     mode: QueryMode | None = None,
     progress: ProgressFn | None = None,
+    manifest_path: Path | None = None,
 ) -> list[RunRecord]:
     """Ingest `corpus_dir` into a temp data dir, run the selected questions
     `repeats` times each, write JSONL to `out_path`, and clean up the temp dir."""
+    benchmark_digest = None
+    if manifest_path is not None:
+        from docket.eval.benchmark import load_benchmark, verify_benchmark
+        manifest = load_benchmark(manifest_path)
+        benchmark_digest = verify_benchmark(manifest, gold, corpus_dir)
+        if repeats != manifest.repeats:
+            raise GoldSetError(f"frozen benchmark requires {manifest.repeats} repeats")
     questions = select_questions(gold, split=split, ids=ids)
     with EvalRunner(corpus_dir, gateway=gateway, parser=parser, top_k=top_k, mode=mode) as runner:
         runner.ingest()
-        return runner.run(questions, repeats=repeats, out_path=out_path, progress=progress)
+        return runner.run(
+            questions, repeats=repeats, out_path=out_path, progress=progress,
+            gold_digest=fingerprint(gold), benchmark_digest=benchmark_digest,
+        )
