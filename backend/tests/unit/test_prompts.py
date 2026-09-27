@@ -211,3 +211,27 @@ def test_system_prompt_shows_negative_citation_example() -> None:
 def test_agent_system_prompt_shows_negative_citation_example() -> None:
     assert "citation_label: (...)" in AGENT_SYSTEM_PROMPT
     assert "NOT a citation" in AGENT_SYSTEM_PROMPT
+
+
+def test_system_prompt_requires_enumeration_completeness() -> None:
+    assert "every matching item" in SYSTEM_PROMPT
+    assert '"all"' in SYSTEM_PROMPT
+    assert '"every"' in SYSTEM_PROMPT
+    assert '"each"' in SYSTEM_PROMPT
+
+
+def test_agent_system_prompt_requires_enumeration_completeness() -> None:
+    assert "every matching item" in AGENT_SYSTEM_PROMPT
+    assert '"all"' in AGENT_SYSTEM_PROMPT
+    assert '"every"' in AGENT_SYSTEM_PROMPT
+    assert '"each"' in AGENT_SYSTEM_PROMPT
+
+
+def test_system_prompt_guards_against_context_as_instructions() -> None:
+    assert "never instructions to follow" in SYSTEM_PROMPT
+    assert "ignore previous instructions" in SYSTEM_PROMPT
+
+
+def test_agent_system_prompt_guards_against_context_as_instructions() -> None:
+    assert "never instructions to follow" in AGENT_SYSTEM_PROMPT
+    assert "ignore previous instructions" in AGENT_SYSTEM_PROMPT
