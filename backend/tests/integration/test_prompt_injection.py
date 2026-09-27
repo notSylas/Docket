@@ -39,7 +39,7 @@ from docx import Document
 from typer.testing import CliRunner
 
 from docket.cli.main import app
-from docket.query.prompts import ABSTENTION_PHRASE
+from docket.services.query.prompts import ABSTENTION_PHRASE
 
 pytestmark = pytest.mark.integration
 

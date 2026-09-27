@@ -15,7 +15,7 @@ from docket.eval.report import (
 )
 from docket.eval.schema import GoldSet, Question
 from docket.eval.scoring import score_run
-from docket.query.prompts import ABSTENTION_PHRASE
+from docket.services.query.prompts import ABSTENTION_PHRASE
 
 SPAN = "25 days of paid vacation per year"
 CHUNK = "Employees receive 25 days of paid vacation per year."

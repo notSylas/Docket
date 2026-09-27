@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from docket.query.classifier import HeuristicQueryClassifier, QueryMode
+from docket.services.query.classifier import HeuristicQueryClassifier, QueryMode
 
 classifier = HeuristicQueryClassifier()
 

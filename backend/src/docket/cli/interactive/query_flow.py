@@ -12,8 +12,8 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from docket.query.classifier import QueryMode
-from docket.query.conversation import ConversationTurn
+from docket.services.query.classifier import QueryMode
+from docket.services.query.conversation import ConversationTurn
 from docket.infra.retrieval.resolver import ChunkNotFoundError
 
 from .render import number_citations, render

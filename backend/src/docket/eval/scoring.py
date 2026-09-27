@@ -14,8 +14,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from docket.eval.schema import REGEX_PREFIX, Question, RunRecord
-from docket.query.citations import CITATION_TAG_RE as _CITATION_TAG_RE
-from docket.query.prompts import ABSTENTION_PHRASE
+from docket.services.query.citations import CITATION_TAG_RE as _CITATION_TAG_RE
+from docket.services.query.prompts import ABSTENTION_PHRASE
 
 # Ollama drops the *start* of an over-long prompt, so a prompt_eval_count far
 # below the size we sent means truncation. ~4 chars/token is the rough English

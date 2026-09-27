@@ -11,8 +11,8 @@ from docket.cli.interactive.state import SessionState
 from docket.cli.main import app
 from docket.infra.inference.gateway import InferenceUnavailableError
 from docket.ingestion.pipeline import FileIngestResult, IngestionJobResult, SourceNotFoundError
-from docket.query.classifier import QueryMode
-from docket.query.service import Citation, QueryResult
+from docket.services.query.classifier import QueryMode
+from docket.services.query.service import Citation, QueryResult
 from docket.infra.retrieval.resolver import ChunkNotFoundError, ResolvedEvidence
 
 

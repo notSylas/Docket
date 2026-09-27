@@ -25,9 +25,9 @@ from rich.table import Table
 
 from docket import __version__
 from docket.infra.inference.health import HealthReport, format_health_warning
-from docket.query.classifier import QueryMode
-from docket.query.conversation import ConversationTurn
-from docket.query.service import QueryService
+from docket.services.query.classifier import QueryMode
+from docket.services.query.conversation import ConversationTurn
+from docket.services.query.service import QueryService
 
 from . import ingestion_ui, query_flow, source_commands
 from .commands import BARE_WORDS, HELP_FOOTER, CommandRegistry, default_registry

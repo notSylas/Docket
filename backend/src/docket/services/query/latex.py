@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import re
 
-from docket.query.citations import CITATION_TAG_PATTERN
+from docket.services.query.citations import CITATION_TAG_PATTERN
 
 # ---------------------------------------------------------------------------
 # Remove balanced math delimiters only; unpaired dollar signs may be currency.

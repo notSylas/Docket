@@ -19,8 +19,8 @@ from docket.eval.runner import (
 )
 from docket.eval.schema import Split, load_gold_set, load_records
 from docket.infra.inference.gateway import FakeInferenceGateway
-from docket.query.classifier import QueryMode
-from docket.query.prompts import ABSTENTION_PHRASE
+from docket.services.query.classifier import QueryMode
+from docket.services.query.prompts import ABSTENTION_PHRASE
 
 SCRIPT = {
     "vacation days are there": ("25 days", "25 days and $1,200,000. {tag}"),

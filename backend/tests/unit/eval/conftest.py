@@ -10,7 +10,7 @@ import pytest
 from docket.eval.schema import RecordedChunk, RecordedCitation, RunRecord
 from docket.infra.inference.gateway import FakeInferenceGateway
 from docket.infra.parsing.docling_wrapper import ParsedDocument
-from docket.query.prompts import ABSTENTION_PHRASE
+from docket.services.query.prompts import ABSTENTION_PHRASE
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "eval"
 

@@ -48,9 +48,9 @@ from docket.infra.inference.gateway import (
     OllamaGateway,
     _translate_error,
 )
-from docket.query.classifier import QueryMode
-from docket.query.conversation import ConversationTurn
-from docket.query.service import QueryService
+from docket.services.query.classifier import QueryMode
+from docket.services.query.conversation import ConversationTurn
+from docket.services.query.service import QueryService
 from docket.infra.retrieval.resolver import EvidenceResolver, ResolvedEvidence
 
 ProgressFn = Callable[[int, int, RunRecord], None]

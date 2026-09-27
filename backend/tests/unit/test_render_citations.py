@@ -1,5 +1,5 @@
 from docket.cli.interactive.render import number_citations
-from docket.query.service import Citation
+from docket.services.query.service import Citation
 
 
 def C(label, cid="x"):

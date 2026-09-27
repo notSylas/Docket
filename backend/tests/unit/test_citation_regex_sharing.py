@@ -8,8 +8,8 @@ version from `CITATION_TAG_PATTERN`, for `re.split`)."""
 from __future__ import annotations
 
 from docket.eval.scoring import _CITATION_TAG_RE, strip_citations
-from docket.query.citations import CITATION_TAG_PATTERN, CITATION_TAG_RE
-from docket.query.latex import _CITATION_RE, normalize_latex
+from docket.services.query.citations import CITATION_TAG_PATTERN, CITATION_TAG_RE
+from docket.services.query.latex import _CITATION_RE, normalize_latex
 
 REAL_TAGS = ["[report.pdf #a1b2c3d4e5f6]", "[other doc.docx #chunk_9]"]
 PROSE_WITH_TAGS = f"The answer is 42 {REAL_TAGS[0]}, also see {REAL_TAGS[1]}."

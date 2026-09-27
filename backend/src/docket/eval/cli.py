@@ -63,7 +63,7 @@ def run_cmd(
     from docket.eval.report import build_report, format_report
     from docket.eval.runner import EvalSetupError, run_eval
     from docket.eval.schema import Split, load_gold_set
-    from docket.query.classifier import QueryMode
+    from docket.services.query.classifier import QueryMode
 
     if mode not in ("auto", "fast", "agent"):
         raise _fail("--mode must be auto, fast or agent")

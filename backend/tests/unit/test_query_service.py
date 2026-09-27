@@ -35,9 +35,9 @@ from docket.infra.index.base import ChunkRecord
 from docket.infra.index.fts_index import FtsIndexWriter
 from docket.infra.index.vector_index import LanceIndexWriter
 from docket.infra.inference.gateway import FakeInferenceGateway
-from docket.query.classifier import QueryMode
-from docket.query.prompts import ABSTENTION_PHRASE
-from docket.query.service import QueryService, _citations_from_agent_messages
+from docket.services.query.classifier import QueryMode
+from docket.services.query.prompts import ABSTENTION_PHRASE
+from docket.services.query.service import QueryService, _citations_from_agent_messages
 from docket.infra.retrieval.resolver import EvidenceResolver, ResolvedEvidence
 
 CHUNK_TEXT = "Reciprocal Rank Fusion combines multiple ranked search results into one."
@@ -625,8 +625,8 @@ def test_agent_mode_with_no_successful_reads_yields_empty_citations_not_a_crash(
 
 from langchain_core.messages import HumanMessage, SystemMessage  # noqa: E402
 
-from docket.query.conversation import ConversationTurn, trim_history  # noqa: E402
-from docket.query.prompts import (  # noqa: E402
+from docket.services.query.conversation import ConversationTurn, trim_history  # noqa: E402
+from docket.services.query.prompts import (  # noqa: E402
     AGENT_SYSTEM_PROMPT,
     AGENT_SYSTEM_PROMPT_WITH_HISTORY,
     SYSTEM_PROMPT,
@@ -829,7 +829,7 @@ def test_ask_fast_default_page_table_is_none_threaded_into_hybrid_search(
     `QueryService` without it, so `_ask_fast` must call `hybrid_search` with
     `page_table=None` -- exactly the argument that makes `hybrid_search` skip
     `visual_search` entirely (see `test_hybrid_retrieval.py`)."""
-    import docket.query.service as service_module
+    import docket.services.query.service as service_module
 
     gateway = FakeInferenceGateway()
     table = _index_chunk(migrated_sqlite_engine, tmp_path, gateway, built)
@@ -858,7 +858,7 @@ def test_ask_fast_threads_supplied_page_table_into_hybrid_search(
     """When a caller does supply `page_table` (visual retrieval enabled),
     `_ask_fast` must pass that exact object through to `hybrid_search`,
     unmodified."""
-    import docket.query.service as service_module
+    import docket.services.query.service as service_module
 
     gateway = FakeInferenceGateway()
     table = _index_chunk(migrated_sqlite_engine, tmp_path, gateway, built)

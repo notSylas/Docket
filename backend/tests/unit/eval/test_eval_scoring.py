@@ -22,7 +22,7 @@ from docket.eval.scoring import (
     strip_citations,
     undecidable_by_regex,
 )
-from docket.query.prompts import ABSTENTION_PHRASE
+from docket.services.query.prompts import ABSTENTION_PHRASE
 
 SPAN = "25 days of paid vacation per year"
 CHUNK = "Employees receive 25 days of paid vacation per year. Unused days lapse."

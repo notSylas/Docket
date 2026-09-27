@@ -11,7 +11,7 @@ from docket.eval.judge import ClaimJudge, judge_runs
 from docket.eval.report import build_report
 from docket.eval.schema import GoldSet, GoldSetError, Question, fingerprint
 from docket.ingestion.pipeline import SUPPORTED_EXTENSIONS
-from docket.query.prompts import ABSTENTION_PHRASE
+from docket.services.query.prompts import ABSTENTION_PHRASE
 
 
 def test_benchmark_reuses_the_canonical_supported_extensions_constant():

@@ -9,7 +9,7 @@ guess, use real data" instruction this module's docstring also mentions.
 
 from __future__ import annotations
 
-from docket.query.latex import normalize_latex
+from docket.services.query.latex import normalize_latex
 
 # ---------------------------------------------------------------------------
 # The two questions the task named explicitly as LaTeX-caused hard fails in

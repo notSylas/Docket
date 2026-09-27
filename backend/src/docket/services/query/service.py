@@ -33,11 +33,11 @@ from docket.services.agent.graph import build_investigation_agent
 from docket.core.config import Settings
 from docket.core.config import settings as default_settings
 from docket.infra.inference.gateway import InferenceGateway
-from docket.query.classifier import HeuristicQueryClassifier, QueryClassifier, QueryMode
-from docket.query.conversation import ConversationTurn, format_history_block, trim_history
-from docket.query.citations import build_context_block, validate_citations
-from docket.query.latex import normalize_latex
-from docket.query.prompts import (
+from docket.services.query.classifier import HeuristicQueryClassifier, QueryClassifier, QueryMode
+from docket.services.query.conversation import ConversationTurn, format_history_block, trim_history
+from docket.services.query.citations import build_context_block, validate_citations
+from docket.services.query.latex import normalize_latex
+from docket.services.query.prompts import (
     ABSTENTION_PHRASE,
     AGENT_SYSTEM_PROMPT,
     AGENT_SYSTEM_PROMPT_WITH_HISTORY,
