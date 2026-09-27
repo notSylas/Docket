@@ -151,6 +151,7 @@ class EvidenceVersion(Base):
     observed_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
     parser_name: Mapped[str] = mapped_column(String, nullable=False)
     parser_version: Mapped[str] = mapped_column(String, nullable=False)
+    formula_regions_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_current: Mapped[bool] = mapped_column(default=True, nullable=False)
 
     source: Mapped["Source"] = relationship(back_populates="evidence_versions")

@@ -313,3 +313,35 @@ def test_interrupted_run_finalizes_job_as_failed_and_reraises(
         assert job.status == IngestionJobStatus.FAILED
         assert job.error == "interrupted"
         assert job.finished_at is not None
+
+
+def test_formula_regions_persist_and_legacy_backfill_keeps_chunks(env, monkeypatch):
+    import json
+    from docket.parsing.docling_wrapper import ParsedDocument
+    path = env.folder / "formula.docx"
+    _write_docx(path, "Formula", "An unreadable equation follows.")
+    regions = [{"page_no": 2, "bbox": {"l": 1, "t": 2, "r": 3, "b": 4}}]
+    parsed = ParsedDocument(text="Formula <!-- formula-not-decoded -->", source_path=path,
+                            parser_name="fixture", parser_version="1", formula_regions=regions)
+    calls = []
+
+    def parse(source_id, source_path):
+        calls.append(source_path)
+        return parsed
+
+    monkeypatch.setattr(env.pipeline._parser, "parse", parse)
+    env.pipeline.run_ingestion_for_source(env.source.id)
+    with env.session_factory() as session:
+        version = session.execute(select(EvidenceVersion)).scalar_one()
+        assert json.loads(version.formula_regions_json) == regions
+        version.formula_regions_json = None
+        before = list(session.execute(select(Chunk.id)).scalars())
+        session.commit()
+    result = env.pipeline.run_ingestion_for_source(env.source.id)
+    with env.session_factory() as session:
+        assert list(session.execute(select(Chunk.id)).scalars()) == before
+        assert json.loads(session.execute(select(EvidenceVersion.formula_regions_json)).scalar_one()) == regions
+    assert result.file_results[0].status == "unchanged"
+    assert len(calls) == 2
+    env.pipeline.run_ingestion_for_source(env.source.id)
+    assert len(calls) == 2

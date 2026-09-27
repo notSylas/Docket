@@ -308,12 +308,20 @@ class IngestionPipeline:
         )
 
         if evidence_version.id == before_id:
-            # Same current EvidenceVersion as before ingest_file was called
-            # => it was a no-op (unchanged content). Skip parse/chunk/index
-            # entirely for this file.
-            return FileIngestResult(path=path, status="unchanged")
+            with self._session_factory() as session:
+                has_chunks = session.execute(
+                    select(Chunk.id).where(Chunk.evidence_version_id == evidence_version.id).limit(1)
+                ).first() is not None
+            if has_chunks:
+                if evidence_version.formula_regions_json is None:
+                    # Backfill coordinates on legacy versions without replacing their chunks.
+                    parsed = self._parser.parse(source_id, path)
+                    self._save_formula_regions(evidence_version.id, parsed.formula_regions)
+                return FileIngestResult(path=path, status="unchanged")
+            # An earlier parse failed after raw bytes were stored; retry derivation.
 
         parsed = self._parser.parse(source_id, path)
+        self._save_formula_regions(evidence_version.id, parsed.formula_regions)
         units, chunks = chunk_document(parsed.text, self._chunk_recipe)
 
         records = self._persist_units_and_chunks(
@@ -325,6 +333,12 @@ class IngestionPipeline:
         self._index_manager.upsert_chunks(records)
 
         return FileIngestResult(path=path, status="ingested", chunks_written=len(records))
+
+    def _save_formula_regions(self, version_id: str, regions: list[dict]) -> None:
+        with self._session_factory() as session:
+            version = session.get(EvidenceVersion, version_id)
+            version.formula_regions_json = json.dumps(regions)
+            session.commit()
 
     def _finalize_job(
         self, job_id: str, status: IngestionJobStatus, error: str | None, stats: dict

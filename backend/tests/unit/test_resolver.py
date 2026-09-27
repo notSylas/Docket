@@ -213,3 +213,34 @@ def test_resolve_many_empty_list_returns_empty(session: Session) -> None:
     _build_chain(session)
     resolver = _resolver(session)
     assert resolver.resolve_many([]) == []
+
+
+def test_revoked_chunk_cannot_be_resolved_directly(session: Session) -> None:
+    built = _build_chain(session)
+    chunk_id = built["chunk"].id
+    built["source"].status = SourceStatus.REVOKED
+    session.commit()
+
+    with pytest.raises(ChunkNotFoundError):
+        _resolver(session).resolve(chunk_id)
+
+
+def test_superseded_chunk_cannot_be_resolved_directly(session: Session) -> None:
+    built = _build_chain(session)
+    chunk_id = built["chunk"].id
+    built["evidence_version"].is_current = False
+    session.commit()
+
+    with pytest.raises(ChunkNotFoundError):
+        _resolver(session).resolve(chunk_id)
+
+
+def test_read_evidence_tool_rejects_revoked_id(session: Session) -> None:
+    import json
+    from docket.agent.tools import make_read_evidence_tool
+    built = _build_chain(session)
+    chunk_id = built["chunk"].id
+    built["source"].status = SourceStatus.REVOKED
+    session.commit()
+    payload = json.loads(make_read_evidence_tool(resolver=_resolver(session)).invoke({"chunk_id": chunk_id}))
+    assert "error" in payload and "text" not in payload

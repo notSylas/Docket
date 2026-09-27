@@ -13,13 +13,14 @@ parts."
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
-from docket.db.models import Chunk, EvidenceVersion, Source
+from docket.db.models import Chunk, EvidenceVersion, Source, SourceStatus
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,8 @@ class ResolvedEvidence:
     evidence_version_id: str
     heading: str | None
     citation_label: str  # centralized, correctly-formatted citation tag
+    source_id: str = ""
+    formula_regions: list[dict] = field(default_factory=list)  # document-level coordinates
 
 
 class ChunkNotFoundError(Exception):
@@ -80,7 +83,8 @@ class EvidenceResolver:
         """Batched version of `resolve` -- one query for all ids, not N.
         Preserves the input order in the output. Raises `ChunkNotFoundError`
         on the first missing id it encounters (in input order); it never
-        silently drops missing ids."""
+        silently drops missing ids. Inactive sources and superseded versions
+        are unavailable, even when their rows remain for historical provenance."""
         if not chunk_ids:
             return []
 
@@ -90,6 +94,8 @@ class EvidenceResolver:
                 .join(Source, Chunk.source_id == Source.id)
                 .join(EvidenceVersion, Chunk.evidence_version_id == EvidenceVersion.id)
                 .where(Chunk.id.in_(chunk_ids))
+                .where(Source.status == SourceStatus.ACTIVE)
+                .where(EvidenceVersion.is_current.is_(True))
             ).all()
 
         by_id = {chunk.id: (chunk, source, ev) for chunk, source, ev in rows}
@@ -115,6 +121,8 @@ class EvidenceResolver:
                     evidence_version_id=chunk.evidence_version_id,
                     heading=chunk.heading,
                     citation_label=_citation_label(source_display_name, chunk.id),
+                    source_id=source.id,
+                    formula_regions=json.loads(evidence_version.formula_regions_json or "[]"),
                 )
             )
         return resolved

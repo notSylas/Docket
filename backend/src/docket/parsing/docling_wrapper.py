@@ -8,8 +8,9 @@ later checkpoint's concern -- this module just makes that possible).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from importlib.metadata import version
 
 from docket.parsing.normalize import unescape_markdown
 
@@ -20,6 +21,7 @@ class ParsedDocument:
     source_path: Path
     parser_name: str  # e.g. "docling"
     parser_version: str  # docling.__version__
+    formula_regions: list[dict] = field(default_factory=list)  # source coordinates, not recognized text
 
 
 class ParseError(Exception):
@@ -36,6 +38,31 @@ class ParseError(Exception):
         super().__init__(f"failed to parse {path} for source {source_id}: {cause}")
 
 
+def _formula_regions(document: object) -> list[dict]:
+    """Keep source coordinates for detected formulas without trusting OCR text."""
+    regions: list[dict] = []
+    for item in getattr(document, "texts", []) or []:
+        if "formula" not in str(getattr(item, "label", "")).lower():
+            continue
+        for prov in getattr(item, "prov", []) or []:
+            bbox = getattr(prov, "bbox", None)
+            page_no = getattr(prov, "page_no", None)
+            pages = getattr(document, "pages", {})
+            page = pages.get(page_no) if isinstance(pages, dict) else None
+            size = getattr(page, "size", None)
+            origin = getattr(bbox, "coord_origin", None)
+            regions.append({
+                "item_ref": getattr(item, "self_ref", None),
+                "page_no": page_no,
+                "coordinate_origin": getattr(origin, "value", str(origin)) if origin is not None else None,
+                "page_width": getattr(size, "width", None),
+                "page_height": getattr(size, "height", None),
+                "bbox": {axis: getattr(bbox, axis, None) for axis in ("l", "t", "r", "b")}
+                if bbox is not None else None,
+            })
+    return regions
+
+
 class DoclingParser:
     """Parses documents via Docling and returns normalized markdown text.
 
@@ -45,17 +72,21 @@ class DoclingParser:
     """
 
     def __init__(self) -> None:
-        from docling.document_converter import DocumentConverter
+        from docling.document_converter import DocumentConverter, PdfFormatOption
+        from docling.datamodel.base_models import InputFormat
+        from docling.datamodel.pipeline_options import PdfPipelineOptions
 
-        self._converter = DocumentConverter()
+        # Formula OCR is generative and must not silently become authoritative evidence.
+        options = PdfPipelineOptions(do_formula_enrichment=False)
+        self._converter = DocumentConverter(
+            format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=options)}
+        )
         self._parser_name = "docling"
         self._parser_version = self._detect_version()
 
     @staticmethod
     def _detect_version() -> str:
-        import docling
-
-        return getattr(docling, "__version__", "unknown")
+        return version("docling")
 
     @property
     def parser_name(self) -> str:
@@ -82,6 +113,7 @@ class DoclingParser:
             result = self._converter.convert(str(path))
             markdown = result.document.export_to_markdown()
             text = unescape_markdown(markdown)
+            formula_regions = _formula_regions(result.document)
         except Exception as exc:  # noqa: BLE001 -- intentionally broad, see docstring
             raise ParseError(source_id, path, exc) from exc
 
@@ -90,4 +122,5 @@ class DoclingParser:
             source_path=path,
             parser_name=self._parser_name,
             parser_version=self._parser_version,
+            formula_regions=formula_regions,
         )

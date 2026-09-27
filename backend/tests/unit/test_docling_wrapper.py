@@ -84,3 +84,17 @@ def test_parse_real_docx_smoke_test(parser: DoclingParser) -> None:
     # Proves unescape_markdown actually ran: a real design doc full of
     # snake_case identifiers should contain no leftover CommonMark escapes.
     assert "\\_" not in result.text
+
+
+def test_formula_provenance_preserves_coordinates_without_ocr_text():
+    from types import SimpleNamespace as NS
+    from docket.parsing.docling_wrapper import _formula_regions
+    document = NS(texts=[NS(label="formula", self_ref="#/texts/2", text="invented equation",
+                           prov=[NS(page_no=3, bbox=NS(l=1, t=2, r=10, b=20, coord_origin="TOPLEFT"))])],
+                  pages={3: NS(size=NS(width=600, height=800))})
+    (region,) = _formula_regions(document)
+    assert region["page_no"] == 3 and region["item_ref"] == "#/texts/2"
+    assert region["bbox"] == {"l": 1, "t": 2, "r": 10, "b": 20}
+    assert region["coordinate_origin"] == "TOPLEFT"
+    assert region["page_width"] == 600
+    assert "invented" not in str(region)
