@@ -237,7 +237,7 @@ def test_superseded_chunk_cannot_be_resolved_directly(session: Session) -> None:
 
 def test_read_evidence_tool_rejects_revoked_id(session: Session) -> None:
     import json
-    from docket.agent.tools import make_read_evidence_tool
+    from docket.services.agent.tools import make_read_evidence_tool
     built = _build_chain(session)
     chunk_id = built["chunk"].id
     built["source"].status = SourceStatus.REVOKED

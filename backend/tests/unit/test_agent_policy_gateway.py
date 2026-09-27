@@ -14,7 +14,7 @@ from __future__ import annotations
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
 
-from docket.agent.policy_gateway import make_policy_gateway
+from docket.services.agent.policy_gateway import make_policy_gateway
 
 
 @tool

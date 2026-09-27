@@ -64,8 +64,8 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_ollama import ChatOllama
 from langgraph.graph import END, StateGraph
 
-from docket.agent.policy_gateway import AgentState, make_policy_gateway
-from docket.agent.tools import make_read_evidence_tool, make_search_knowledge_tool
+from docket.services.agent.policy_gateway import AgentState, make_policy_gateway
+from docket.services.agent.tools import make_read_evidence_tool, make_search_knowledge_tool
 from docket.core.config import Settings, settings as default_settings
 from docket.infra.inference.gateway import InferenceGateway
 from docket.prompts.agent import missing_any_tool_message, missing_required_tool_message

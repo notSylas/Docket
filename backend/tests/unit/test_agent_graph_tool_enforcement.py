@@ -34,8 +34,8 @@ import json
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import tool
 
-from docket.agent import graph as graph_mod
-from docket.agent.graph import build_agent
+from docket.services.agent import graph as graph_mod
+from docket.services.agent.graph import build_agent
 
 
 @tool

@@ -8,8 +8,8 @@ import inspect
 
 import pytest
 
-from docket.agent import graph as agent_graph
-from docket.agent import tools as agent_tools
+from docket.services.agent import graph as agent_graph
+from docket.services.agent import tools as agent_tools
 from docket.core.config import Settings, settings
 from docket.eval import runner as eval_runner
 from docket.query import service as query_service

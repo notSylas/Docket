@@ -29,7 +29,7 @@ import pytest
 from langchain_core.messages import HumanMessage, SystemMessage
 from sqlalchemy import Engine
 
-from docket.agent.graph import build_investigation_agent
+from docket.services.agent.graph import build_investigation_agent
 from docket.core.config import settings
 from docket.core.db.engine import get_session_factory
 from docket.core.db.identity import compute_chunk_id, compute_recipe_id

@@ -11,8 +11,8 @@ construction time, so plain placeholders are fine here.
 
 from __future__ import annotations
 
-from docket.agent import graph as graph_mod
-from docket.agent.graph import build_agent, build_investigation_agent
+from docket.services.agent import graph as graph_mod
+from docket.services.agent.graph import build_agent, build_investigation_agent
 from docket.core.config import Settings
 
 

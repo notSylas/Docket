@@ -29,7 +29,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from pydantic import BaseModel
 from sqlalchemy import Engine
 
-from docket.agent.graph import build_investigation_agent
+from docket.services.agent.graph import build_investigation_agent
 from docket.core.config import Settings
 from docket.core.config import settings as default_settings
 from docket.infra.inference.gateway import InferenceGateway
