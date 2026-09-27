@@ -35,6 +35,7 @@ from docket.config import settings as default_settings
 from docket.inference.gateway import InferenceGateway
 from docket.query.classifier import HeuristicQueryClassifier, QueryClassifier, QueryMode
 from docket.query.conversation import ConversationTurn, format_history_block, trim_history
+from docket.query.latex import normalize_latex
 from docket.query.prompts import (
     ABSTENTION_PHRASE,
     AGENT_SYSTEM_PROMPT,
@@ -215,9 +216,18 @@ class QueryService:
         if mode is None:
             mode = self._classifier.classify(question)
         trimmed = trim_history(history)
-        if mode == QueryMode.AGENT:
-            return self._ask_agent(question, trimmed)
-        return self._ask_fast(question, trimmed)
+        result = (
+            self._ask_agent(question, trimmed)
+            if mode == QueryMode.AGENT
+            else self._ask_fast(question, trimmed)
+        )
+        # Deterministic belt-and-suspenders for the system prompt's "no
+        # LaTeX" instruction (see `docket.query.latex`'s docstring for why):
+        # applied here, once, so neither path can add a new way to return an
+        # answer without it. Citation tags are never a `normalize_latex`
+        # target (see that module), so this can't disturb `result.citations`
+        # or the validation already done inside `_ask_fast`/`_ask_agent`.
+        return result.model_copy(update={"answer": normalize_latex(result.answer)})
 
     def _ask_fast(
         self, question: str, history: list[ConversationTurn] | None = None
