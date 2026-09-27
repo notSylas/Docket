@@ -257,3 +257,18 @@ def test_read_evidence_on_the_first_attempt_needs_no_nudge(mocker) -> None:
     assert result["tool_calls_made"] == 1
     assert mock_bound_llm.invoke.call_count == 2
     assert _nudges(result["messages"]) == []
+
+
+def test_model_trace_captures_input_tools_output_and_usage(mocker):
+    mock_chat = mocker.patch.object(graph_mod, "ChatOllama")
+    mock_chat.return_value.bind_tools.return_value.invoke.return_value = AIMessage(
+        content="Uncited answer", response_metadata={"prompt_eval_count": 120, "eval_count": 8})
+    traces = []
+    agent = build_agent(allowed_tools=ALLOWED_TOOLS, gateway_llm_model="fixture",
+                        max_iterations=1, max_tool_calls=2, num_ctx=8192, num_predict=4096,
+                        require_tool_call="read_evidence", trace_callback=traces.append)
+    agent.invoke(_initial_state())
+    (call,) = traces
+    assert call["messages"][0].content == _initial_state()["messages"][0].content
+    assert call["response"].response_metadata["eval_count"] == 8
+    assert {tool["name"] for tool in call["tools"]} == set(ALLOWED_TOOLS)

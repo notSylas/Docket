@@ -226,7 +226,7 @@ def test_real_match_with_valid_citation(
     assert len(gateway.generate_calls) == 1
 
 
-def test_real_match_with_no_citations_warns_uncited(
+def test_real_match_with_no_citations_abstains_after_repair(
     migrated_sqlite_engine: Engine, tmp_path: Path, built: dict
 ) -> None:
     gateway = FakeInferenceGateway()
@@ -236,12 +236,14 @@ def test_real_match_with_no_citations_warns_uncited(
     service = _service(migrated_sqlite_engine, table, gateway, built)
     result = service.ask(CHUNK_TEXT)
 
-    assert result.abstained is False
+    assert result.abstained is True
+    assert result.answer == ABSTENTION_PHRASE
     assert result.citations == []
+    assert len(gateway.generate_calls) == 2
     assert any("no citations" in warning for warning in result.validation_warnings)
 
 
-def test_real_match_with_fabricated_citation_warns_unknown(
+def test_real_match_with_fabricated_citation_abstains_after_repair(
     migrated_sqlite_engine: Engine, tmp_path: Path, built: dict
 ) -> None:
     gateway = FakeInferenceGateway()
@@ -251,7 +253,9 @@ def test_real_match_with_fabricated_citation_warns_unknown(
     service = _service(migrated_sqlite_engine, table, gateway, built)
     result = service.ask(CHUNK_TEXT)
 
-    assert result.abstained is False
+    assert result.abstained is True
+    assert result.answer == ABSTENTION_PHRASE
+    assert len(gateway.generate_calls) == 2
     assert any("unknown citation" in warning for warning in result.validation_warnings)
 
 
@@ -554,6 +558,31 @@ def test_agent_mode_reconstructs_citations_from_real_tool_trace(
     assert len(fake_agent.invoke_calls) == 1
 
 
+def test_agent_mode_abstains_when_final_answer_has_no_citation(
+    migrated_sqlite_engine: Engine, tmp_path: Path, built: dict
+) -> None:
+    gateway = FakeInferenceGateway(canned_response="RRF fuses ranked lists without attribution.")
+    table = _index_chunk(migrated_sqlite_engine, tmp_path, gateway, built)
+    resolver = EvidenceResolver(built["session_factory"])
+    label = f"[report.pdf #{built['chunk_id'][:12]}]"
+    trace = [
+        AIMessage(content="", tool_calls=[{"name": "read_evidence",
+            "args": {"chunk_id": built["chunk_id"]}, "id": "read_1"}]),
+        ToolMessage(content=json.dumps({"chunk_id": built["chunk_id"],
+            "text": CHUNK_TEXT, "citation_label": label}), tool_call_id="read_1"),
+        AIMessage(content="RRF fuses ranked lists without attribution."),
+    ]
+    service = QueryService(engine=migrated_sqlite_engine, table=table, gateway=gateway,
+                           resolver=resolver, agent=_FakeAgent(trace))
+
+    result = service.ask(CHUNK_TEXT, mode=QueryMode.AGENT)
+
+    assert result.abstained and result.answer == ABSTENTION_PHRASE
+    assert result.citations == []
+    assert len(gateway.generate_calls) == 1
+    assert any("no citations" in warning for warning in result.validation_warnings)
+
+
 def test_agent_mode_with_no_successful_reads_yields_empty_citations_not_a_crash(
     migrated_sqlite_engine: Engine, tmp_path: Path, built: dict
 ) -> None:
@@ -740,3 +769,48 @@ def test_agent_path_without_history_is_unchanged(
     msgs = fake_agent.invoke_calls[0]["messages"]
     assert len(msgs) == 2
     assert msgs[0].content == AGENT_SYSTEM_PROMPT
+
+
+def test_revocation_during_generation_abstains(migrated_sqlite_engine, tmp_path, built):
+    label = f"[report.pdf #{built['chunk_id'][:12]}]"
+
+    class RevokingGateway(FakeInferenceGateway):
+        def generate(self, **kwargs):
+            with built["session_factory"]() as session:
+                session.get(Source, built["source_id"]).status = SourceStatus.REVOKED
+                session.commit()
+            return f"RRF fuses ranked lists {label}."
+
+    gateway = RevokingGateway()
+    table = _index_chunk(migrated_sqlite_engine, tmp_path, gateway, built)
+    result = _service(migrated_sqlite_engine, table, gateway, built).ask(CHUNK_TEXT)
+    assert result.abstained and not result.citations
+    assert "cited evidence is no longer available" in result.validation_warnings
+
+
+def test_one_citation_repair_can_recover_valid_answer(migrated_sqlite_engine, tmp_path, built):
+    label = f"[report.pdf #{built['chunk_id'][:12]}]"
+
+    class RepairGateway(FakeInferenceGateway):
+        def generate(self, **kwargs):
+            super().generate(**kwargs)
+            return "Missing citation." if len(self.generate_calls) == 1 else f"RRF fuses lists {label}."
+
+    gateway = RepairGateway()
+    table = _index_chunk(migrated_sqlite_engine, tmp_path, gateway, built)
+    result = _service(migrated_sqlite_engine, table, gateway, built).ask(CHUNK_TEXT)
+    assert not result.abstained and len(result.citations) == 1
+    assert len(gateway.generate_calls) == 2
+
+
+def test_agent_pending_tool_call_is_not_a_final_answer(migrated_sqlite_engine, tmp_path, built):
+    gateway = FakeInferenceGateway()
+    table = _index_chunk(migrated_sqlite_engine, tmp_path, gateway, built)
+    agent = _FakeAgent([AIMessage(content="I will read it.", tool_calls=[
+        {"name": "read_evidence", "args": {"chunk_id": built["chunk_id"]}, "id": "unfinished"}
+    ])])
+    service = QueryService(engine=migrated_sqlite_engine, table=table, gateway=gateway,
+                           resolver=EvidenceResolver(built["session_factory"]), agent=agent)
+    result = service.ask(CHUNK_TEXT, mode=QueryMode.AGENT)
+    assert result.abstained and result.answer == ABSTENTION_PHRASE
+    assert not gateway.generate_calls

@@ -23,7 +23,7 @@ either:
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Callable
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from pydantic import BaseModel
@@ -46,7 +46,7 @@ from docket.query.prompts import (
     validate_citations,
 )
 from docket.retrieval.hybrid import hybrid_search
-from docket.retrieval.resolver import EvidenceResolver, ResolvedEvidence
+from docket.retrieval.resolver import ChunkNotFoundError, EvidenceResolver, ResolvedEvidence
 
 
 class Citation(BaseModel):
@@ -121,7 +121,11 @@ def _citations_from_agent_messages(
         seen.add(chunk_id)
         chunk_ids.append(chunk_id)
 
-    return resolver.resolve_many(chunk_ids)
+    try:
+        return resolver.resolve_many(chunk_ids)
+    except ChunkNotFoundError:
+        # Evidence can be revoked between the tool call and finalization.
+        return []
 
 
 class QueryService:
@@ -140,6 +144,7 @@ class QueryService:
         classifier: QueryClassifier | None = None,
         settings: Settings = default_settings,
         agent: Any | None = None,
+        trace_callback: Callable[[dict[str, Any]], None] | None = None,
     ):
         """
         `classifier` defaults to `HeuristicQueryClassifier()` -- zero-cost,
@@ -180,6 +185,7 @@ class QueryService:
         self._classifier = classifier or HeuristicQueryClassifier()
         self._settings = settings
         self._agent = agent
+        self._trace_callback = trace_callback
 
     def _get_agent(self) -> Any:
         if self._agent is None:
@@ -189,6 +195,8 @@ class QueryService:
                 gateway=self._gateway,
                 resolver=self._resolver,
                 settings=self._settings,
+                trace_callback=self._trace_callback,
+                top_k=self._top_k,
             )
         return self._agent
 
@@ -254,7 +262,14 @@ class QueryService:
                 mode=QueryMode.FAST.value,
             )
 
-        resolved = self._resolver.resolve_many([rc.chunk_id for rc in ranked_chunks])
+        try:
+            resolved = self._resolver.resolve_many([rc.chunk_id for rc in ranked_chunks])
+        except ChunkNotFoundError:
+            return QueryResult(
+                question=question, answer=ABSTENTION_PHRASE, citations=[],
+                abstained=True, validation_warnings=["retrieved evidence is no longer available"],
+                mode=QueryMode.FAST.value,
+            )
         context = build_context_block(resolved)
         if history:
             prompt = (
@@ -268,7 +283,53 @@ class QueryService:
 
         answer = self._gateway.generate(system=system, prompt=prompt)
 
+        return self._finalize_answer(
+            question=question, answer=answer, resolved=resolved,
+            mode=QueryMode.FAST, retry_system=system, retry_prompt=prompt,
+        )
+
+    def _finalize_answer(
+        self, *, question: str, answer: str, resolved: list[ResolvedEvidence],
+        mode: QueryMode, retry_system: str, retry_prompt: str,
+    ) -> QueryResult:
+        """Allow one citation repair, then fail closed on invalid attribution.
+
+        Tag validation establishes that citations were actually available to
+        this query. Semantic support still needs evaluation; a valid tag alone
+        cannot prove that every claim is supported by its passage.
+        """
         validation = validate_citations(answer, resolved)
+        invalid = bool(answer.strip()) and not validation.is_abstention and (
+            validation.uncited or bool(validation.unknown_citations)
+        )
+        if invalid and resolved:
+            answer = self._gateway.generate(
+                system=retry_system,
+                prompt=(
+                    retry_prompt
+                    + "\n\nYour previous answer had missing or invalid citations. "
+                    "Answer again using only the supplied citation tags after "
+                    "each factual claim, or use the exact abstention sentence."
+                ),
+            )
+            validation = validate_citations(answer, resolved)
+
+        warnings: list[str] = []
+        cited_chunks = [chunk for chunk in resolved if chunk.citation_label in validation.cited_labels]
+        if cited_chunks:
+            try:
+                self._resolver.resolve_many([chunk.chunk_id for chunk in cited_chunks])
+            except ChunkNotFoundError:
+                warnings.append("cited evidence is no longer available")
+        if validation.uncited:
+            warnings.append("answer contains no citations")
+        for unknown in validation.unknown_citations:
+            warnings.append(f"answer references an unknown citation: {unknown}")
+        if not answer.strip():
+            warnings.append("answer is empty")
+        if warnings:
+            answer = ABSTENTION_PHRASE
+            validation = validate_citations(answer, resolved)
 
         citations = [
             Citation(
@@ -279,20 +340,10 @@ class QueryService:
             for chunk in resolved
             if chunk.citation_label in validation.cited_labels
         ]
-
-        validation_warnings: list[str] = []
-        if validation.uncited:
-            validation_warnings.append("answer contains no citations")
-        for unknown in validation.unknown_citations:
-            validation_warnings.append(f"answer references an unknown citation: {unknown}")
-
         return QueryResult(
-            question=question,
-            answer=answer,
-            citations=citations,
-            abstained=validation.is_abstention,
-            validation_warnings=validation_warnings,
-            mode=QueryMode.FAST.value,
+            question=question, answer=answer, citations=citations,
+            abstained=validation.is_abstention, validation_warnings=warnings,
+            mode=mode.value,
         )
 
     def _ask_agent(
@@ -319,32 +370,25 @@ class QueryService:
         final_ai_message = next(
             (m for m in reversed(messages) if isinstance(m, AIMessage)), None
         )
-        answer = str(final_ai_message.content) if final_ai_message is not None else ABSTENTION_PHRASE
+        answer = (
+            str(final_ai_message.content)
+            if final_ai_message is not None and not final_ai_message.tool_calls
+            else ""
+        )
 
         resolved = _citations_from_agent_messages(messages, self._resolver)
-        validation = validate_citations(answer, resolved)
+        if self._trace_callback is not None:
+            self._trace_callback({
+                "event": "agent_end",
+                "messages": messages,
+                "iterations": result_state.get("iterations", 0),
+                "tool_calls_made": result_state.get("tool_calls_made", 0),
+                "blocked_calls": result_state.get("blocked_calls", []),
+            })
 
-        citations = [
-            Citation(
-                citation_label=chunk.citation_label,
-                chunk_id=chunk.chunk_id,
-                source_display_name=chunk.source_display_name,
-            )
-            for chunk in resolved
-            if chunk.citation_label in validation.cited_labels
-        ]
-
-        validation_warnings: list[str] = []
-        if validation.uncited:
-            validation_warnings.append("answer contains no citations")
-        for unknown in validation.unknown_citations:
-            validation_warnings.append(f"answer references an unknown citation: {unknown}")
-
-        return QueryResult(
-            question=question,
-            answer=answer,
-            citations=citations,
-            abstained=validation.is_abstention,
-            validation_warnings=validation_warnings,
-            mode=QueryMode.AGENT.value,
+        return self._finalize_answer(
+            question=question, answer=answer, resolved=resolved,
+            mode=QueryMode.AGENT,
+            retry_system=SYSTEM_PROMPT,
+            retry_prompt=f"Context:\n{build_context_block(resolved)}\n\nQuestion: {question}\n\nAnswer:",
         )

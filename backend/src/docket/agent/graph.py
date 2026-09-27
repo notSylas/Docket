@@ -57,7 +57,8 @@ work end-to-end when called directly.
 from __future__ import annotations
 
 import json
-from typing import Any
+import time
+from typing import Any, Callable
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_ollama import ChatOllama
@@ -121,6 +122,7 @@ def build_agent(
     num_ctx: int,
     num_predict: int,
     require_tool_call: str | None = None,
+    trace_callback: Callable[[dict[str, Any]], None] | None = None,
 ):
     """Compile the bounded agent graph for a given tool allow-list and model/
     budget configuration. `allowed_tools` maps tool name -> LangChain tool
@@ -143,7 +145,18 @@ def build_agent(
     gateway_node = make_policy_gateway(allowed_tools, max_tool_calls)
 
     def call_model(state: AgentState) -> dict:
+        started = time.perf_counter()
         response = llm_with_tools.invoke(state["messages"])
+        if trace_callback is not None:
+            trace_callback({
+                "event": "model_call", "messages": list(state["messages"]),
+                "response": response, "latency_s": time.perf_counter() - started,
+                "model": gateway_llm_model,
+                "options": {"temperature": 0, "num_ctx": num_ctx, "num_predict": num_predict},
+                "tools": [{"name": name, "description": tool.description,
+                           "parameters": tool.args_schema.model_json_schema()}
+                          for name, tool in allowed_tools.items()],
+            })
         return {"messages": [response], "iterations": state["iterations"] + 1}
 
     def force_tool_use(state: AgentState) -> dict:
@@ -214,13 +227,15 @@ def build_investigation_agent(
     gateway: InferenceGateway,
     resolver: EvidenceResolver,
     settings: Settings = default_settings,
+    trace_callback: Callable[[dict[str, Any]], None] | None = None,
+    top_k: int = 8,
 ):
     """Real-use convenience wrapper: builds the real `search_knowledge`/
     `read_evidence` tools bound to `engine`/`table`/`gateway`/`resolver`,
     then compiles a bounded agent graph over them via `build_agent()`,
     using `settings.gen_model`/`max_agent_iterations`/`max_agent_tool_calls`.
     """
-    search_knowledge = make_search_knowledge_tool(engine=engine, table=table, gateway=gateway)
+    search_knowledge = make_search_knowledge_tool(engine=engine, table=table, gateway=gateway, top_k=top_k)
     read_evidence = make_read_evidence_tool(resolver=resolver)
     allowed_tools = {"search_knowledge": search_knowledge, "read_evidence": read_evidence}
 
@@ -232,4 +247,5 @@ def build_investigation_agent(
         num_ctx=settings.num_ctx,
         num_predict=settings.num_predict,
         require_tool_call="read_evidence",
+        trace_callback=trace_callback,
     )
