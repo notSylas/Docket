@@ -154,12 +154,17 @@ def query(question: str = typer.Argument(..., help="Question to ask over ingeste
         typer.echo("No content has been indexed yet. Run `docket ingest` first.")
         raise typer.Exit(code=1)
 
+    # `None` (without ever opening the `pages` LanceDB table) unless
+    # `settings.visual_index_enabled` is True -- see `AppContext.page_table_for_query`.
+    page_table = context.page_table_for_query
+
     query_service = QueryService(
         engine=context.engine,
         table=table,
         gateway=context.gateway,
         resolver=context.resolver,
         settings=context.settings,
+        page_table=page_table,
     )
     result = query_service.ask(question)
 

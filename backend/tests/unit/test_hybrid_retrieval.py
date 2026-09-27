@@ -21,14 +21,17 @@ from docket.db.models import (
 from docket.index.base import ChunkRecord
 from docket.index.fts_index import FtsIndexWriter
 from docket.index.vector_index import LanceIndexWriter
+from docket.index.visual_index import LancePageIndexWriter, PageRecord
 from docket.inference.gateway import FakeInferenceGateway
 from docket.retrieval.hybrid import (
     RankedChunk,
+    _filter_active_and_current_versions,
     _sanitize_fts_query,
     fts_search,
     hybrid_search,
     reciprocal_rank_fusion,
     vector_search,
+    visual_search,
 )
 
 
@@ -130,6 +133,8 @@ def _insert_metadata(
                     heading=record.heading,
                     text=record.text,
                     content_hash=record.content_hash,
+                    page_start=record.page_start,
+                    page_end=record.page_end,
                 )
             )
         session.commit()
@@ -815,3 +820,339 @@ def test_reactivated_source_becomes_searchable_again(migrated_sqlite_engine: Eng
     _set_source_status(migrated_sqlite_engine, "src_flip", SourceStatus.ACTIVE)
 
     assert fts_search(migrated_sqlite_engine, "woozlebane", top_k=8) == ["chk_flip"]
+
+
+# ---------------------------------------------------------------------------
+# Visual retrieval checkpoint 3 -- reciprocal_rank_fusion with 3 lists,
+# _filter_active_and_current_versions, visual_search, and hybrid_search's
+# optional page_table leg.
+# ---------------------------------------------------------------------------
+
+
+def test_rrf_three_lists_fuses_correctly() -> None:
+    k = 60
+    list_a = ["chk_x", "chk_y"]  # chk_x rank 0, chk_y rank 1
+    list_b = ["chk_y", "chk_z"]  # chk_y rank 0, chk_z rank 1
+    list_c = ["chk_z", "chk_w"]  # chk_z rank 0, chk_w rank 1
+
+    fused = reciprocal_rank_fusion([list_a, list_b, list_c], k=k)
+
+    expected_scores = {
+        "chk_x": 1.0 / (k + 0 + 1),
+        "chk_y": 1.0 / (k + 1 + 1) + 1.0 / (k + 0 + 1),
+        "chk_z": 1.0 / (k + 1 + 1) + 1.0 / (k + 0 + 1),
+        "chk_w": 1.0 / (k + 1 + 1),
+    }
+    scores_by_id = {rc.chunk_id: rc.score for rc in fused}
+    assert scores_by_id == expected_scores
+    # chk_y/chk_z each appear in two of the three lists, so both outrank the
+    # single-list-only entries (chk_x/chk_w).
+    assert {rc.chunk_id for rc in fused[:2]} == {"chk_y", "chk_z"}
+
+
+def test_filter_active_and_current_versions_keeps_active_current_version(
+    migrated_sqlite_engine: Engine,
+) -> None:
+    records = [
+        ChunkRecord(
+            chunk_id="chk_1", source_id="src_1", evidence_version_id="ev_1",
+            evidence_unit_id="eu_1", chunk_recipe_id="rcp_1", ordinal=0, heading=None,
+            text="x", content_hash="hash_1",
+        )
+    ]
+    _insert_metadata(migrated_sqlite_engine, records)
+
+    assert _filter_active_and_current_versions(migrated_sqlite_engine, ["ev_1"]) == ["ev_1"]
+
+
+def test_filter_active_and_current_versions_drops_revoked_source(
+    migrated_sqlite_engine: Engine,
+) -> None:
+    records = [
+        ChunkRecord(
+            chunk_id="chk_revoked", source_id="src_revoked", evidence_version_id="ev_revoked",
+            evidence_unit_id="eu_1", chunk_recipe_id="rcp_1", ordinal=0, heading=None,
+            text="x", content_hash="hash_revoked",
+        )
+    ]
+    _insert_metadata(migrated_sqlite_engine, records, status=SourceStatus.REVOKED)
+
+    assert _filter_active_and_current_versions(migrated_sqlite_engine, ["ev_revoked"]) == []
+
+
+def test_filter_active_and_current_versions_drops_non_current_version(
+    migrated_sqlite_engine: Engine,
+) -> None:
+    records = [
+        ChunkRecord(
+            chunk_id="chk_old", source_id="src_1", evidence_version_id="ev_old",
+            evidence_unit_id="eu_1", chunk_recipe_id="rcp_1", ordinal=0, heading=None,
+            text="x", content_hash="hash_old",
+        )
+    ]
+    _insert_metadata(migrated_sqlite_engine, records, is_current=False)
+
+    assert _filter_active_and_current_versions(migrated_sqlite_engine, ["ev_old"]) == []
+
+
+def test_filter_active_and_current_versions_preserves_order_of_mixed_input(
+    migrated_sqlite_engine: Engine,
+) -> None:
+    good = ChunkRecord(
+        chunk_id="chk_good", source_id="src_good", evidence_version_id="ev_good",
+        evidence_unit_id="eu_good", chunk_recipe_id="rcp_1", ordinal=0, heading=None,
+        text="x", content_hash="hash_good",
+    )
+    bad = ChunkRecord(
+        chunk_id="chk_bad", source_id="src_bad", evidence_version_id="ev_bad",
+        evidence_unit_id="eu_bad", chunk_recipe_id="rcp_1", ordinal=0, heading=None,
+        text="y", content_hash="hash_bad",
+    )
+    _insert_metadata(migrated_sqlite_engine, [good], status=SourceStatus.ACTIVE)
+    _insert_metadata(migrated_sqlite_engine, [bad], status=SourceStatus.REVOKED)
+
+    result = _filter_active_and_current_versions(migrated_sqlite_engine, ["ev_bad", "ev_good"])
+    assert result == ["ev_good"]
+
+
+def test_filter_active_and_current_versions_empty_input_returns_empty(
+    migrated_sqlite_engine: Engine,
+) -> None:
+    assert _filter_active_and_current_versions(migrated_sqlite_engine, []) == []
+
+
+def _populate_pages(
+    tmp_path: Path, records: list[PageRecord], embeddings: list[list[float]]
+):
+    writer = LancePageIndexWriter(tmp_path / "lancedb")
+    writer.upsert(records, embeddings=embeddings)
+    return writer.table
+
+
+def test_visual_search_maps_page_to_chunk_ids_via_page_span_ordered_by_ordinal(
+    migrated_sqlite_engine: Engine, tmp_path: Path
+) -> None:
+    gateway = FakeInferenceGateway()
+    chunk_records = [
+        ChunkRecord(
+            chunk_id="chk_p1a", source_id="src_1", evidence_version_id="ev_1",
+            evidence_unit_id="eu_1", chunk_recipe_id="rcp_1", ordinal=0, heading=None,
+            text="chunk one on page 1", content_hash="hash_p1a", page_start=1, page_end=1,
+        ),
+        ChunkRecord(
+            chunk_id="chk_p1b", source_id="src_1", evidence_version_id="ev_1",
+            evidence_unit_id="eu_1", chunk_recipe_id="rcp_1", ordinal=1, heading=None,
+            text="chunk two also on page 1", content_hash="hash_p1b", page_start=1, page_end=1,
+        ),
+        ChunkRecord(
+            chunk_id="chk_p2", source_id="src_1", evidence_version_id="ev_1",
+            evidence_unit_id="eu_1", chunk_recipe_id="rcp_1", ordinal=2, heading=None,
+            text="chunk three on page 2", content_hash="hash_p2", page_start=2, page_end=2,
+        ),
+    ]
+    _insert_metadata(migrated_sqlite_engine, chunk_records)
+
+    description = "a diagram describing widgets on page one"
+    page_table = _populate_pages(
+        tmp_path,
+        [PageRecord(evidence_version_id="ev_1", source_id="src_1", page_no=1, description=description)],
+        [gateway.embed(description)],
+    )
+
+    results = visual_search(page_table, migrated_sqlite_engine, gateway, description, top_k=5)
+
+    # page 1's two chunks, in ordinal order; page 2's chunk never resolved.
+    assert results == ["chk_p1a", "chk_p1b"]
+
+
+def test_visual_search_dedupes_chunk_spanning_multiple_retrieved_pages(
+    migrated_sqlite_engine: Engine, tmp_path: Path
+) -> None:
+    gateway = FakeInferenceGateway()
+    chunk_records = [
+        ChunkRecord(
+            chunk_id="chk_spanning", source_id="src_1", evidence_version_id="ev_1",
+            evidence_unit_id="eu_1", chunk_recipe_id="rcp_1", ordinal=0, heading=None,
+            text="a chunk spanning pages 1 and 2", content_hash="hash_span",
+            page_start=1, page_end=2,
+        ),
+    ]
+    _insert_metadata(migrated_sqlite_engine, chunk_records)
+
+    desc_page1 = "widgets page one description"
+    desc_page2 = "widgets page two description"
+    page_table = _populate_pages(
+        tmp_path,
+        [
+            PageRecord(evidence_version_id="ev_1", source_id="src_1", page_no=1, description=desc_page1),
+            PageRecord(evidence_version_id="ev_1", source_id="src_1", page_no=2, description=desc_page2),
+        ],
+        [gateway.embed(desc_page1), gateway.embed(desc_page2)],
+    )
+
+    # Both pages rank -- the single spanning chunk must appear exactly once,
+    # not twice.
+    results = visual_search(page_table, migrated_sqlite_engine, gateway, "widgets", top_k=5)
+    assert results == ["chk_spanning"]
+
+
+def test_visual_search_excludes_revoked_source_page_at_evidence_version_level(
+    migrated_sqlite_engine: Engine, tmp_path: Path
+) -> None:
+    gateway = FakeInferenceGateway()
+    chunk_records = [
+        ChunkRecord(
+            chunk_id="chk_revoked_page", source_id="src_revoked", evidence_version_id="ev_revoked",
+            evidence_unit_id="eu_1", chunk_recipe_id="rcp_1", ordinal=0, heading=None,
+            text="revoked source content", content_hash="hash_rev", page_start=1, page_end=1,
+        ),
+    ]
+    _insert_metadata(migrated_sqlite_engine, chunk_records, status=SourceStatus.REVOKED)
+
+    description = "a description of the revoked page"
+    page_table = _populate_pages(
+        tmp_path,
+        [PageRecord(evidence_version_id="ev_revoked", source_id="src_revoked", page_no=1, description=description)],
+        [gateway.embed(description)],
+    )
+
+    assert visual_search(page_table, migrated_sqlite_engine, gateway, description, top_k=5) == []
+
+
+def test_visual_search_chunk_level_filter_catches_inconsistent_revoked_chunk(
+    migrated_sqlite_engine: Engine, tmp_path: Path
+) -> None:
+    """Belt-and-suspenders: `visual_search` re-checks active/current at the
+    chunk level (via `_filter_active_and_current`) even after the
+    evidence_version-level check (`_filter_active_and_current_versions`)
+    already passed -- matching the paranoia `fts_search`'s own SQL join
+    already has. Builds a deliberately inconsistent fixture (a chunk whose
+    own `source_id` points at a REVOKED source, while the evidence_version
+    it belongs to is attached to a separate, ACTIVE source) that only the
+    chunk-level re-check can catch, to prove that second check is real and
+    not a no-op."""
+    gateway = FakeInferenceGateway()
+    session_factory = get_session_factory(migrated_sqlite_engine)
+    with session_factory() as session:
+        session.merge(Workspace(id="ws_1", name="ws-1"))
+        session.merge(AuthorizedSource(id="auth_active", workspace_id="ws_1", scope_path="/tmp"))
+        session.merge(AuthorizedSource(id="auth_revoked", workspace_id="ws_1", scope_path="/tmp"))
+        session.merge(
+            Source(
+                id="src_active_ev", workspace_id="ws_1", authorized_source_id="auth_active",
+                source_type="local_folder", path="/tmp/a", status=SourceStatus.ACTIVE,
+            )
+        )
+        session.merge(
+            Source(
+                id="src_chunk_revoked", workspace_id="ws_1", authorized_source_id="auth_revoked",
+                source_type="local_folder", path="/tmp/b", status=SourceStatus.REVOKED,
+            )
+        )
+        session.merge(
+            EvidenceVersion(
+                id="ev_1", source_id="src_active_ev", content_hash="hash_ev", byte_size=1,
+                parser_name="test", parser_version="1", is_current=True,
+            )
+        )
+        session.merge(
+            ChunkRecipe(id="rcp_1", chunk_size=100, overlap=0, splitter="test", parser_name="test", parser_version="1")
+        )
+        session.merge(
+            EvidenceUnit(id="eu_1", evidence_version_id="ev_1", unit_index=0, heading=None, content_hash="hash_eu")
+        )
+        session.merge(
+            Chunk(
+                id="chk_inconsistent", source_id="src_chunk_revoked", evidence_version_id="ev_1",
+                evidence_unit_id="eu_1", chunk_recipe_id="rcp_1", ordinal=0, heading=None,
+                text="inconsistent chunk", content_hash="hash_inconsistent",
+                page_start=1, page_end=1,
+            )
+        )
+        session.commit()
+
+    description = "description of the page"
+    page_table = _populate_pages(
+        tmp_path,
+        [PageRecord(evidence_version_id="ev_1", source_id="src_active_ev", page_no=1, description=description)],
+        [gateway.embed(description)],
+    )
+
+    assert visual_search(page_table, migrated_sqlite_engine, gateway, description, top_k=5) == []
+
+
+def test_visual_search_returns_empty_when_pages_table_not_created(
+    migrated_sqlite_engine: Engine, tmp_path: Path
+) -> None:
+    gateway = FakeInferenceGateway()
+    writer = LancePageIndexWriter(tmp_path / "lancedb")
+    assert writer.table is None  # nothing upserted yet
+
+    assert visual_search(writer.table, migrated_sqlite_engine, gateway, "anything", top_k=5) == []
+
+
+def test_hybrid_search_default_page_table_none_never_calls_visual_search(
+    migrated_sqlite_engine: Engine, tmp_path: Path, monkeypatch
+) -> None:
+    """`page_table` defaults to `None`; when it is `None` (whether by
+    omission or explicitly), `hybrid_search` must not even attempt a visual
+    search -- this is the strict backward-compatibility requirement: every
+    existing caller that doesn't pass `page_table` gets exactly the 2-way
+    fusion this function has always done."""
+    gateway = FakeInferenceGateway()
+    _populate_fts(migrated_sqlite_engine)
+    table = _populate_vector(tmp_path, migrated_sqlite_engine, gateway)
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("visual_search must not be called when page_table is None")
+
+    monkeypatch.setattr("docket.retrieval.hybrid.visual_search", _boom)
+
+    query = _DOCS[2][1]
+    fused_omitted = hybrid_search(engine=migrated_sqlite_engine, table=table, gateway=gateway, query=query, top_k=3)
+    fused_explicit_none = hybrid_search(
+        engine=migrated_sqlite_engine, table=table, gateway=gateway, query=query, top_k=3, page_table=None
+    )
+
+    assert fused_omitted == fused_explicit_none
+    assert fused_omitted[0].chunk_id == "chk_gamma"
+
+
+def test_hybrid_search_with_page_table_surfaces_visual_only_chunk(
+    migrated_sqlite_engine: Engine, tmp_path: Path
+) -> None:
+    """A chunk_id present ONLY via the visual retriever (never indexed into
+    `fts_chunks` or the chunks vector table -- e.g. content only ever
+    resolved from a page image) must still win a spot in the final fused
+    output when `page_table` is supplied."""
+    gateway = FakeInferenceGateway()
+    _populate_fts(migrated_sqlite_engine)
+    table = _populate_vector(tmp_path, migrated_sqlite_engine, gateway)
+
+    visual_only_records = [
+        ChunkRecord(
+            chunk_id="chk_visual_only", source_id="src_visual", evidence_version_id="ev_visual",
+            evidence_unit_id="eu_visual", chunk_recipe_id="rcp_1", ordinal=0, heading=None,
+            text="a chunk that only the visual retriever can find",
+            content_hash="hash_visual_only", page_start=1, page_end=1,
+        )
+    ]
+    _insert_metadata(migrated_sqlite_engine, visual_only_records)
+
+    description = "a diagram on the page that only the visual retriever describes"
+    page_table = _populate_pages(
+        tmp_path,
+        [PageRecord(evidence_version_id="ev_visual", source_id="src_visual", page_no=1, description=description)],
+        [gateway.embed(description)],
+    )
+
+    # Confirm it's genuinely absent from both individual legs first.
+    assert "chk_visual_only" not in fts_search(migrated_sqlite_engine, description, top_k=8)
+    assert "chk_visual_only" not in vector_search(table, migrated_sqlite_engine, gateway, description, top_k=8)
+
+    fused = hybrid_search(
+        engine=migrated_sqlite_engine, table=table, gateway=gateway, query=description,
+        top_k=8, page_table=page_table,
+    )
+
+    assert "chk_visual_only" in [rc.chunk_id for rc in fused]

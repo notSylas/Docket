@@ -44,12 +44,16 @@ QueryServiceFactory = Callable[[Any, Any], Any]
 
 
 def _default_factory(context: Any, table: Any) -> QueryService:
+    # `None` (without ever opening the `pages` LanceDB table) unless
+    # `settings.visual_index_enabled` is True -- see `AppContext.page_table_for_query`.
+    page_table = context.page_table_for_query
     return QueryService(
         engine=context.engine,
         table=table,
         gateway=context.gateway,
         resolver=context.resolver,
         settings=context.settings,
+        page_table=page_table,
     )
 
 

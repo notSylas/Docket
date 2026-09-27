@@ -149,6 +149,25 @@ class AppContext:
     def visual_index_writer(self) -> LancePageIndexWriter:
         return LancePageIndexWriter(self.settings.lancedb_path)
 
+    @property
+    def page_table_for_query(self):
+        """The `pages` LanceDB table to pass into `hybrid_search`'s
+        `page_table` parameter for a query, or `None`.
+
+        Mirrors `vector_writer.table`'s "open on read" shape, but gated
+        behind `settings.visual_index_enabled` on top: when the flag is
+        False (the default), this returns `None` *without ever accessing*
+        `self.visual_index_writer` -- so the `LancePageIndexWriter` is never
+        constructed and the `pages` LanceDB table is never opened/queried
+        for an install that hasn't turned this on. Both real query call
+        sites (`cli/main.py`'s `query` command, `cli/interactive/session.py`'s
+        `_default_factory`) go through this property rather than
+        duplicating the gating check inline.
+        """
+        if not self.settings.visual_index_enabled:
+            return None
+        return self.visual_index_writer.table
+
     @cached_property
     def index_manager(self) -> IndexManager:
         return IndexManager(self.fts_writer, self.vector_writer, self.gateway)

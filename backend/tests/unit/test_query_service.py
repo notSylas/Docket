@@ -814,3 +814,69 @@ def test_agent_pending_tool_call_is_not_a_final_answer(migrated_sqlite_engine, t
     result = service.ask(CHUNK_TEXT, mode=QueryMode.AGENT)
     assert result.abstained and result.answer == ABSTENTION_PHRASE
     assert not gateway.generate_calls
+
+
+# ---------------------------------------------------------------------------
+# Visual retrieval checkpoint 3 -- `page_table` threading on the FAST path.
+# ---------------------------------------------------------------------------
+
+
+def test_ask_fast_default_page_table_is_none_threaded_into_hybrid_search(
+    migrated_sqlite_engine: Engine, tmp_path: Path, built: dict, monkeypatch
+) -> None:
+    """`QueryService`'s `page_table` param defaults to `None`. Every
+    existing caller (that doesn't know about visual retrieval) constructs
+    `QueryService` without it, so `_ask_fast` must call `hybrid_search` with
+    `page_table=None` -- exactly the argument that makes `hybrid_search` skip
+    `visual_search` entirely (see `test_hybrid_retrieval.py`)."""
+    import docket.query.service as service_module
+
+    gateway = FakeInferenceGateway()
+    table = _index_chunk(migrated_sqlite_engine, tmp_path, gateway, built)
+    resolver = EvidenceResolver(built["session_factory"])
+
+    captured: dict = {}
+
+    def _fake_hybrid_search(**kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(service_module, "hybrid_search", _fake_hybrid_search)
+
+    service = QueryService(
+        engine=migrated_sqlite_engine, table=table, gateway=gateway, resolver=resolver
+    )
+    service.ask(CHUNK_TEXT)
+
+    assert "page_table" in captured
+    assert captured["page_table"] is None
+
+
+def test_ask_fast_threads_supplied_page_table_into_hybrid_search(
+    migrated_sqlite_engine: Engine, tmp_path: Path, built: dict, monkeypatch
+) -> None:
+    """When a caller does supply `page_table` (visual retrieval enabled),
+    `_ask_fast` must pass that exact object through to `hybrid_search`,
+    unmodified."""
+    import docket.query.service as service_module
+
+    gateway = FakeInferenceGateway()
+    table = _index_chunk(migrated_sqlite_engine, tmp_path, gateway, built)
+    resolver = EvidenceResolver(built["session_factory"])
+    sentinel_page_table = object()
+
+    captured: dict = {}
+
+    def _fake_hybrid_search(**kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(service_module, "hybrid_search", _fake_hybrid_search)
+
+    service = QueryService(
+        engine=migrated_sqlite_engine, table=table, gateway=gateway, resolver=resolver,
+        page_table=sentinel_page_table,
+    )
+    service.ask(CHUNK_TEXT)
+
+    assert captured["page_table"] is sentinel_page_table

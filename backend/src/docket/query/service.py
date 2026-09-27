@@ -145,10 +145,24 @@ class QueryService:
         settings: Settings = default_settings,
         agent: Any | None = None,
         trace_callback: Callable[[dict[str, Any]], None] | None = None,
+        page_table: Any | None = None,
     ):
         """
         `classifier` defaults to `HeuristicQueryClassifier()` -- zero-cost,
         deterministic routing with no dependencies of its own.
+
+        `page_table` (visual retrieval checkpoint 3) is an optional LanceDB
+        `pages` table (see `docket.index.visual_index`), threaded straight
+        through to `hybrid_search`'s own `page_table` parameter on the FAST
+        path. Defaults to `None`, in which case `_ask_fast` calls
+        `hybrid_search` exactly as it did before this parameter existed --
+        callers that don't know about visual retrieval (every existing
+        caller) get byte-for-byte unchanged behavior. Callers wire it in only
+        when `settings.visual_index_enabled` is `True` (see `cli/main.py`'s
+        `query` command and `cli/interactive/session.py`'s
+        `_default_factory` for the two real wiring sites); the AGENT path's
+        `search_knowledge` tool (`docket.agent.tools`) is unaffected and
+        still runs 2-way fusion only -- out of scope for this checkpoint.
 
         The investigation agent is deliberately NOT built here. Building one
         means constructing real `search_knowledge`/`read_evidence` LangChain
@@ -186,6 +200,7 @@ class QueryService:
         self._settings = settings
         self._agent = agent
         self._trace_callback = trace_callback
+        self._page_table = page_table
 
     def _get_agent(self) -> Any:
         if self._agent is None:
@@ -246,6 +261,7 @@ class QueryService:
             gateway=self._gateway,
             query=question,
             top_k=self._top_k,
+            page_table=self._page_table,
         )
 
         if not ranked_chunks:
