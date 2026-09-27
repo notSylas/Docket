@@ -28,6 +28,8 @@ from typing import Annotated, Any, Callable, TypedDict
 from langchain_core.messages import ToolMessage
 from langgraph.graph.message import add_messages
 
+from docket.prompts.agent import policy_denied_budget, policy_denied_tool
+
 
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
@@ -62,7 +64,7 @@ def make_policy_gateway(
                 blocked.append(name)
                 tool_messages.append(
                     ToolMessage(
-                        content=f"POLICY DENIED: '{name}' is not an authorized tool.",
+                        content=policy_denied_tool(name),
                         tool_call_id=call["id"],
                     )
                 )
@@ -70,7 +72,7 @@ def make_policy_gateway(
             if calls_made >= max_tool_calls:
                 tool_messages.append(
                     ToolMessage(
-                        content="POLICY DENIED: tool-call budget exhausted for this investigation.",
+                        content=policy_denied_budget(),
                         tool_call_id=call["id"],
                     )
                 )

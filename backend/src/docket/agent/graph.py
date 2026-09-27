@@ -68,6 +68,7 @@ from docket.agent.policy_gateway import AgentState, make_policy_gateway
 from docket.agent.tools import make_read_evidence_tool, make_search_knowledge_tool
 from docket.config import Settings, settings as default_settings
 from docket.inference.gateway import InferenceGateway
+from docket.prompts.agent import missing_any_tool_message, missing_required_tool_message
 from docket.retrieval.resolver import EvidenceResolver
 
 
@@ -175,20 +176,9 @@ def build_agent(
         terminates (at `end`, with whatever it last said, still subject to
         the existing citation validation) rather than looping forever."""
         if require_tool_call:
-            content = (
-                f"You answered without a successful {require_tool_call} call. "
-                "Every claim in your final answer must be grounded in "
-                f"evidence you actually retrieved -- call search_knowledge, "
-                f"then call {require_tool_call} on one of its chunk_ids, and "
-                "copy its citation_label into your answer, before answering."
-            )
+            content = missing_required_tool_message(require_tool_call)
         else:
-            content = (
-                "You answered without calling any tool. Every claim in your "
-                "final answer must be grounded in evidence you actually "
-                "retrieved -- investigate using the available tools before "
-                "answering."
-            )
+            content = missing_any_tool_message()
         return {"messages": [HumanMessage(content=content)]}
 
     def should_continue(state: AgentState) -> str:

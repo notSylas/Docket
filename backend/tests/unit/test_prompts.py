@@ -3,13 +3,8 @@ needed, hand-built `ResolvedEvidence` lists only)."""
 
 from __future__ import annotations
 
-from docket.query.prompts import (
-    ABSTENTION_PHRASE,
-    AGENT_SYSTEM_PROMPT,
-    SYSTEM_PROMPT,
-    build_context_block,
-    validate_citations,
-)
+from docket.query.citations import build_context_block, validate_citations
+from docket.query.prompts import ABSTENTION_PHRASE, AGENT_SYSTEM_PROMPT, SYSTEM_PROMPT
 from docket.retrieval.resolver import ResolvedEvidence
 
 

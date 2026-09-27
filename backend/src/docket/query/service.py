@@ -35,6 +35,7 @@ from docket.config import settings as default_settings
 from docket.inference.gateway import InferenceGateway
 from docket.query.classifier import HeuristicQueryClassifier, QueryClassifier, QueryMode
 from docket.query.conversation import ConversationTurn, format_history_block, trim_history
+from docket.query.citations import build_context_block, validate_citations
 from docket.query.latex import normalize_latex
 from docket.query.prompts import (
     ABSTENTION_PHRASE,
@@ -42,8 +43,6 @@ from docket.query.prompts import (
     AGENT_SYSTEM_PROMPT_WITH_HISTORY,
     SYSTEM_PROMPT,
     SYSTEM_PROMPT_WITH_HISTORY,
-    build_context_block,
-    validate_citations,
 )
 from docket.retrieval.hybrid import hybrid_search
 from docket.retrieval.resolver import ChunkNotFoundError, EvidenceResolver, ResolvedEvidence

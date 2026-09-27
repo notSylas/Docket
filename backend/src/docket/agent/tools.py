@@ -26,6 +26,7 @@ from typing import Any
 from langchain_core.tools import BaseTool, tool
 
 from docket.inference.gateway import InferenceGateway
+from docket.prompts.agent import READ_EVIDENCE_DESCRIPTION, SEARCH_KNOWLEDGE_DESCRIPTION
 from docket.retrieval.hybrid import hybrid_search
 from docket.retrieval.resolver import ChunkNotFoundError, EvidenceResolver
 
@@ -43,11 +44,9 @@ def make_search_knowledge_tool(
     real content, mirroring the spike's two-tool split.
     """
 
-    @tool
+    @tool(description=SEARCH_KNOWLEDGE_DESCRIPTION)
     def search_knowledge(query: str) -> str:
-        """Search the local evidence index for chunks relevant to a query.
-        Returns a JSON list of {chunk_id, score} results, best match first.
-        Call read_evidence with a chunk_id to see its full text."""
+        """Model-facing description lives in `docket.prompts.agent.SEARCH_KNOWLEDGE_DESCRIPTION`."""
         ranked = hybrid_search(engine=engine, table=table, gateway=gateway, query=query, top_k=top_k)
         return json.dumps({"results": [{"chunk_id": rc.chunk_id, "score": rc.score} for rc in ranked]})
 
@@ -75,11 +74,9 @@ def make_read_evidence_tool(*, resolver: EvidenceResolver) -> BaseTool:
     crash the whole agent loop over a single bad tool argument.
     """
 
-    @tool
+    @tool(description=READ_EVIDENCE_DESCRIPTION)
     def read_evidence(chunk_id: str) -> str:
-        """Read the full text of a specific evidence chunk by its id (as
-        returned by search_knowledge). Returns JSON with the chunk's id,
-        text, citation_label, source_display_name, and heading."""
+        """Model-facing description lives in `docket.prompts.agent.READ_EVIDENCE_DESCRIPTION`."""
         try:
             resolved = resolver.resolve(chunk_id)
         except ChunkNotFoundError:

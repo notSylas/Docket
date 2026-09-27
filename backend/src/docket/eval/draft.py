@@ -41,9 +41,9 @@ from docket.eval.schema import (
 )
 from docket.eval.scoring import normalize_text
 from docket.inference.gateway import InferenceGateway
+from docket.prompts.draft import DRAFT_SYSTEM, draft_prompt
 
 MIN_CHUNK_CHARS = 80
-MAX_PROMPT_CHUNK_CHARS = 3000
 DUPLICATE_RATIO = 0.85
 DUPLICATE_JACCARD = 0.8
 DRAFT_TYPES = (
@@ -54,11 +54,6 @@ DRAFT_TYPES = (
 )
 
 DRAFT_OPTS: dict = {"think": False, "format": "json", "options": {"temperature": 0}}
-
-DRAFT_SYSTEM = (
-    "You write evaluation questions for a document question-answering system. "
-    "Reply with a single JSON object and nothing else."
-)
 
 _LIST_LINE_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+", re.MULTILINE)
 _TABLE_LINE_RE = re.compile(r"^\s*\|.*\|\s*$", re.MULTILINE)
@@ -102,23 +97,6 @@ def weighted_order(chunks: Sequence[ChunkLike], rng: random.Random) -> list[Chun
 
 
 # -- prompting / parsing -----------------------------------------------------
-
-
-def draft_prompt(chunk: ChunkLike) -> str:
-    where = chunk.source_name + (f" > {chunk.heading}" if chunk.heading else "")
-    return (
-        f"Passage (from {where}):\n\"\"\"\n{chunk.text[:MAX_PROMPT_CHUNK_CHARS]}\n\"\"\"\n\n"
-        "Write ONE question that a reader could answer from this passage alone. Rules:\n"
-        "- The question must be self-contained: never say 'the passage', 'the text' or 'the table'.\n"
-        "- It must ask for a concrete fact (a value, name, date, count, or a list of items), not an opinion.\n"
-        '- "quote": copy 20-60 characters from the passage EXACTLY, character for character, '
-        "the words that contain the answer. Do not paraphrase or fix typos.\n"
-        '- "facts": 1-4 short strings a correct answer must contain (exact numbers, names, values; '
-        "for a list question, one string per item).\n"
-        '- "type": one of single_fact, table_lookup, enumeration, numeric.\n'
-        'If the passage holds no concrete answerable fact, reply {"skip": true}.\n'
-        'Reply as JSON: {"question": "...", "quote": "...", "facts": ["..."], "type": "..."}'
-    )
 
 
 def parse_draft_output(text: str) -> dict | None:
