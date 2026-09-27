@@ -21,6 +21,17 @@ from docket.parsing.normalize import unescape_markdown
 # reach `ParsedDocument.text` or anything downstream of it.
 _PAGE_MARKER_RE = re.compile(r"<!--PAGE:(\d+)-->")
 
+# Scale factor each page is rendered at when Docling produces
+# `document.pages[n].image` (visual retrieval checkpoint 2) -- 2x the PDF's
+# point-based page_width/page_height. Passed straight into `PdfPipelineOptions`
+# below (see `DoclingParser.__init__`'s comment on why 2.0, not Docling's
+# default of 1.0). Exposed as a module constant, not just inlined there, so
+# any code converting a formula region's point-based bbox into this same
+# page image's pixel coordinates (`docket.parsing.formula_crop`) uses the
+# exact value actually used to render -- never a second hardcoded "2.0"
+# that could silently drift out of sync with the real render call.
+PAGE_IMAGES_SCALE = 2.0
+
 
 def _page_marker(page_no: int) -> str:
     return f"<!--PAGE:{page_no}-->"
@@ -263,7 +274,7 @@ class DoclingParser:
         options = PdfPipelineOptions(
             do_formula_enrichment=False,
             generate_page_images=True,
-            images_scale=2.0,
+            images_scale=PAGE_IMAGES_SCALE,
         )
         self._converter = DocumentConverter(
             format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=options)}

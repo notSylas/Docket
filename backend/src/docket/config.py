@@ -22,6 +22,19 @@ class Settings(BaseSettings):
     # explicit decision).
     visual_index_enabled: bool = False
 
+    # Off by default, same posture as `visual_index_enabled`: this checkpoint
+    # builds the formula-region crop + VLM transcription + storage
+    # infrastructure (`docket.parsing.formula_crop`,
+    # `IngestionPipeline._transcribe_formula_regions`), but produces only
+    # unverified transcriptions (`EvidenceVersion.formula_transcriptions_json`)
+    # -- never promoted into searchable/citable evidence. Nothing should call
+    # the VLM for formula regions until this is explicitly turned on, and
+    # turning it on is never itself sufficient to make transcriptions
+    # citable (see Docs/accuracy-evaluation.md's "Formula evidence and
+    # experiments" section -- that requires a separate, later, manually
+    # verified decision).
+    formula_transcription_enabled: bool = False
+
     # Ollama's default context window is 4096 tokens when a model file sets
     # none (confirmed via `ollama ps` on qwen3:14b) -- an 8-chunk retrieval
     # prompt is commonly ~2.6-3.2k tokens on its own, before any conversation

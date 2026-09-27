@@ -159,6 +159,20 @@ class EvidenceVersion(Base):
     # ingest/backfill, never retroactively for rows written before this
     # column existed unless that source is re-ingested.
     page_images_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # JSON-encoded list of {item_ref, page_no, transcription, model} --
+    # unverified VLM transcriptions of individual formula regions (Phase B
+    # checkpoint 1 of "verified formula transcription"), traceable back to
+    # the exact source region in `formula_regions_json` via `item_ref`/
+    # `page_no`. Never overwrites or replaces `formula_regions_json` -- that
+    # column's existing schema is read by other code. Nullable, same posture
+    # as `page_images_json`: populated only when
+    # `settings.formula_transcription_enabled` is True, never retroactively
+    # for rows written before this column existed unless that source is
+    # re-ingested. These transcriptions are NOT searchable/citable evidence
+    # -- see Docs/accuracy-evaluation.md's "Formula evidence and
+    # experiments" section; promoting them requires a separate, later,
+    # manually verified decision this checkpoint does not make.
+    formula_transcriptions_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_current: Mapped[bool] = mapped_column(default=True, nullable=False)
 
     source: Mapped["Source"] = relationship(back_populates="evidence_versions")
