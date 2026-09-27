@@ -5,7 +5,7 @@ from __future__ import annotations
 import ollama
 import pytest
 
-from docket.config import settings
+from docket.core.config import settings
 from docket.inference.gateway import (
     FakeInferenceGateway,
     InferenceGateway,

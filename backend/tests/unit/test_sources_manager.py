@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 from sqlalchemy.orm import sessionmaker
 
-from docket.db.engine import get_engine, get_session_factory
-from docket.db.models import Base, SourceStatus
+from docket.core.db.engine import get_engine, get_session_factory
+from docket.core.db.models import Base, SourceStatus
 from docket.sources.manager import SourceManager, SourceNotFoundError
 
 

@@ -16,8 +16,8 @@ import docx
 import pytest
 from sqlalchemy import Engine, select
 
-from docket.db.engine import get_session_factory
-from docket.db.models import Chunk, EvidenceVersion, IngestionJob, IngestionJobStatus
+from docket.core.db.engine import get_session_factory
+from docket.core.db.models import Chunk, EvidenceVersion, IngestionJob, IngestionJobStatus
 from docket.evidence.manager import EvidenceManager
 from docket.evidence.store import ContentAddressedStore
 from docket.index.fts_index import FtsIndexWriter

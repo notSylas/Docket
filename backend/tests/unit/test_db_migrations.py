@@ -16,7 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 def _alembic_config(sqlite_path: Path) -> Config:
     config = Config(str(REPO_ROOT / "alembic.ini"))
     config.set_main_option(
-        "script_location", str(REPO_ROOT / "src" / "docket" / "db" / "migrations")
+        "script_location", str(REPO_ROOT / "src" / "docket" / "core" / "db" / "migrations")
     )
     config.set_main_option("sqlalchemy.url", f"sqlite:///{sqlite_path}")
     return config

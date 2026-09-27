@@ -28,8 +28,8 @@ import ollama as _ollama
 from sqlalchemy import select
 
 from docket.cli.context import AppContext
-from docket.config import settings
-from docket.db.models import Chunk, EvidenceVersion, Source, SourceStatus
+from docket.core.config import settings
+from docket.core.db.models import Chunk, EvidenceVersion, Source, SourceStatus
 from docket.eval.schema import (
     GoldSet,
     GoldSetError,

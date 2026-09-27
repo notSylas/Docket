@@ -25,10 +25,10 @@ from pathlib import Path
 import pytest
 from sqlalchemy import Engine
 
-from docket.config import settings
-from docket.db.engine import get_session_factory
-from docket.db.identity import compute_chunk_id, compute_recipe_id
-from docket.db.models import (
+from docket.core.config import settings
+from docket.core.db.engine import get_session_factory
+from docket.core.db.identity import compute_chunk_id, compute_recipe_id
+from docket.core.db.models import (
     AuthorizedSource,
     Chunk,
     ChunkRecipe,

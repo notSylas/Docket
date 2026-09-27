@@ -34,8 +34,8 @@ from alembic.config import Config
 from sqlalchemy import Engine
 from sqlalchemy.orm import sessionmaker
 
-from docket.config import Settings, settings
-from docket.db.engine import get_engine, get_session_factory
+from docket.core.config import Settings, settings
+from docket.core.db.engine import get_engine, get_session_factory
 from docket.evidence.manager import EvidenceManager
 from docket.evidence.store import ContentAddressedStore
 from docket.index.fts_index import FtsIndexWriter
@@ -82,7 +82,8 @@ def _alembic_config(sqlite_path: Path) -> Config:
         # `datas` -- see that file.
         config = Config(str(REPO_ROOT / "alembic.ini"))
         config.set_main_option(
-            "script_location", str(REPO_ROOT / "src" / "docket" / "db" / "migrations")
+            "script_location",
+            str(REPO_ROOT / "src" / "docket" / "core" / "db" / "migrations"),
         )
     else:
         # Editable or real pip/pipx install: importlib.resources finds the
@@ -92,7 +93,7 @@ def _alembic_config(sqlite_path: Path) -> Config:
         # during schema development, but the CLI's own runtime path no longer
         # depends on finding it.)
         config = Config()
-        migrations_dir = resources.files("docket.db") / "migrations"
+        migrations_dir = resources.files("docket.core.db") / "migrations"
         config.set_main_option("script_location", str(migrations_dir))
     config.set_main_option("sqlalchemy.url", f"sqlite:///{sqlite_path}")
     return config

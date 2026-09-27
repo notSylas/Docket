@@ -22,7 +22,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-from docket.db.identity import compute_chunk_id, compute_recipe_id
+from docket.core.db.identity import compute_chunk_id, compute_recipe_id
 
 __all__ = [
     "Base",

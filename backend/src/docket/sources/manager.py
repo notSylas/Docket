@@ -15,7 +15,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
-from docket.db.models import AuthorizedSource, Source, SourceStatus, Workspace
+from docket.core.db.models import AuthorizedSource, Source, SourceStatus, Workspace
 
 DEFAULT_WORKSPACE_NAME = "default"
 

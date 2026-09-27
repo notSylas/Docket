@@ -12,7 +12,7 @@ import typer.main
 from docket import __version__
 from docket.cli.context import build_context
 from docket.cli.interactive import run_session
-from docket.db.models import SourceStatus
+from docket.core.db.models import SourceStatus
 from docket.ingestion.pipeline import SourceNotActiveError
 from docket.query.service import QueryService
 from docket.sources.manager import SourceNotFoundError

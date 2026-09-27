@@ -21,9 +21,9 @@ import pytest
 from sqlalchemy import Engine
 
 from docket.agent.tools import make_read_evidence_tool, make_search_knowledge_tool
-from docket.db.engine import get_session_factory
-from docket.db.identity import compute_chunk_id, compute_recipe_id
-from docket.db.models import (
+from docket.core.db.engine import get_session_factory
+from docket.core.db.identity import compute_chunk_id, compute_recipe_id
+from docket.core.db.models import (
     AuthorizedSource,
     Chunk,
     ChunkRecipe,

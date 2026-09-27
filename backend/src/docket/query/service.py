@@ -30,8 +30,8 @@ from pydantic import BaseModel
 from sqlalchemy import Engine
 
 from docket.agent.graph import build_investigation_agent
-from docket.config import Settings
-from docket.config import settings as default_settings
+from docket.core.config import Settings
+from docket.core.config import settings as default_settings
 from docket.inference.gateway import InferenceGateway
 from docket.query.classifier import HeuristicQueryClassifier, QueryClassifier, QueryMode
 from docket.query.conversation import ConversationTurn, format_history_block, trim_history

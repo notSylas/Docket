@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from docket.db.models import SourceStatus
+from docket.core.db.models import SourceStatus
 from docket.ingestion.pipeline import SUPPORTED_EXTENSIONS, ProgressEvent, SourceNotActiveError
 from docket.sources.manager import SourceNotFoundError
 

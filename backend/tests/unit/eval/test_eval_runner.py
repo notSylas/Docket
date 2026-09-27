@@ -7,7 +7,7 @@ import shutil
 import pytest
 from conftest import PlainTextParser, ScriptedGateway
 
-from docket.db.models import Source, SourceStatus
+from docket.core.db.models import Source, SourceStatus
 from docket.eval.report import build_report
 from docket.eval.runner import (
     EvalRunner,

@@ -31,8 +31,8 @@ from typing import Any
 
 from sqlalchemy import Engine, bindparam, text
 
-from docket.config import settings
-from docket.db.models import SourceStatus
+from docket.core.config import settings
+from docket.core.db.models import SourceStatus
 from docket.inference.gateway import InferenceGateway
 
 _DEFAULT_RRF_K = 60

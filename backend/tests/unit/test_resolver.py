@@ -9,9 +9,9 @@ import pytest
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-from docket.db.engine import get_engine, get_session_factory
-from docket.db.identity import compute_chunk_id, compute_recipe_id
-from docket.db.models import (
+from docket.core.db.engine import get_engine, get_session_factory
+from docket.core.db.identity import compute_chunk_id, compute_recipe_id
+from docket.core.db.models import (
     AuthorizedSource,
     Base,
     Chunk,

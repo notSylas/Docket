@@ -16,9 +16,9 @@ from types import SimpleNamespace
 from sqlalchemy import select as sa_select
 
 from conftest import _write_docx
-from docket.config import Settings
-from docket.db.engine import get_session_factory
-from docket.db.models import Chunk, EvidenceVersion
+from docket.core.config import Settings
+from docket.core.db.engine import get_session_factory
+from docket.core.db.models import Chunk, EvidenceVersion
 from docket.evidence.manager import EvidenceManager
 from docket.evidence.store import ContentAddressedStore
 from docket.index.fts_index import FtsIndexWriter

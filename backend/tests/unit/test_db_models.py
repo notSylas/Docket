@@ -10,9 +10,9 @@ from sqlalchemy import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from docket.db.engine import get_engine, get_session_factory
-from docket.db.identity import compute_chunk_id, compute_recipe_id
-from docket.db.models import (
+from docket.core.db.engine import get_engine, get_session_factory
+from docket.core.db.identity import compute_chunk_id, compute_recipe_id
+from docket.core.db.models import (
     Base,
     Chunk,
     ChunkRecipe,
@@ -41,7 +41,7 @@ def _build_chain(session: Session) -> dict:
     session.add(workspace)
     session.flush()
 
-    from docket.db.models import AuthorizedSource
+    from docket.core.db.models import AuthorizedSource
 
     authorized_source = AuthorizedSource(
         workspace_id=workspace.id, scope_path="/home/user/Documents"

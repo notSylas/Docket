@@ -113,9 +113,9 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
-from docket.config import Settings
-from docket.config import settings as _default_settings
-from docket.db.models import (
+from docket.core.config import Settings
+from docket.core.config import settings as _default_settings
+from docket.core.db.models import (
     Chunk,
     IngestionJob,
     IngestionJobStatus,

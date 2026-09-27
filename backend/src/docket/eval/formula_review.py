@@ -47,7 +47,7 @@ import yaml
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
-from docket.db.models import EvidenceVersion
+from docket.core.db.models import EvidenceVersion
 from docket.eval.review import DEFAULT_SAMPLE_SIZE, ReviewResult, bucket_sample, load_labels_yaml
 from docket.evidence.store import ContentAddressedStore
 from docket.parsing.formula_crop import crop_formula_region

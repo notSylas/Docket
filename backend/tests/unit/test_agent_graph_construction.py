@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from docket.agent import graph as graph_mod
 from docket.agent.graph import build_agent, build_investigation_agent
-from docket.config import Settings
+from docket.core.config import Settings
 
 
 def test_build_agent_passes_num_ctx_and_num_predict_to_chat_ollama(mocker) -> None:

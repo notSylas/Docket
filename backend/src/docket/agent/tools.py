@@ -25,7 +25,7 @@ from typing import Any
 
 from langchain_core.tools import BaseTool, tool
 
-from docket.config import settings
+from docket.core.config import settings
 from docket.inference.gateway import InferenceGateway
 from docket.prompts.agent import READ_EVIDENCE_DESCRIPTION, SEARCH_KNOWLEDGE_DESCRIPTION
 from docket.retrieval.hybrid import hybrid_search

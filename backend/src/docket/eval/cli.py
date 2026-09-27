@@ -13,7 +13,7 @@ from typing import Any
 
 import typer
 
-from docket.config import Settings
+from docket.core.config import Settings
 from docket.eval.schema import GoldSetError
 
 eval_app = typer.Typer(help="Measure answer accuracy: run a gold set, judge, report, compare, draft gold.")

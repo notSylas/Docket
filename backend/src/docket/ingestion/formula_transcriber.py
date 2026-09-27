@@ -15,8 +15,8 @@ import json
 
 from sqlalchemy.orm import sessionmaker
 
-from docket.config import Settings
-from docket.db.models import EvidenceVersion
+from docket.core.config import Settings
+from docket.core.db.models import EvidenceVersion
 from docket.evidence.store import ContentAddressedStore
 from docket.inference.gateway import InferenceGateway
 from docket.parsing.formula_crop import crop_formula_region, is_transcribable

@@ -4,8 +4,8 @@ from sqlalchemy import engine_from_config, pool
 
 from alembic import context
 
-from docket.config import settings
-from docket.db.models import Base
+from docket.core.config import settings
+from docket.core.db.models import Base
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

@@ -14,7 +14,7 @@ from typing import Protocol, runtime_checkable
 
 import ollama as _ollama
 
-from docket.config import settings
+from docket.core.config import settings
 
 
 class InferenceError(Exception):

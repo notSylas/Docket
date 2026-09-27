@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from docket.db.identity import compute_recipe_id
+from docket.core.db.identity import compute_recipe_id
 
 DEFAULT_SPLITTER = "heading_then_sliding_window"
 

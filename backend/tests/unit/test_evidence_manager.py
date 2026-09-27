@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 from sqlalchemy.orm import Session, sessionmaker
 
-from docket.db.engine import get_engine, get_session_factory
-from docket.db.models import Base, EvidenceVersion, Source, SourceStatus, Workspace
+from docket.core.db.engine import get_engine, get_session_factory
+from docket.core.db.models import Base, EvidenceVersion, Source, SourceStatus, Workspace
 from docket.evidence.manager import EvidenceManager
 from docket.evidence.store import ContentAddressedStore
 
@@ -41,7 +41,7 @@ def _make_source(session_factory: sessionmaker, *, path: str = "/docs/report.txt
         session.add(workspace)
         session.flush()
 
-        from docket.db.models import AuthorizedSource
+        from docket.core.db.models import AuthorizedSource
 
         authorized_source = AuthorizedSource(workspace_id=workspace.id, scope_path="/docs")
         session.add(authorized_source)

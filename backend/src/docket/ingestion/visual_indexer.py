@@ -12,8 +12,8 @@ import json
 
 from sqlalchemy.orm import sessionmaker
 
-from docket.config import Settings
-from docket.db.models import EvidenceVersion
+from docket.core.config import Settings
+from docket.core.db.models import EvidenceVersion
 from docket.evidence.store import ContentAddressedStore
 from docket.index.visual_index import LancePageIndexWriter, PageRecord
 from docket.inference.gateway import InferenceGateway

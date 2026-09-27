@@ -14,8 +14,8 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
-from docket.db.identity import compute_chunk_id
-from docket.db.models import (
+from docket.core.db.identity import compute_chunk_id
+from docket.core.db.models import (
     Chunk,
     ChunkRecipe as ChunkRecipeRow,
     EvidenceUnit,

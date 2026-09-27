@@ -3,7 +3,7 @@ variable overrides (`DOCKET_` prefix, via `pydantic_settings`)."""
 
 from __future__ import annotations
 
-from docket.config import Settings
+from docket.core.config import Settings
 
 
 def test_num_ctx_and_num_predict_defaults() -> None:

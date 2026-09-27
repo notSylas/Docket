@@ -20,7 +20,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
-from docket.db.models import Chunk, EvidenceVersion, Source, SourceStatus
+from docket.core.db.models import Chunk, EvidenceVersion, Source, SourceStatus
 
 
 @dataclass(frozen=True)

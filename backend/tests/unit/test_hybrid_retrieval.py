@@ -7,8 +7,8 @@ from pathlib import Path
 
 from sqlalchemy import Engine
 
-from docket.db.engine import get_session_factory
-from docket.db.models import (
+from docket.core.db.engine import get_session_factory
+from docket.core.db.models import (
     AuthorizedSource,
     Chunk,
     ChunkRecipe,
