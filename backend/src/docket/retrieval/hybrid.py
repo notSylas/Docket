@@ -31,6 +31,7 @@ from typing import Any
 
 from sqlalchemy import Engine, bindparam, text
 
+from docket.config import settings
 from docket.db.models import SourceStatus
 from docket.inference.gateway import InferenceGateway
 
@@ -357,7 +358,7 @@ def hybrid_search(
     table: Any,
     gateway: InferenceGateway,
     query: str,
-    top_k: int = 8,
+    top_k: int = settings.default_top_k,
     page_table: Any | None = None,
 ) -> list[RankedChunk]:
     """Run lexical and semantic search (each requesting `top_k` results) and

@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from docket.eval.schema import REGEX_PREFIX, Question, RunRecord
+from docket.query.citations import CITATION_TAG_RE as _CITATION_TAG_RE
 from docket.query.prompts import ABSTENTION_PHRASE
 
 # Ollama drops the *start* of an over-long prompt, so a prompt_eval_count far
@@ -27,8 +28,6 @@ _DASH_RE = re.compile(f"[{_DASHES}]")
 _QUOTE_TABLE = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"'})
 _THOUSANDS_RE = re.compile(r"(?<=\d),(?=\d{3}(?!\d))")
 _WS_RE = re.compile(r"\s+")
-# Same shape `docket.query.prompts` uses to recognize citation tags.
-_CITATION_TAG_RE = re.compile(r"\[[^\[\]]*#[^\[\]]*\]")
 _DIGIT_RE = re.compile(r"\d")
 
 

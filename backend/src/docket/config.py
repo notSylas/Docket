@@ -47,6 +47,14 @@ class Settings(BaseSettings):
     chunk_size_words: int = 200
     chunk_overlap_words: int = 40
 
+    # Single source of truth for the fused-retrieval result count. Read as
+    # each call site's own `top_k` parameter default (`retrieval.hybrid.
+    # hybrid_search`, `query.service.QueryService`, `agent.graph.
+    # build_investigation_agent`, `agent.tools.make_search_knowledge_tool`,
+    # `eval.runner.EvalRunner`/`run_eval`) so a future tuning change can't
+    # silently apply to only some of them.
+    default_top_k: int = 8
+
     # 4, not 3: the minimum a well-behaved investigation needs is 3 agent
     # turns (search_knowledge -> read_evidence -> cited final answer). 3
     # left no headroom at all for `docket.agent.graph.build_agent`'s

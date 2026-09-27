@@ -45,7 +45,13 @@ def build_context_block(resolved_chunks: list[ResolvedEvidence]) -> str:
 # citations. The accepted false-positive risk: a bracketed aside that happens
 # to contain a literal "#" character (uncommon in prose) would still be
 # flagged as an unknown citation.
-_CITATION_SHAPED_RE = re.compile(r"\[[^\[\]]*#[^\[\]]*\]")
+#
+# Single source of truth for this pattern: `eval.scoring` imports the
+# compiled `CITATION_TAG_RE` below directly; `query.latex` imports the raw
+# `CITATION_TAG_PATTERN` string to build its own capture-group-wrapped
+# version for `re.split`.
+CITATION_TAG_PATTERN = r"\[[^\[\]]*#[^\[\]]*\]"
+CITATION_TAG_RE = re.compile(CITATION_TAG_PATTERN)
 
 
 @dataclass(frozen=True)
@@ -72,7 +78,7 @@ def validate_citations(answer: str, resolved_chunks: list[ResolvedEvidence]) -> 
       content (non-empty after stripping), and `cited_labels` is empty --
       i.e. the model made claims but attributed none of them.
     - `unknown_citations`: bracket-shaped substrings of `answer` (see
-      `_CITATION_SHAPED_RE`) that do not exactly match any of
+      `CITATION_TAG_RE`) that do not exactly match any of
       `resolved_chunks`'s citation_labels -- a sign the model fabricated or
       mangled a citation instead of reusing a real one verbatim.
     """
@@ -86,7 +92,7 @@ def validate_citations(answer: str, resolved_chunks: list[ResolvedEvidence]) -> 
 
     uncited = not is_abstention and bool(stripped) and not cited_labels
 
-    found_tags = set(_CITATION_SHAPED_RE.findall(answer))
+    found_tags = set(CITATION_TAG_RE.findall(answer))
     unknown_citations = sorted(found_tags - valid_labels)
 
     return ValidationResult(

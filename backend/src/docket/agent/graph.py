@@ -218,7 +218,7 @@ def build_investigation_agent(
     resolver: EvidenceResolver,
     settings: Settings = default_settings,
     trace_callback: Callable[[dict[str, Any]], None] | None = None,
-    top_k: int = 8,
+    top_k: int = default_settings.default_top_k,
 ):
     """Real-use convenience wrapper: builds the real `search_knowledge`/
     `read_evidence` tools bound to `engine`/`table`/`gateway`/`resolver`,

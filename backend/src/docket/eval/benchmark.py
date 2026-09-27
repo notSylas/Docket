@@ -6,7 +6,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from docket.eval.schema import GoldSet, GoldSetError, fingerprint
+from docket.eval.schema import GoldSet, GoldSetError, fingerprint, require_corpus_dir
+from docket.ingestion.pipeline import SUPPORTED_EXTENSIONS
 
 
 class FrozenBenchmark(BaseModel):
@@ -19,11 +20,10 @@ class FrozenBenchmark(BaseModel):
 
 
 def corpus_hashes(corpus: Path) -> dict[str, str]:
-    if not corpus.is_dir():
-        raise GoldSetError(f"corpus folder does not exist: {corpus}")
+    corpus = require_corpus_dir(corpus, error_cls=GoldSetError)
     result: dict[str, str] = {}
     for path in sorted(corpus.rglob("*")):
-        if path.is_file() and path.suffix.lower() in {".pdf", ".docx"}:
+        if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS:
             with path.open("rb") as stream:
                 result[path.relative_to(corpus).as_posix()] = hashlib.file_digest(stream, "sha256").hexdigest()
     if not result:

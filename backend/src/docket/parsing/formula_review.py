@@ -28,13 +28,17 @@ export fields) still guards against a labels file whose `crop_path`/
 `transcription`/`id` fields were hand-edited or corrupted after export,
 without the full rigor of calibration's `record_fingerprint`
 rejoin-and-compare (there is no second artifact to rejoin against).
+
+The sampling/YAML-loading machinery both modules share lives in
+`docket.eval.review` (see that module's docstring); this module is a thin
+wrapper around it plus this checkpoint's own domain logic (candidate
+collection, cropping, the fingerprint tamper-check).
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import random
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,14 +48,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
 from docket.db.models import EvidenceVersion
+from docket.eval.review import DEFAULT_SAMPLE_SIZE, ReviewResult, bucket_sample, load_labels_yaml
 from docket.evidence.store import ContentAddressedStore
 from docket.parsing.formula_crop import crop_formula_region
-
-# Same default as `eval/calibration.py`'s `DEFAULT_SAMPLE_SIZE`: ~30 items is
-# enough for a human to hand-check in one sitting while still catching a
-# systemic failure mode, without inventing a different default for what is
-# structurally the same kind of "export a sample for blind labeling" task.
-DEFAULT_SAMPLE_SIZE = 30
 
 _ID_SANITIZE_RE = re.compile(r"[^A-Za-z0-9]+")
 
@@ -162,37 +161,23 @@ def sample_candidates(
     """Round-robin over source documents (`source_id`, `file_path`) so a
     ~30-item sample spreads across documents/pages instead of clustering
     inside whichever document happens to have the most formula regions --
-    same rationale as `eval/calibration.py`'s `sample_runs` round-robin, but
-    stratified by document rather than by (judge|deterministic) x
-    (pass|fail|doubt): there's no automatic-verdict dimension here worth
-    stratifying on (every candidate already got a transcription; nothing
-    distinguishes them a priori), but which *document* a region comes from
-    is the obvious axis a plain reservoir/random sample could accidentally
-    ignore (e.g. one 80-page report contributing every item while a
-    3-formula source contributes none)."""
-    rng = random.Random(seed)
-    buckets: dict[tuple[str, str | None], list[FormulaRegionCandidate]] = {}
-    for candidate in sorted(
+    same rationale as `eval/calibration.py`'s `sample_runs` round-robin (both
+    now built on `eval.review.bucket_sample`), but stratified by document
+    rather than by (judge|deterministic) x (pass|fail|doubt): there's no
+    automatic-verdict dimension here worth stratifying on (every candidate
+    already got a transcription; nothing distinguishes them a priori), but
+    which *document* a region comes from is the obvious axis a plain
+    reservoir/random sample could accidentally ignore (e.g. one 80-page
+    report contributing every item while a 3-formula source contributes
+    none)."""
+    return bucket_sample(
         candidates,
-        key=lambda c: (c.source_id, c.file_path or "", str(c.page_no or ""), c.item_ref or ""),
-    ):
-        key = (candidate.source_id, candidate.file_path)
-        buckets.setdefault(key, []).append(candidate)
-    keys = sorted(buckets, key=lambda k: (k[0], k[1] or ""))
-    for key in keys:
-        rng.shuffle(buckets[key])
-    chosen: list[FormulaRegionCandidate] = []
-    progress = True
-    while len(chosen) < n and progress:
-        progress = False
-        for key in keys:
-            if len(chosen) >= n:
-                break
-            bucket = buckets[key]
-            if bucket:
-                chosen.append(bucket.pop(0))
-                progress = True
-    return chosen
+        n,
+        bucket_key=lambda c: (c.source_id, c.file_path),
+        sort_key=lambda c: (c.source_id, c.file_path or "", str(c.page_no or ""), c.item_ref or ""),
+        order_key=lambda key: (key[0], key[1] or ""),
+        seed=seed,
+    )
 
 
 def _item_fingerprint(entry: dict) -> str:
@@ -285,37 +270,26 @@ def export_labels(
     return len(items)
 
 
+def _check_fingerprint(item: dict) -> None:
+    if item.get("fingerprint") is not None and item["fingerprint"] != _item_fingerprint(item):
+        raise FormulaReviewError(
+            f"item {item['id']!r} looks tampered with or corrupted: id/crop_path/transcription "
+            "no longer match this item's fingerprint"
+        )
+
+
 def load_labels(path: Path) -> list[dict]:
-    try:
-        raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as exc:
-        raise FormulaReviewError(f"cannot read labels file {path}: {exc}") from exc
-    items = raw.get("items") if isinstance(raw, dict) else None
-    if not isinstance(items, list):
-        raise FormulaReviewError(f"labels file {path} must have an 'items' list")
-    seen: set[str] = set()
-    for item in items:
-        if not isinstance(item, dict) or "id" not in item:
-            raise FormulaReviewError(f"labels file {path}: every item needs an id")
-        if item["id"] in seen:
-            raise FormulaReviewError(f"duplicate formula review label: {item['id']}")
-        seen.add(item["id"])
-        if item.get("correct") is not None and not isinstance(item["correct"], bool):
-            raise FormulaReviewError(f"item {item['id']}: 'correct' must be true or false, got {item['correct']!r}")
-        if item.get("fingerprint") is not None and item["fingerprint"] != _item_fingerprint(item):
-            raise FormulaReviewError(
-                f"item {item['id']!r} looks tampered with or corrupted: id/crop_path/transcription "
-                "no longer match this item's fingerprint"
-            )
-    return items
+    return load_labels_yaml(
+        path,
+        error_cls=FormulaReviewError,
+        duplicate_label="formula review label",
+        validate_item=_check_fingerprint,
+    )
 
 
 @dataclass
-class FormulaReviewResult:
+class FormulaReviewResult(ReviewResult):
     total: int
-    labeled: int
-    unlabeled: int
-    agreement: float
     failures: list[dict] = field(default_factory=list)
 
 

@@ -14,18 +14,17 @@ blind; verdicts are re-joined from the judged JSONL when scoring.
 
 from __future__ import annotations
 
-import random
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
 
 from docket.eval.judge import JudgedRun, JudgeVerdict, judged_index
+from docket.eval.review import DEFAULT_SAMPLE_SIZE, ReviewResult, bucket_sample, load_labels_yaml
 from docket.eval.schema import GoldSet, GoldSetError, Question, RunRecord, fingerprint
 from docket.eval.stats import cohen_kappa
 
 KAPPA_TARGET = 0.7
-DEFAULT_SAMPLE_SIZE = 30
 _STRATA = ("judge_pass", "judge_fail", "judge_doubt", "det_pass", "det_fail")
 
 
@@ -41,29 +40,15 @@ def _stratum(run: JudgedRun) -> str:
 def sample_runs(judged: list[JudgedRun], n: int, seed: int = 0) -> list[JudgedRun]:
     """Stratified sample: round-robin over (judge|deterministic) x (pass|fail|doubt)
     so every kind of verdict is represented, preferring distinct questions."""
-    rng = random.Random(seed)
-    buckets: dict[str, list[JudgedRun]] = {s: [] for s in _STRATA}
-    for run in sorted(judged, key=lambda r: (r.question_id, r.repeat)):
-        buckets[_stratum(run)].append(run)
-    for bucket in buckets.values():
-        rng.shuffle(bucket)
-    chosen: list[JudgedRun] = []
-    used_questions: set[str] = set()
-    for allow_repeat_question in (False, True):
-        progress = True
-        while len(chosen) < n and progress:
-            progress = False
-            for name in _STRATA:
-                if len(chosen) >= n:
-                    break
-                bucket = buckets[name]
-                for i, run in enumerate(bucket):
-                    if allow_repeat_question or run.question_id not in used_questions:
-                        chosen.append(bucket.pop(i))
-                        used_questions.add(run.question_id)
-                        progress = True
-                        break
-    return chosen
+    return bucket_sample(
+        judged,
+        n,
+        bucket_key=_stratum,
+        sort_key=lambda r: (r.question_id, r.repeat),
+        order_key=_STRATA.index,
+        seed=seed,
+        distinct_key=lambda r: r.question_id,
+    )
 
 
 def item_id(run: JudgedRun | RunRecord) -> str:
@@ -118,10 +103,7 @@ def export_labels(
 
 
 @dataclass
-class CalibrationResult:
-    labeled: int
-    unlabeled: int
-    agreement: float
+class CalibrationResult(ReviewResult):
     kappa: float  # all labeled items (deterministic + judge verdicts vs the user)
     judge_items: int
     judge_agreement: float | None
@@ -147,23 +129,7 @@ def _kappa(a: list[str], b: list[str]) -> tuple[float, float]:
 
 
 def load_labels(path: Path) -> list[dict]:
-    try:
-        raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as exc:
-        raise GoldSetError(f"cannot read labels file {path}: {exc}") from exc
-    items = raw.get("items") if isinstance(raw, dict) else None
-    if not isinstance(items, list):
-        raise GoldSetError(f"labels file {path} must have an 'items' list")
-    seen: set[str] = set()
-    for item in items:
-        if not isinstance(item, dict) or "id" not in item:
-            raise GoldSetError(f"labels file {path}: every item needs an id")
-        if item["id"] in seen:
-            raise GoldSetError(f"duplicate calibration label: {item['id']}")
-        seen.add(item["id"])
-        if item.get("correct") is not None and not isinstance(item["correct"], bool):
-            raise GoldSetError(f"item {item['id']}: 'correct' must be true or false, got {item['correct']!r}")
-    return items
+    return load_labels_yaml(path, error_cls=GoldSetError, duplicate_label="calibration label")
 
 
 def score_labels(labels_path: Path, judged: list[JudgedRun]) -> CalibrationResult:

@@ -43,6 +43,18 @@ class GoldSetError(ValueError):
     """A gold file could not be read or failed validation (message is user-facing)."""
 
 
+def require_corpus_dir(corpus: Path, *, error_cls: type[Exception] = GoldSetError) -> Path:
+    """Raise `error_cls` (each caller's own exception type -- `eval.benchmark`
+    raises `GoldSetError`, `eval.runner` raises its own `EvalSetupError`) if
+    `corpus` is not an existing directory; otherwise return it as a `Path`.
+    Shared so both modules' identical "corpus folder does not exist" check
+    can't independently drift in wording."""
+    corpus = Path(corpus)
+    if not corpus.is_dir():
+        raise error_cls(f"corpus folder does not exist: {corpus}")
+    return corpus
+
+
 class QuestionType(str, Enum):
     SINGLE_FACT = "single_fact"
     TABLE_LOOKUP = "table_lookup"

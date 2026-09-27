@@ -139,7 +139,7 @@ class QueryService:
         table: Any,
         gateway: InferenceGateway,
         resolver: EvidenceResolver,
-        top_k: int = 8,
+        top_k: int = default_settings.default_top_k,
         classifier: QueryClassifier | None = None,
         settings: Settings = default_settings,
         agent: Any | None = None,

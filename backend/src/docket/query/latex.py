@@ -34,13 +34,18 @@ from __future__ import annotations
 
 import re
 
+from docket.query.citations import CITATION_TAG_PATTERN
+
 # ---------------------------------------------------------------------------
 # Remove balanced math delimiters only; unpaired dollar signs may be currency.
 # Citation labels are protected separately because filenames can contain "$".
 # ---------------------------------------------------------------------------
 
 _MATH_DELIMITER_RE = re.compile(r"\$\$(.*?)\$\$|\$([^$\n]+)\$", re.DOTALL)
-_CITATION_RE = re.compile(r"(\[[^\[\]]*#[^\[\]]*\])")
+# Same citation-tag shape as `docket.query.citations.CITATION_TAG_RE`, just
+# wrapped in a capture group so `re.split` below keeps the tags themselves
+# (odd-indexed parts) in its result alongside the surrounding text.
+_CITATION_RE = re.compile(f"({CITATION_TAG_PATTERN})")
 
 
 def _remove_math_delimiters(match: re.Match) -> str:

@@ -41,6 +41,7 @@ from docket.eval.schema import (
     RunRecord,
     Split,
     fingerprint,
+    require_corpus_dir,
 )
 from docket.eval.scoring import normalize_text
 from docket.inference.gateway import (
@@ -176,9 +177,7 @@ class CorpusChunk:
 
 def discover_sources(corpus_dir: Path) -> dict[str, Path]:
     """Map source name -> folder (see module docstring for the rule)."""
-    corpus_dir = Path(corpus_dir)
-    if not corpus_dir.is_dir():
-        raise EvalSetupError(f"corpus folder does not exist: {corpus_dir}")
+    corpus_dir = require_corpus_dir(corpus_dir, error_cls=EvalSetupError)
     subdirs = sorted(p for p in corpus_dir.iterdir() if p.is_dir() and not p.name.startswith("."))
     if not subdirs:
         return {corpus_dir.name: corpus_dir}
@@ -215,7 +214,7 @@ class EvalRunner:
         gateway: InferenceGateway,
         parser: Any | None = None,
         data_dir: Path | None = None,
-        top_k: int = 8,
+        top_k: int = settings.default_top_k,
         mode: QueryMode | None = None,
     ):
         self._corpus_dir = Path(corpus_dir).resolve()
@@ -503,7 +502,7 @@ def run_eval(
     repeats: int = 3,
     split: Split | None = None,
     ids: list[str] | None = None,
-    top_k: int = 8,
+    top_k: int = settings.default_top_k,
     mode: QueryMode | None = None,
     progress: ProgressFn | None = None,
     manifest_path: Path | None = None,

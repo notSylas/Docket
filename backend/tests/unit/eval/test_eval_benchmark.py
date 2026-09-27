@@ -4,12 +4,24 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from docket.eval.benchmark import FrozenBenchmark, freeze_benchmark, load_benchmark, verify_benchmark
+import docket.eval.benchmark as benchmark_module
+from docket.eval.benchmark import FrozenBenchmark, corpus_hashes, freeze_benchmark, load_benchmark, verify_benchmark
 from docket.eval.calibration import CalibrationResult
 from docket.eval.judge import ClaimJudge, judge_runs
 from docket.eval.report import build_report
 from docket.eval.schema import GoldSet, GoldSetError, Question, fingerprint
+from docket.ingestion.pipeline import SUPPORTED_EXTENSIONS
 from docket.query.prompts import ABSTENTION_PHRASE
+
+
+def test_benchmark_reuses_the_canonical_supported_extensions_constant():
+    # Not a re-typed literal: the same object ingestion.pipeline defines.
+    assert benchmark_module.SUPPORTED_EXTENSIONS is SUPPORTED_EXTENSIONS
+
+
+def test_corpus_hashes_rejects_a_missing_corpus_folder(tmp_path):
+    with pytest.raises(GoldSetError, match="corpus folder does not exist"):
+        corpus_hashes(tmp_path / "missing")
 
 SPAN = "25 days of paid vacation per year"
 

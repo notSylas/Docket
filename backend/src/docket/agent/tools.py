@@ -25,6 +25,7 @@ from typing import Any
 
 from langchain_core.tools import BaseTool, tool
 
+from docket.config import settings
 from docket.inference.gateway import InferenceGateway
 from docket.prompts.agent import READ_EVIDENCE_DESCRIPTION, SEARCH_KNOWLEDGE_DESCRIPTION
 from docket.retrieval.hybrid import hybrid_search
@@ -32,7 +33,7 @@ from docket.retrieval.resolver import ChunkNotFoundError, EvidenceResolver
 
 
 def make_search_knowledge_tool(
-    *, engine: Any, table: Any, gateway: InferenceGateway, top_k: int = 8
+    *, engine: Any, table: Any, gateway: InferenceGateway, top_k: int = settings.default_top_k
 ) -> BaseTool:
     """Build a `search_knowledge` tool bound to a specific engine/table/gateway.
 
