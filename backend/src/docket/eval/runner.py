@@ -26,11 +26,9 @@ from typing import Any
 
 import ollama as _ollama
 from sqlalchemy import select
-from sqlalchemy.orm import sessionmaker
 
-from docket.cli.context import AppContext, _ensure_schema
-from docket.config import Settings, settings
-from docket.db.engine import get_engine, get_session_factory
+from docket.cli.context import AppContext
+from docket.config import settings
 from docket.db.models import Chunk, EvidenceVersion, Source, SourceStatus
 from docket.eval.schema import (
     GoldSet,
@@ -148,24 +146,6 @@ class RecordingResolver:
         return chunks
 
 
-class _EvalContext(AppContext):
-    """`AppContext` rooted at an explicit data dir with injected gateway/parser,
-    so no environment variable or real user data is involved."""
-
-    def __init__(self, data_dir: Path, gateway: InferenceGateway, parser: Any | None):
-        inner = getattr(gateway, "inner", gateway)
-        self.settings = Settings(data_dir=data_dir, gen_model=getattr(inner, "gen_model", settings.gen_model))
-        self.settings.ensure_data_dirs()
-        _ensure_schema(self.settings.sqlite_path)
-        self.engine = get_engine(self.settings.sqlite_path)
-        self.session_factory: sessionmaker = get_session_factory(self.engine)
-        # cached_property stores into the instance dict, so pre-seeding it
-        # replaces the default OllamaGateway / DoclingParser construction.
-        self.__dict__["gateway"] = gateway
-        if parser is not None:
-            self.__dict__["parser"] = parser
-
-
 @dataclass(frozen=True)
 class CorpusChunk:
     chunk_id: str
@@ -223,7 +203,9 @@ class EvalRunner:
         # mkdtemp (not TemporaryDirectory) so `close()` decides when to delete.
         self._data_dir = Path(data_dir) if data_dir else Path(tempfile.mkdtemp(prefix="docket-eval-"))
         self._gateway = RecordingGateway(gateway)
-        self._context = _EvalContext(self._data_dir, self._gateway, parser)
+        self._context = AppContext.for_testing(
+            data_dir=self._data_dir, gateway=self._gateway, parser=parser
+        )
         self._top_k = top_k
         self._mode = mode
         self._source_ids: dict[str, str] = {}

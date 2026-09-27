@@ -4,26 +4,77 @@ import sys
 import time
 from pathlib import Path
 
+import click
 import typer
+import typer.core
+import typer.main
 
 from docket import __version__
 from docket.cli.context import build_context
 from docket.cli.interactive import run_session
 from docket.db.models import SourceStatus
-from docket.eval.cli import eval_app
 from docket.ingestion.pipeline import SourceNotActiveError
 from docket.query.service import QueryService
 from docket.sources.manager import SourceNotFoundError
 from docket.sources.watcher import SourceWatcher
 
-app = typer.Typer(name="docket", help=(
+_EVAL_COMMAND_NAME = "eval"
+_eval_click_command: click.Command | None = None
+
+
+def _eval_click() -> click.Command:
+    """Builds the `docket eval ...` sub-app's click command, importing
+    `docket.eval.cli` for the first time right here -- not at
+    `docket.cli.main` module-import time (see `_LazyEvalGroup`).
+
+    `docket.eval.cli` itself already defers every *heavy* import (ollama,
+    docling) into its own command bodies; the only thing this function
+    defers is the module import of `docket.eval.cli`, which is what let
+    `eval/runner.py` end up with a fragile, accidental-import-order
+    dependency on `docket.cli.context` (see that module's `for_testing`
+    classmethod, and this project's Phase 5 restructuring notes).
+    """
+    global _eval_click_command
+    if _eval_click_command is None:
+        from docket.eval.cli import eval_app
+
+        _eval_click_command = typer.main.get_command(eval_app)
+        # `eval_app` (unlike `sources_app`/`formulas_app`) is never built
+        # with its own `name=` -- `app.add_typer(eval_app, name="eval")`
+        # used to supply it; replicate that here now that this bypasses
+        # `add_typer` entirely.
+        _eval_click_command.name = _EVAL_COMMAND_NAME
+    return _eval_click_command
+
+
+class _LazyEvalGroup(typer.core.TyperGroup):
+    """`TyperGroup` that resolves the `eval` sub-app on demand instead of via
+    `app.add_typer()`, so mounting it doesn't require importing
+    `docket.eval.cli` merely because someone imported `docket.cli.main`
+    (e.g. to reuse `build_context`) -- only actually running `docket eval
+    ...` (or `docket --help`, which needs every subcommand's one-line help)
+    does.
+    """
+
+    def list_commands(self, ctx: click.Context) -> list[str]:
+        return sorted({*super().list_commands(ctx), _EVAL_COMMAND_NAME})
+
+    def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
+        if cmd_name == _EVAL_COMMAND_NAME:
+            return _eval_click()
+        return super().get_command(ctx, cmd_name)
+
+
+app = typer.Typer(
+    name="docket",
+    cls=_LazyEvalGroup,
+    help=(
         "Local-first, evidence-backed work intelligence assistant. "
         "Run `docket` with no arguments in a terminal (or `docket chat`) for an interactive session."
     ),
 )
 sources_app = typer.Typer(help="Manage registered sources (local folders).")
 app.add_typer(sources_app, name="sources")
-app.add_typer(eval_app, name="eval")
 formulas_app = typer.Typer(help="Verify a sample of formula transcriptions against their source crops.")
 app.add_typer(formulas_app, name="formulas")
 

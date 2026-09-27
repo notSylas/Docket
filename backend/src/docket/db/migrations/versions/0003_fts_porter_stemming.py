@@ -28,12 +28,13 @@ by construction, a 1:1 mirror of a `chunks` row (`FtsIndexWriter.upsert`
 never diverges from it), so re-deriving `fts_chunks` from `chunks` loses
 nothing.
 
-Caveat for existing installs: `docket.cli.context.AppContext` only runs
-Alembic migrations when the SQLite file doesn't exist yet
-(`_ensure_schema`); an existing user's DB is not auto-upgraded to this
-revision by any current CLI command. That's a pre-existing gap (it applies
-equally to 0002's `file_path` column), not something this migration
-introduces or fixes.
+Caveat for existing installs (historical -- `ensure_schema`, formerly
+`_ensure_schema`, now runs Alembic migrations up to head on every CLI
+invocation, not only when the SQLite file doesn't exist yet): this used to
+mean an existing user's DB was not auto-upgraded to this revision by any
+current CLI command. That was a pre-existing gap (it applied equally to
+0002's `file_path` column), not something this migration introduced or
+fixed.
 
 Revision ID: 777be29455a6
 Revises: b3f1c9a02d17

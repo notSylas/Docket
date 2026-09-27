@@ -27,13 +27,14 @@ import importlib.resources as resources
 import sys
 from functools import cached_property
 from pathlib import Path
+from typing import Any
 
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import Engine
 from sqlalchemy.orm import sessionmaker
 
-from docket.config import Settings
+from docket.config import Settings, settings
 from docket.db.engine import get_engine, get_session_factory
 from docket.evidence.manager import EvidenceManager
 from docket.evidence.store import ContentAddressedStore
@@ -97,8 +98,12 @@ def _alembic_config(sqlite_path: Path) -> Config:
     return config
 
 
-def _ensure_schema(sqlite_path: Path) -> None:
+def ensure_schema(sqlite_path: Path) -> None:
     """Run Alembic migrations up to `head`, every CLI invocation.
+
+    Public (used by `AppContext.__init__` and by `AppContext.for_testing`,
+    which builds a context rooted at an explicit data dir without going
+    through the real constructor -- see that classmethod's docstring).
 
     `alembic upgrade head` is a no-op (a fast read of the `alembic_version`
     table) when already current, so this is cheap for the common case and
@@ -117,9 +122,54 @@ class AppContext:
     def __init__(self) -> None:
         self.settings = Settings()
         self.settings.ensure_data_dirs()
-        _ensure_schema(self.settings.sqlite_path)
+        ensure_schema(self.settings.sqlite_path)
         self.engine: Engine = get_engine(self.settings.sqlite_path)
         self.session_factory: sessionmaker = get_session_factory(self.engine)
+
+    @classmethod
+    def for_testing(
+        cls,
+        *,
+        data_dir: Path,
+        gateway: Any | None = None,
+        parser: Any | None = None,
+    ) -> "AppContext":
+        """Builds an `AppContext` rooted at an explicit `data_dir`, with an
+        optional injected gateway/parser standing in for the real
+        `OllamaGateway`/`DoclingParser` -- the public seam `eval/runner.py`'s
+        `EvalRunner` (and tests) use instead of subclassing `AppContext` and
+        reaching into its private `_ensure_schema`.
+
+        Unlike the normal constructor, this never constructs its own
+        `Settings()` (which always re-reads the environment -- see the
+        module docstring's choice 1); `data_dir` is the only source of truth
+        for where this context's SQLite DB, evidence store, and LanceDB
+        tables live, so a caller (a test, the eval harness) never touches
+        real user data or `DOCKET_DATA_DIR` regardless of environment.
+
+        When `gateway` exposes a `.gen_model` (directly, or via an `.inner`
+        attribute, as `eval/runner.py`'s `RecordingGateway` wrapper does),
+        that model name is also used for `Settings.gen_model`, so a caller
+        that swaps in a fake/recording gateway for one model doesn't end up
+        with `AppContext.settings` silently still naming a different one.
+        """
+        context = cls.__new__(cls)
+        inner = getattr(gateway, "inner", gateway)
+        context.settings = Settings(
+            data_dir=data_dir, gen_model=getattr(inner, "gen_model", settings.gen_model)
+        )
+        context.settings.ensure_data_dirs()
+        ensure_schema(context.settings.sqlite_path)
+        context.engine = get_engine(context.settings.sqlite_path)
+        context.session_factory = get_session_factory(context.engine)
+        # `cached_property` stores into the instance dict on first access,
+        # so pre-seeding it here replaces the default
+        # OllamaGateway/DoclingParser construction with the caller's stand-ins.
+        if gateway is not None:
+            context.__dict__["gateway"] = gateway
+        if parser is not None:
+            context.__dict__["parser"] = parser
+        return context
 
     @cached_property
     def store(self) -> ContentAddressedStore:

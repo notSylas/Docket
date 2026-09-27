@@ -188,11 +188,11 @@ def test_fts_porter_migration_downgrade_recreates_plain_tokenizer(tmp_path: Path
 
 
 def test_ensure_schema_migrates_an_existing_pre_head_db(tmp_path: Path) -> None:
-    """`_ensure_schema` used to skip Alembic entirely once the DB file
+    """`ensure_schema` used to skip Alembic entirely once the DB file
     existed, so a schema change (like 0003's FTS5 retokenization) would
     never reach an existing install unless someone ran `alembic upgrade
     head` by hand. It must now bring an existing DB forward to head too."""
-    from docket.cli.context import _ensure_schema
+    from docket.cli.context import ensure_schema
 
     sqlite_path = tmp_path / "docket.sqlite3"
     config = _alembic_config(sqlite_path)
@@ -205,7 +205,7 @@ def test_ensure_schema_migrates_an_existing_pre_head_db(tmp_path: Path) -> None:
     finally:
         con.close()
 
-    _ensure_schema(sqlite_path)
+    ensure_schema(sqlite_path)
 
     # Functional proof of reaching 0003, not just a revision-id check:
     # singular "journey" only matches plural "journeys" under the porter
@@ -220,20 +220,20 @@ def test_ensure_schema_migrates_an_existing_pre_head_db(tmp_path: Path) -> None:
 
 
 def test_ensure_schema_is_a_safe_no_op_when_already_at_head(tmp_path: Path) -> None:
-    """Calling `_ensure_schema` twice (e.g. two CLI invocations in a row)
+    """Calling `ensure_schema` twice (e.g. two CLI invocations in a row)
     must not error or reset data -- alembic upgrade("head") is a no-op once
     the DB is already current."""
-    from docket.cli.context import _ensure_schema
+    from docket.cli.context import ensure_schema
 
     sqlite_path = tmp_path / "docket.sqlite3"
-    _ensure_schema(sqlite_path)
+    ensure_schema(sqlite_path)
     con = sqlite3.connect(str(sqlite_path))
     try:
         _insert_minimal_chunk_row(con, "chk_1", "The PRD defines six user journeys.")
     finally:
         con.close()
 
-    _ensure_schema(sqlite_path)  # must not drop/recreate tables or error
+    ensure_schema(sqlite_path)  # must not drop/recreate tables or error
 
     con = sqlite3.connect(str(sqlite_path))
     try:
