@@ -223,6 +223,14 @@ class Chunk(Base):
     heading: Mapped[str | None] = mapped_column(String, nullable=True)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     content_hash: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    # 1-indexed page numbers this chunk spans (inclusive), per-chunk because
+    # a chunk's sliding window can cross a page boundary that its owning
+    # EvidenceUnit doesn't. Nullable: existing rows (ingested before this
+    # column existed) and any chunk for which no page marker was ever
+    # matched stay NULL rather than guessing -- see
+    # docket.parsing.chunker's module docstring.
+    page_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    page_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     source: Mapped["Source"] = relationship(back_populates="chunks")
     evidence_version: Mapped["EvidenceVersion"] = relationship(back_populates="chunks")

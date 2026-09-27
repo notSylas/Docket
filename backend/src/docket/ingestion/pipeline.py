@@ -262,6 +262,8 @@ class IngestionPipeline:
                         heading=c.heading,
                         text=c.text,
                         content_hash=c.content_hash,
+                        page_start=c.page_start,
+                        page_end=c.page_end,
                     )
                 )
             session.add_all(chunk_objs)
@@ -278,6 +280,8 @@ class IngestionPipeline:
                     heading=c.heading,
                     text=c.text,
                     content_hash=c.content_hash,
+                    page_start=c.page_start,
+                    page_end=c.page_end,
                 )
                 for c in chunk_objs
             ]
@@ -322,7 +326,18 @@ class IngestionPipeline:
 
         parsed = self._parser.parse(source_id, path)
         self._save_formula_regions(evidence_version.id, parsed.formula_regions)
-        units, chunks = chunk_document(parsed.text, self._chunk_recipe)
+        # Prefer the page-marker-annotated text so chunks/units get real
+        # page_start/page_end provenance; fall back to the plain text for a
+        # `ParsedDocument` built without marker info (e.g. some fixtures) --
+        # chunk_document handles marker-free text fine, yielding
+        # page_start=page_end=None throughout, exactly as before this
+        # checkpoint.
+        chunking_text = (
+            parsed.text_with_page_markers
+            if parsed.text_with_page_markers is not None
+            else parsed.text
+        )
+        units, chunks = chunk_document(chunking_text, self._chunk_recipe)
 
         records = self._persist_units_and_chunks(
             source_id=source_id,

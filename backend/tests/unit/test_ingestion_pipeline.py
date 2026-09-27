@@ -345,3 +345,92 @@ def test_formula_regions_persist_and_legacy_backfill_keeps_chunks(env, monkeypat
     assert len(calls) == 2
     env.pipeline.run_ingestion_for_source(env.source.id)
     assert len(calls) == 2
+
+
+# ---------------------------------------------------------------------------
+# Page provenance (Chunk.page_start/page_end) -- visual retrieval checkpoint 1.
+# ---------------------------------------------------------------------------
+
+
+def test_chunk_page_start_and_page_end_persist_and_survive_readback(env, monkeypatch):
+    """A mocked multi-page parse (same fixture-injection technique as the
+    formula-regions test above) proves page_start/page_end make it all the
+    way from `ParsedDocument.text_with_page_markers` through
+    `chunk_document` into real `Chunk` rows in the database, and that they
+    read back correctly from a *fresh* session (not just an in-memory
+    artifact of the write)."""
+    from docket.parsing.docling_wrapper import ParsedDocument
+
+    path = env.folder / "multipage.docx"
+    _write_docx(path, "Multi", "placeholder body")
+
+    # Markers sit right before each heading (mirroring how docling_wrapper
+    # inserts a marker right before the first matched text item on a new
+    # page), so each section here lands entirely on one page.
+    annotated = (
+        "<!--PAGE:1-->\n"
+        "# Section One\n"
+        "Alpha bravo charlie delta echo foxtrot golf hotel india juliet.\n\n"
+        "<!--PAGE:2-->\n"
+        "# Section Two\n"
+        "Kilo lima mike november oscar papa quebec romeo sierra tango.\n"
+    )
+    plain = annotated.replace("<!--PAGE:1-->", "").replace("<!--PAGE:2-->", "")
+    parsed = ParsedDocument(
+        text=plain,
+        source_path=path,
+        parser_name="fixture",
+        parser_version="1",
+        text_with_page_markers=annotated,
+    )
+
+    def parse(source_id, source_path):
+        return parsed
+
+    monkeypatch.setattr(env.pipeline._parser, "parse", parse)
+    result = env.pipeline.run_ingestion_for_source(env.source.id)
+    assert result.status == "succeeded"
+
+    with env.session_factory() as session:
+        rows = session.execute(
+            select(Chunk.heading, Chunk.page_start, Chunk.page_end).order_by(Chunk.ordinal)
+        ).all()
+    assert rows == [("Section One", 1, 1), ("Section Two", 2, 2)]
+    for heading, page_start, page_end in rows:
+        assert page_start is not None and page_end is not None
+
+    # Fresh session: proves this round-tripped through the DB, not just an
+    # artifact of the write session's identity map.
+    with env.session_factory() as session:
+        readback = session.execute(
+            select(Chunk.page_start, Chunk.page_end).order_by(Chunk.ordinal)
+        ).all()
+    assert readback == [(1, 1), (2, 2)]
+
+
+def test_chunk_page_span_is_none_when_parser_gives_no_marker_info(env, monkeypatch):
+    """A `ParsedDocument` built without `text_with_page_markers` (its
+    default) must chunk exactly as before this checkpoint: every chunk gets
+    page_start=page_end=None rather than a guessed page number."""
+    from docket.parsing.docling_wrapper import ParsedDocument
+
+    path = env.folder / "nopage.docx"
+    _write_docx(path, "NoPage", "placeholder body")
+    parsed = ParsedDocument(
+        text="# Heading\nSome ordinary content with no page info at all.",
+        source_path=path,
+        parser_name="fixture",
+        parser_version="1",
+    )
+
+    def parse(source_id, source_path):
+        return parsed
+
+    monkeypatch.setattr(env.pipeline._parser, "parse", parse)
+    result = env.pipeline.run_ingestion_for_source(env.source.id)
+    assert result.status == "succeeded"
+
+    with env.session_factory() as session:
+        rows = session.execute(select(Chunk.page_start, Chunk.page_end)).all()
+    assert rows
+    assert all(page_start is None and page_end is None for page_start, page_end in rows)

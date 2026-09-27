@@ -31,6 +31,13 @@ class ChunkRecord:
     heading: str | None
     text: str
     content_hash: str
+    # 1-indexed page numbers this chunk spans, or None when no page marker
+    # was ever matched before/within it (see docket.parsing.chunker). Not
+    # consumed by any index backend yet (checkpoint 1 of the visual
+    # retrieval plan) -- carried here so a later checkpoint can map a page
+    # image back to the chunk_ids on that page without a DB round trip.
+    page_start: int | None = None
+    page_end: int | None = None
 
 
 @dataclass

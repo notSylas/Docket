@@ -8,6 +8,7 @@ first use, ~seconds) but still fully local and deterministic.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -98,3 +99,168 @@ def test_formula_provenance_preserves_coordinates_without_ocr_text():
     assert region["coordinate_origin"] == "TOPLEFT"
     assert region["page_width"] == 600
     assert "invented" not in str(region)
+
+
+# ---------------------------------------------------------------------------
+# Page markers (<!--PAGE:N-->) -- provenance for the visual retrieval
+# checkpoint. Same fake `document.texts`/`.prov` mocking style as the
+# formula-region test above, since `_insert_page_markers` reads the exact
+# same field (`item.prov[0].page_no`) that `_formula_regions` reads.
+# ---------------------------------------------------------------------------
+
+
+def _text_item(text: str, page_no: int):
+    from types import SimpleNamespace as NS
+    return NS(text=text, prov=[NS(page_no=page_no)])
+
+
+def test_insert_page_markers_at_genuine_transitions_only():
+    from docket.parsing.docling_wrapper import _insert_page_markers
+    from types import SimpleNamespace as NS
+
+    markdown = (
+        "Intro paragraph on page one.\n\n"
+        "Still page one, second paragraph.\n\n"
+        "First paragraph on page two.\n\n"
+        "Still page two.\n\n"
+        "First paragraph on page three.\n"
+    )
+    document = NS(texts=[
+        _text_item("Intro paragraph on page one.", 1),
+        _text_item("Still page one, second paragraph.", 1),
+        _text_item("First paragraph on page two.", 2),
+        _text_item("Still page two.", 2),
+        _text_item("First paragraph on page three.", 3),
+    ])
+
+    annotated = _insert_page_markers(markdown, document)
+
+    assert annotated.count("<!--PAGE:1-->") == 1
+    assert annotated.count("<!--PAGE:2-->") == 1
+    assert annotated.count("<!--PAGE:3-->") == 1
+    # Marker order in the string matches document/page order.
+    assert (
+        annotated.index("<!--PAGE:1-->")
+        < annotated.index("<!--PAGE:2-->")
+        < annotated.index("<!--PAGE:3-->")
+    )
+    # Markers sit immediately before the matched text, not scattered.
+    assert "<!--PAGE:2-->First paragraph on page two." in annotated
+    assert "<!--PAGE:3-->First paragraph on page three." in annotated
+    # Stripping markers reproduces the original markdown exactly.
+    assert re.sub(r"<!--PAGE:\d+-->", "", annotated) == markdown
+
+
+def test_insert_page_markers_skips_unmatched_items_without_error():
+    from docket.parsing.docling_wrapper import _insert_page_markers
+    from types import SimpleNamespace as NS
+
+    markdown = "Only this sentence survived the exporter.\n"
+    document = NS(texts=[
+        # A table/formula/image item whose text never appears verbatim in
+        # the exported markdown -- must be silently skipped, not raise.
+        _text_item("| a | b |\n| - | - |", 1),
+        _text_item("Only this sentence survived the exporter.", 2),
+    ])
+
+    annotated = _insert_page_markers(markdown, document)
+
+    # The unmatched item is skipped; the matched one still gets its marker
+    # (this is the very first successful match, so it always gets one).
+    assert annotated == "<!--PAGE:2-->Only this sentence survived the exporter.\n"
+
+
+def test_insert_page_markers_never_goes_backwards():
+    from docket.parsing.docling_wrapper import _insert_page_markers
+    from types import SimpleNamespace as NS
+
+    markdown = "First on page five.\n\nThen an out-of-order item.\n"
+    document = NS(texts=[
+        _text_item("First on page five.", 5),
+        # Docling/layout quirk: a later item claims an earlier page number.
+        _text_item("Then an out-of-order item.", 2),
+    ])
+
+    annotated = _insert_page_markers(markdown, document)
+
+    assert annotated.count("<!--PAGE:") == 1
+    assert "<!--PAGE:5-->First on page five." in annotated
+    assert "<!--PAGE:2-->" not in annotated
+
+
+def test_insert_page_markers_no_duplicate_marker_within_same_page():
+    from docket.parsing.docling_wrapper import _insert_page_markers
+    from types import SimpleNamespace as NS
+
+    markdown = "Sentence A.\n\nSentence B.\n\nSentence C.\n"
+    document = NS(texts=[
+        _text_item("Sentence A.", 1),
+        _text_item("Sentence B.", 1),
+        _text_item("Sentence C.", 1),
+    ])
+
+    annotated = _insert_page_markers(markdown, document)
+
+    assert annotated.count("<!--PAGE:1-->") == 1
+    assert annotated.startswith("<!--PAGE:1-->Sentence A.")
+
+
+def test_insert_page_markers_repeated_text_matches_forward_only():
+    from docket.parsing.docling_wrapper import _insert_page_markers
+    from types import SimpleNamespace as NS
+
+    # "Running Header" appears twice -- once per page -- and must not both
+    # collapse onto the first occurrence.
+    markdown = "Running Header\n\nBody on page one.\n\nRunning Header\n\nBody on page two.\n"
+    document = NS(texts=[
+        _text_item("Running Header", 1),
+        _text_item("Body on page one.", 1),
+        _text_item("Running Header", 2),
+        _text_item("Body on page two.", 2),
+    ])
+
+    annotated = _insert_page_markers(markdown, document)
+
+    assert annotated.count("<!--PAGE:1-->") == 1
+    assert annotated.count("<!--PAGE:2-->") == 1
+    first_header_idx = annotated.index("Running Header")
+    marker2_idx = annotated.index("<!--PAGE:2-->")
+    second_header_idx = annotated.index("Running Header", first_header_idx + 1)
+    # The page-2 marker precedes the *second* "Running Header", not the first.
+    assert marker2_idx < second_header_idx
+    assert marker2_idx > first_header_idx
+
+
+def test_parsed_document_text_has_no_markers_fake_docling_result(monkeypatch, tmp_path):
+    """Exercises `DoclingParser.parse()` end to end with a faked converter
+    result (no real Docling model load), confirming `ParsedDocument.text`
+    stays marker-free while `text_with_page_markers` carries them."""
+    from types import SimpleNamespace as NS
+    from docket.parsing import docling_wrapper as dw
+
+    document = NS(texts=[
+        _text_item("Page one sentence.", 1),
+        _text_item("Page two sentence.", 2),
+    ], pages={})
+
+    def fake_export_to_markdown():
+        return "Page one sentence.\n\nPage two sentence.\n"
+
+    document.export_to_markdown = fake_export_to_markdown
+    fake_result = NS(document=document)
+
+    parser = object.__new__(dw.DoclingParser)
+    parser._converter = NS(convert=lambda path: fake_result)
+    parser._parser_name = "docling"
+    parser._parser_version = "test-version"
+
+    fake_path = tmp_path / "fake.pdf"
+    fake_path.write_text("irrelevant")
+    result = parser.parse("src-fake", fake_path)
+
+    assert "<!--PAGE:" not in result.text
+    assert result.text_with_page_markers is not None
+    assert "<!--PAGE:2-->" in result.text_with_page_markers
+    assert "<!--PAGE:" not in result.text_with_page_markers.replace(
+        "<!--PAGE:2-->", ""
+    ).replace("<!--PAGE:1-->", "")

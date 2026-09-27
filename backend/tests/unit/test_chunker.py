@@ -198,3 +198,115 @@ def test_sliding_window_rejects_overlap_gte_chunk_size() -> None:
     recipe = _recipe(chunk_size=100, overlap=100)
     with pytest.raises(ValueError):
         chunk_document(text, recipe)
+
+
+# ---------------------------------------------------------------------------
+# Page markers (<!--PAGE:N-->) -- provenance for visual retrieval checkpoint 2/3.
+# ---------------------------------------------------------------------------
+
+
+def test_no_markers_anywhere_yields_none_page_span_on_every_unit_and_chunk() -> None:
+    text = (
+        "# Section A\n" + _words(50, "a") + "\n\n"
+        "# Section B\n" + _words(50, "b") + "\n"
+    )
+    recipe = _recipe(chunk_size=200, overlap=40)
+    units, chunks = chunk_document(text, recipe)
+
+    assert len(units) == 2
+    for u in units:
+        assert u.page_start is None
+        assert u.page_end is None
+    for c in chunks:
+        assert c.page_start is None
+        assert c.page_end is None
+
+
+def test_markers_produce_correct_per_unit_page_span_and_no_leakage() -> None:
+    # Each marker sits at the tail of the *previous* section (right before
+    # the next heading), mirroring how docling_wrapper inserts a marker
+    # right before the first matched text item on a new page -- so each
+    # unit here lands entirely on one page.
+    text = (
+        "<!--PAGE:1-->\n"
+        "# Section A\n"
+        "Alpha bravo charlie.\n\n"
+        "<!--PAGE:2-->\n"
+        "# Section B\n"
+        "Delta echo foxtrot.\n\n"
+        "<!--PAGE:3-->\n"
+        "# Section C\n"
+        "Golf hotel india.\n"
+    )
+    units = split_into_units(text)
+
+    assert [u.heading for u in units] == ["Section A", "Section B", "Section C"]
+    assert [(u.page_start, u.page_end) for u in units] == [(1, 1), (2, 2), (3, 3)]
+    for u in units:
+        assert "<!--PAGE:" not in u.text
+        assert u.content_hash == _sha256(u.text)
+
+
+def test_split_empty_document_produces_no_units_even_with_only_markers() -> None:
+    # A document consisting only of page markers (no real content) must not
+    # produce a spurious "empty" unit.
+    assert split_into_units("<!--PAGE:1-->\n<!--PAGE:2-->\n") == []
+
+
+def test_chunk_spanning_a_page_marker_mid_window_gets_differing_start_and_end() -> None:
+    # 30 words, chunk_size=10, overlap=2 -> stride=8, windows at
+    # [0,10), [8,18), [16,26), [24,30). The page-2 marker sits between word
+    # index 14 and 15, so only the second window (covering indices 8..17)
+    # straddles it.
+    page1_words = " ".join(f"w{i}" for i in range(15))
+    page2_words = " ".join(f"w{i}" for i in range(15, 30))
+    text = f"<!--PAGE:1--> {page1_words} <!--PAGE:2--> {page2_words}"
+    recipe = _recipe(chunk_size=10, overlap=2)
+
+    units, chunks = chunk_document(text, recipe)
+
+    assert len(units) == 1
+    assert units[0].page_start == 1
+    assert units[0].page_end == 2
+    assert "<!--PAGE:" not in units[0].text
+
+    assert len(chunks) == 4
+    assert (chunks[0].page_start, chunks[0].page_end) == (1, 1)
+    assert (chunks[1].page_start, chunks[1].page_end) == (1, 2)
+    assert chunks[1].page_start != chunks[1].page_end
+    assert (chunks[2].page_start, chunks[2].page_end) == (2, 2)
+    assert (chunks[3].page_start, chunks[3].page_end) == (2, 2)
+
+    for c in chunks:
+        assert "<!--PAGE:" not in c.text
+
+
+def test_content_hash_is_identical_with_or_without_page_markers() -> None:
+    # The regression this checkpoint must not introduce: two documents with
+    # identical *real* content -- one with page markers inserted, one
+    # without -- must chunk to byte-identical text and therefore identical
+    # content_hash (and therefore identical chunk_id, since compute_chunk_id
+    # is keyed off content_hash). Otherwise every existing chunk's id would
+    # silently change the moment docling_wrapper starts annotating pages.
+    plain = "# Section\n" + " ".join(f"w{i}" for i in range(30))
+    annotated = (
+        "# Section\n"
+        + " ".join(f"w{i}" for i in range(15))
+        + " <!--PAGE:2--> "
+        + " ".join(f"w{i}" for i in range(15, 30))
+    )
+    recipe = _recipe(chunk_size=10, overlap=2)
+
+    plain_units, plain_chunks = chunk_document(plain, recipe)
+    annotated_units, annotated_chunks = chunk_document(annotated, recipe)
+
+    assert len(plain_chunks) == len(annotated_chunks) > 0
+    for p, a in zip(plain_chunks, annotated_chunks):
+        assert p.text == a.text
+        assert p.content_hash == a.content_hash
+
+    # The annotated run does carry real page info (proving the marker was
+    # not simply ignored)...
+    assert any(c.page_start is not None for c in annotated_chunks)
+    # ...while the plain run has none, as expected.
+    assert all(c.page_start is None and c.page_end is None for c in plain_chunks)
