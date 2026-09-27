@@ -2,7 +2,7 @@
 checkpoint 2 of "verified formula transcription").
 
 Checkpoint 1 (`docket.parsing.formula_crop`, wired into
-`docket.ingestion.pipeline.IngestionPipeline._transcribe_formula_regions`)
+`docket.ingestion.formula_transcriber.FormulaTranscriber.transcribe`)
 crops each above-threshold detected formula region and stores an UNVERIFIED
 VLM transcription on `EvidenceVersion.formula_transcriptions_json`, traceable
 back to its source region (`EvidenceVersion.formula_regions_json`) via
@@ -71,7 +71,7 @@ def derive_id(evidence_version_id: str, item_ref: str | None) -> str:
 def _resolve_page_hash(page_images_json: str | None, page_no: object) -> str | None:
     """Look up `page_no`'s content_hash in a decoded `page_images_json`
     mapping, tolerating both int and (post-JSON-round-trip) string keys --
-    same accommodation `IngestionPipeline._transcribe_formula_regions`
+    same accommodation `FormulaTranscriber.transcribe`
     makes for the same reason."""
     if not page_images_json:
         return None
@@ -219,7 +219,7 @@ def export_labels(
     to fill in. Returns the number of items actually exported (may be less
     than `n`/the candidate count if a sampled region's page image can't be
     found in `store` -- skipped, not an error, same posture as
-    `IngestionPipeline._transcribe_formula_regions`'s own "no stored image
+    `FormulaTranscriber.transcribe`'s own "no stored image
     for this page" skip).
 
     Raises `FormulaReviewError` if there are no candidates at all (nothing

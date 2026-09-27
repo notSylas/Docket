@@ -5,7 +5,7 @@ turns a `docling_wrapper._formula_regions()` dict plus its page's already-
 rendered PNG bytes (`docling_wrapper._page_images()`) into a small cropped
 PNG suitable for a VLM transcription call, and decides which regions are
 even worth that call. It does not call any VLM itself (see
-`docket.ingestion.pipeline._transcribe_formula_regions`), and nothing here
+`docket.ingestion.formula_transcriber.FormulaTranscriber.transcribe`), and nothing here
 ever touches `Chunk.text`, the FTS/vector indexes, `EvidenceResolver`, or
 citation validation -- transcriptions produced from these crops are stored
 unverified (`EvidenceVersion.formula_transcriptions_json`) and are never

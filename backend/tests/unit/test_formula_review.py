@@ -79,9 +79,10 @@ def _make_version(
 ) -> EvidenceVersion:
     """Directly builds an EvidenceVersion row (no pipeline run) with
     `formula_regions_json`/`formula_transcriptions_json`/`page_images_json`
-    populated exactly like `IngestionPipeline._save_formula_regions`/
-    `_save_page_images`/`_save_formula_transcriptions` would, plus the
-    page PNGs actually stored in `store` so a real crop can happen."""
+    populated exactly like `FormulaTranscriber.save_regions`/
+    `VisualIndexer.save_page_images`/`FormulaTranscriber._save_transcriptions`
+    would, plus the page PNGs actually stored in `store` so a real crop can
+    happen."""
     page_images = page_images or {}
     hashes = {page_no: store.put(data) for page_no, data in page_images.items()}
     with session_factory() as session:

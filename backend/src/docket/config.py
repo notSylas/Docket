@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     # Off by default, same posture as `visual_index_enabled`: this checkpoint
     # builds the formula-region crop + VLM transcription + storage
     # infrastructure (`docket.parsing.formula_crop`,
-    # `IngestionPipeline._transcribe_formula_regions`), but produces only
+    # `FormulaTranscriber.transcribe`), but produces only
     # unverified transcriptions (`EvidenceVersion.formula_transcriptions_json`)
     # -- never promoted into searchable/citable evidence. Nothing should call
     # the VLM for formula regions until this is explicitly turned on, and
