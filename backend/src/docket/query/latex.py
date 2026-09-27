@@ -35,14 +35,24 @@ from __future__ import annotations
 import re
 
 # ---------------------------------------------------------------------------
-# $...$ / $$...$$ math delimiters -- just noise once the content itself is
-# plain text. Real answers never use a literal "$" for currency, so it's
-# safe to strip every "$" unconditionally rather than trying to pair-match
-# delimiters (which would need to handle the model's occasional unbalanced
-# "$" from truncated output anyway).
+# Remove balanced math delimiters only; unpaired dollar signs may be currency.
+# Citation labels are protected separately because filenames can contain "$".
 # ---------------------------------------------------------------------------
 
-_DOLLAR_RE = re.compile(r"\$")
+_MATH_DELIMITER_RE = re.compile(r"\$\$(.*?)\$\$|\$([^$\n]+)\$", re.DOTALL)
+_CITATION_RE = re.compile(r"(\[[^\[\]]*#[^\[\]]*\])")
+
+
+def _remove_math_delimiters(match: re.Match) -> str:
+    body = match.group(1) if match.group(1) is not None else match.group(2)
+    # "$100 and $200" is two prices, not a math span. Preserve ambiguous prose.
+    if (match.group(1) is None and (
+        re.fullmatch(r"\s*[\d,.]+\s*[-–—+]\s*", body)
+        or (re.match(r"\s*\d", body) and re.search(r"[A-Za-z]{2,}", body)
+            and not re.search(r"[\\_^=]", body))
+    )):
+        return match.group(0)
+    return body
 
 # LaTeX inline spacing commands seen in real output (e.g.
 # "1 \, \text{eV} = 1.6 \times 10^{-19} \, \text{J}") -- each becomes a
@@ -54,7 +64,7 @@ _NEGSPACE_RE = re.compile(r"\\!")
 # rendered" commands -- physics notation cares about the bold/vector/roman
 # meaning only visually; in plain text, the content is what matters.
 _WRAPPER_RE = re.compile(
-    r"\\(?:mathbf|mathrm|mathit|boldsymbol|vec|hat|bar|overline|mathcal|mathbb|operatorname|text)"
+    r"\\(?:mathbf|mathrm|mathit|boldsymbol|mathcal|mathbb|operatorname|text)"
     r"\{([^{}]*)\}"
 )
 
@@ -213,6 +223,8 @@ def _replace_frac(text: str) -> str:
 
 
 def _replace_wrappers(text: str) -> str:
+    text = re.sub(r"\\(vec|hat|bar|overline)\{([^{}]*)\}",
+                  lambda m: f"{m.group(1)}({m.group(2)})", text)
     # A couple of passes handle the (rare, not seen in real data but cheap
     # to allow) case of one wrapper immediately inside another, e.g.
     # \mathbf{\text{x}} -- each pass peels one layer.
@@ -253,7 +265,7 @@ def _replace_symbols(text: str) -> str:
     return _SYMBOL_RE.sub(lambda m: _SYMBOL_MAP[m.group(1)], text)
 
 
-def normalize_latex(text: str) -> str:
+def _normalize_fragment(text: str) -> str:
     """Converts common LaTeX math syntax in `text` to plain, readable text.
 
     Deliberately conservative and defensive:
@@ -269,7 +281,7 @@ def normalize_latex(text: str) -> str:
       through, the whole function falls back to returning `text` unchanged.
     """
     try:
-        result = _DOLLAR_RE.sub("", text)
+        result = _MATH_DELIMITER_RE.sub(_remove_math_delimiters, text)
         result = _replace_frac(result)
         result = _replace_wrappers(result)
         result = _replace_numeric_exponents(result)
@@ -280,3 +292,9 @@ def normalize_latex(text: str) -> str:
         return result
     except Exception:
         return text
+
+
+def normalize_latex(text: str) -> str:
+    """Render known math syntax while preserving citation labels and currency."""
+    parts = _CITATION_RE.split(text)
+    return "".join(part if i % 2 else _normalize_fragment(part) for i, part in enumerate(parts))

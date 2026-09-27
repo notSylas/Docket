@@ -283,3 +283,16 @@ def test_minimum_required_greek_letters() -> None:
     not all of which appeared in the real eval sample."""
     answer = "\\theta, \\pi, \\mu, \\lambda, \\Delta, \\sigma"
     assert normalize_latex(answer) == "θ, π, μ, λ, Δ, σ"
+
+
+def test_currency_and_citation_filename_are_preserved():
+    answer = "Budget is $1,200,000 and fees are $200 [cost$report.pdf #chk_12345678]."
+    assert normalize_latex(answer) == answer
+
+
+def test_math_and_currency_can_coexist():
+    assert normalize_latex("$V = IR$ costs $10.") == "V = IR costs $10."
+
+
+def test_vector_and_hat_notation_keep_their_meaning():
+    assert normalize_latex(r"$\vec{r} = r \hat{r}$") == "vec(r) = r hat(r)"
