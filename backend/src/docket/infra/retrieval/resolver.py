@@ -20,7 +20,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
-from docket.core.db.models import Chunk, EvidenceVersion, Source, SourceStatus
+from docket.core.db.models import Chunk, EvidenceVersion, Source, SourceStatus, VersionStatus
 
 
 @dataclass(frozen=True)
@@ -83,8 +83,10 @@ class EvidenceResolver:
         """Batched version of `resolve` -- one query for all ids, not N.
         Preserves the input order in the output. Raises `ChunkNotFoundError`
         on the first missing id it encounters (in input order); it never
-        silently drops missing ids. Inactive sources and superseded versions
-        are unavailable, even when their rows remain for historical provenance."""
+        silently drops missing ids. Inactive sources and non-servable
+        versions (not `READY` -- still `PENDING`, `FAILED`, or superseded by
+        newer content) are unavailable, even when their rows remain for
+        historical provenance."""
         if not chunk_ids:
             return []
 
@@ -95,7 +97,7 @@ class EvidenceResolver:
                 .join(EvidenceVersion, Chunk.evidence_version_id == EvidenceVersion.id)
                 .where(Chunk.id.in_(chunk_ids))
                 .where(Source.status == SourceStatus.ACTIVE)
-                .where(EvidenceVersion.is_current.is_(True))
+                .where(EvidenceVersion.status == VersionStatus.READY)
             ).all()
 
         by_id = {chunk.id: (chunk, source, ev) for chunk, source, ev in rows}

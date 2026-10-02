@@ -22,7 +22,7 @@ from PIL import Image
 from sqlalchemy import Engine
 
 from docket.core.db.engine import get_session_factory
-from docket.core.db.models import EvidenceVersion
+from docket.core.db.models import EvidenceVersion, VersionStatus
 from docket.infra.evidence.store import ContentAddressedStore
 from docket.eval.formula_review import (
     FormulaReviewError,
@@ -96,7 +96,7 @@ def _make_version(
             formula_regions_json=json.dumps(regions),
             formula_transcriptions_json=json.dumps(transcriptions) if transcriptions is not None else None,
             page_images_json=json.dumps(hashes),
-            is_current=True,
+            status=VersionStatus.READY,
         )
         session.add(version)
         session.commit()

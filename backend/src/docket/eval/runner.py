@@ -29,7 +29,7 @@ from sqlalchemy import select
 
 from docket.interfaces.cli.context import AppContext
 from docket.core.config import settings
-from docket.core.db.models import Chunk, EvidenceVersion, Source, SourceStatus
+from docket.core.db.models import Chunk, EvidenceVersion, Source, SourceStatus, VersionStatus
 from docket.eval.schema import (
     GoldSet,
     GoldSetError,
@@ -260,13 +260,20 @@ class EvalRunner:
         )
 
     def corpus_chunks(self) -> list[CorpusChunk]:
-        """Every indexed chunk (parsed text, as stored) with its source name."""
+        """Every indexed chunk (parsed text, as stored) with its source name.
+
+        Scoped to `status == READY` (servable) evidence versions, matching
+        what `hybrid_search` actually returns at query time -- a version
+        that's merely the latest lineage slot but still `PENDING`/`FAILED`
+        owns no chunks a real query could ever surface, so including it here
+        would make this eval corpus diverge from production retrieval.
+        """
         names = {sid: name for name, sid in self._source_ids.items()}
         with self._context.session_factory() as session:
             rows = session.execute(
                 select(Chunk.id, Chunk.source_id, Chunk.heading, Chunk.text, EvidenceVersion.file_path)
                 .join(EvidenceVersion, Chunk.evidence_version_id == EvidenceVersion.id)
-                .where(EvidenceVersion.is_current.is_(True))
+                .where(EvidenceVersion.status == VersionStatus.READY)
                 .order_by(Chunk.source_id, Chunk.ordinal)
             ).all()
         return [

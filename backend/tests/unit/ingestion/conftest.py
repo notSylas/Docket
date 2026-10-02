@@ -17,7 +17,13 @@ import pytest
 from sqlalchemy import Engine, select
 
 from docket.core.db.engine import get_session_factory
-from docket.core.db.models import Chunk, EvidenceVersion, IngestionJob, IngestionJobStatus
+from docket.core.db.models import (
+    Chunk,
+    EvidenceVersion,
+    IngestionJob,
+    IngestionJobStatus,
+    VersionStatus,
+)
 from docket.infra.evidence.manager import EvidenceManager
 from docket.infra.evidence.store import ContentAddressedStore
 from docket.infra.index.fts_index import FtsIndexWriter
@@ -95,17 +101,18 @@ def env(
 
 
 def _chunk_ids_for_file(env: SimpleNamespace, file_path: Path) -> set[str]:
-    """Chunk ids belonging to `file_path`'s *current* EvidenceVersion only
-    -- a file's earlier (superseded) version keeps its own old Chunk rows
-    around in SQLite for audit purposes even after reconciliation removes
-    them from the indexes, so this must not match those too."""
+    """Chunk ids belonging to `file_path`'s *current* (latest lineage slot,
+    i.e. `status != SUPERSEDED`) EvidenceVersion only -- a file's earlier
+    (superseded) version keeps its own old Chunk rows around in SQLite for
+    audit purposes even after reconciliation removes them from the indexes,
+    so this must not match those too."""
     with env.session_factory() as session:
         rows = session.execute(
             select(Chunk.id)
             .join(EvidenceVersion, Chunk.evidence_version_id == EvidenceVersion.id)
             .where(
                 EvidenceVersion.file_path == str(file_path),
-                EvidenceVersion.is_current.is_(True),
+                EvidenceVersion.status != VersionStatus.SUPERSEDED,
             )
         ).scalars().all()
         return set(rows)

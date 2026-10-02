@@ -8,7 +8,14 @@ import pytest
 from sqlalchemy.orm import Session, sessionmaker
 
 from docket.core.db.engine import get_engine, get_session_factory
-from docket.core.db.models import Base, EvidenceVersion, Source, SourceStatus, Workspace
+from docket.core.db.models import (
+    Base,
+    EvidenceVersion,
+    Source,
+    SourceStatus,
+    VersionStatus,
+    Workspace,
+)
 from docket.infra.evidence.manager import EvidenceManager
 from docket.infra.evidence.store import ContentAddressedStore
 
@@ -79,7 +86,10 @@ def test_first_ingest_creates_current_version(
         source_id, file_path, parser_name="plain", parser_version="1.0.0"
     )
 
-    assert version.is_current is True
+    # EvidenceManager only stores bytes -- it never parses/chunks/indexes --
+    # so a fresh version starts PENDING, not READY. See Upgrade doc 03
+    # section 4.
+    assert version.status == VersionStatus.PENDING
     assert version.source_id == source_id
     assert _count_evidence_versions(session_factory, source_id) == 1
 
@@ -115,15 +125,15 @@ def test_reingest_changed_file_creates_new_current_version(
     )
 
     assert second.id != first.id
-    assert second.is_current is True
+    assert second.status == VersionStatus.PENDING
     assert second.content_hash != first.content_hash
     assert _count_evidence_versions(session_factory, source_id) == 2
 
     with session_factory() as session:
         refreshed_first = session.get(EvidenceVersion, first.id)
         refreshed_second = session.get(EvidenceVersion, second.id)
-        assert refreshed_first.is_current is False
-        assert refreshed_second.is_current is True
+        assert refreshed_first.status == VersionStatus.SUPERSEDED
+        assert refreshed_second.status == VersionStatus.PENDING
 
 
 def test_get_evidence_bytes_returns_original_content(
@@ -169,3 +179,127 @@ def test_identical_content_across_sources_dedupes_in_store_not_in_db(
     # ...but the underlying store only has one object on disk for that hash.
     object_files = [p for p in store.objects_dir.rglob("*") if p.is_file()]
     assert len(object_files) == 1
+
+
+# ---------------------------------------------------------------------------
+# VersionStatus lifecycle (Upgrade doc 03 section 4): PENDING -> READY |
+# FAILED, with SUPERSEDED reachable directly from any of the three.
+# ---------------------------------------------------------------------------
+
+
+def _set_status(session_factory: sessionmaker, version_id: str, status: VersionStatus) -> None:
+    with session_factory() as session:
+        version = session.get(EvidenceVersion, version_id)
+        version.status = status
+        session.add(version)
+        session.commit()
+
+
+@pytest.mark.parametrize("prior_status", [VersionStatus.PENDING, VersionStatus.READY, VersionStatus.FAILED])
+def test_reingest_changed_content_supersedes_regardless_of_prior_status(
+    manager: EvidenceManager,
+    session_factory: sessionmaker,
+    tmp_path: Path,
+    prior_status: VersionStatus,
+) -> None:
+    """Supersession always wins immediately, no matter where the old row was
+    in its own lifecycle -- a still-PENDING or already-FAILED row must flip
+    straight to SUPERSEDED the same as a READY one would, per the doc's
+    explicit "reachable directly from PENDING, READY, or FAILED" rule."""
+    source_id = _make_source(session_factory)
+    file_path = tmp_path / "report.txt"
+    file_path.write_text("version one")
+
+    first = manager.ingest_file(source_id, file_path, parser_name="plain", parser_version="1.0.0")
+    _set_status(session_factory, first.id, prior_status)
+
+    file_path.write_text("version two -- changed content")
+    second = manager.ingest_file(source_id, file_path, parser_name="plain", parser_version="1.0.0")
+
+    assert second.id != first.id
+    assert second.status == VersionStatus.PENDING
+    with session_factory() as session:
+        refreshed_first = session.get(EvidenceVersion, first.id)
+        assert refreshed_first.status == VersionStatus.SUPERSEDED
+
+
+@pytest.mark.parametrize("prior_status", [VersionStatus.PENDING, VersionStatus.FAILED])
+def test_reingest_unchanged_content_returns_same_row_without_resetting_status(
+    manager: EvidenceManager,
+    session_factory: sessionmaker,
+    tmp_path: Path,
+    prior_status: VersionStatus,
+) -> None:
+    """EvidenceManager itself never decides "no-op vs retry" -- it always
+    hands back the same row for unchanged bytes, leaving that decision to the
+    pipeline (which checks `status`). Proves the manager doesn't quietly
+    reset or otherwise touch a PENDING/FAILED row's status just because the
+    same content was re-ingested."""
+    source_id = _make_source(session_factory)
+    file_path = tmp_path / "report.txt"
+    file_path.write_text("hello world")
+
+    first = manager.ingest_file(source_id, file_path, parser_name="plain", parser_version="1.0.0")
+    _set_status(session_factory, first.id, prior_status)
+
+    second = manager.ingest_file(source_id, file_path, parser_name="plain", parser_version="1.0.0")
+
+    assert second.id == first.id
+    assert second.status == prior_status
+    assert _count_evidence_versions(session_factory, source_id) == 1
+
+
+def test_mark_version_status_transitions_to_ready(
+    manager: EvidenceManager, session_factory: sessionmaker, tmp_path: Path
+) -> None:
+    source_id = _make_source(session_factory)
+    file_path = tmp_path / "report.txt"
+    file_path.write_text("hello world")
+    version = manager.ingest_file(source_id, file_path, parser_name="plain", parser_version="1.0.0")
+    assert version.status == VersionStatus.PENDING
+
+    manager.mark_version_status(version.id, VersionStatus.READY)
+
+    with session_factory() as session:
+        assert session.get(EvidenceVersion, version.id).status == VersionStatus.READY
+
+
+def test_mark_version_status_transitions_to_failed(
+    manager: EvidenceManager, session_factory: sessionmaker, tmp_path: Path
+) -> None:
+    source_id = _make_source(session_factory)
+    file_path = tmp_path / "report.txt"
+    file_path.write_text("hello world")
+    version = manager.ingest_file(source_id, file_path, parser_name="plain", parser_version="1.0.0")
+
+    manager.mark_version_status(version.id, VersionStatus.FAILED)
+
+    with session_factory() as session:
+        assert session.get(EvidenceVersion, version.id).status == VersionStatus.FAILED
+
+
+def test_mark_version_status_noops_when_already_superseded(
+    manager: EvidenceManager, session_factory: sessionmaker, tmp_path: Path
+) -> None:
+    """If a processing job is still running against a row that gets
+    superseded mid-flight (newer content stored for the same file while the
+    old row was still being processed), the in-flight job's eventual
+    READY/FAILED write must not clobber SUPERSEDED -- supersession always
+    wins, regardless of how the stale processing job turns out."""
+    source_id = _make_source(session_factory)
+    file_path = tmp_path / "report.txt"
+    file_path.write_text("version one")
+    first = manager.ingest_file(source_id, file_path, parser_name="plain", parser_version="1.0.0")
+
+    file_path.write_text("version two -- changed content")
+    manager.ingest_file(source_id, file_path, parser_name="plain", parser_version="1.0.0")
+
+    with session_factory() as session:
+        assert session.get(EvidenceVersion, first.id).status == VersionStatus.SUPERSEDED
+
+    # A (simulated) stale in-flight processing job for the now-superseded
+    # `first` version finally finishes and tries to report its outcome.
+    manager.mark_version_status(first.id, VersionStatus.READY)
+
+    with session_factory() as session:
+        assert session.get(EvidenceVersion, first.id).status == VersionStatus.SUPERSEDED

@@ -62,6 +62,129 @@ def test_migration_downgrade_drops_everything(tmp_path: Path) -> None:
     engine.dispose()
 
 
+def test_version_status_migration_backfills_from_is_current(tmp_path: Path) -> None:
+    """0008_version_status drops `is_current` in favor of `status`. Prove the
+    backfill is exactly the deterministic mapping Upgrade doc 03 section 4
+    specifies: `is_current=True` -> `READY`, `is_current=False` ->
+    `SUPERSEDED` -- by inserting real rows on the pre-0008 schema (one
+    revision behind head) with both values, then checking what `status` each
+    one lands on after upgrading to head."""
+    sqlite_path = tmp_path / "docket.sqlite3"
+    config = _alembic_config(sqlite_path)
+    # One revision behind head (0007), before `status` exists.
+    command.upgrade(config, "e9d307126406")
+
+    now = "2024-01-01T00:00:00"
+    con = sqlite3.connect(str(sqlite_path))
+    try:
+        cur = con.cursor()
+        cur.execute(
+            "INSERT INTO workspaces (id, name, created_at) VALUES ('ws_1', 'ws', ?)", (now,)
+        )
+        cur.execute(
+            "INSERT INTO authorized_sources (id, workspace_id, scope_path, created_at) "
+            "VALUES ('auth_1', 'ws_1', '/tmp', ?)",
+            (now,),
+        )
+        cur.execute(
+            "INSERT INTO sources (id, workspace_id, authorized_source_id, source_type, path, "
+            "status, created_at, updated_at) "
+            "VALUES ('src_1', 'ws_1', 'auth_1', 'local_folder', '/tmp/doc.pdf', 'active', ?, ?)",
+            (now, now),
+        )
+        cur.execute(
+            "INSERT INTO evidence_versions (id, source_id, content_hash, byte_size, mime_type, "
+            "observed_at, parser_name, parser_version, is_current) "
+            "VALUES ('ev_current', 'src_1', 'hash_current', 1, NULL, ?, 'docling', '1.0', 1)",
+            (now,),
+        )
+        cur.execute(
+            "INSERT INTO evidence_versions (id, source_id, content_hash, byte_size, mime_type, "
+            "observed_at, parser_name, parser_version, is_current) "
+            "VALUES ('ev_old', 'src_1', 'hash_old', 1, NULL, ?, 'docling', '1.0', 0)",
+            (now,),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+    command.upgrade(config, "head")
+
+    engine = create_engine(f"sqlite:///{sqlite_path}")
+    inspector = inspect(engine)
+    column_names = {col["name"] for col in inspector.get_columns("evidence_versions")}
+    assert "status" in column_names
+    assert "is_current" not in column_names
+
+    with engine.connect() as conn:
+        rows = dict(
+            conn.execute(
+                text("SELECT id, status FROM evidence_versions WHERE id IN ('ev_current', 'ev_old')")
+            ).all()
+        )
+    assert rows == {"ev_current": "READY", "ev_old": "SUPERSEDED"}
+    engine.dispose()
+
+
+def test_version_status_migration_downgrade_restores_is_current(tmp_path: Path) -> None:
+    """Downgrading past 0008 must restore `is_current`, derived from
+    `status == READY`, and drop `status`."""
+    sqlite_path = tmp_path / "docket.sqlite3"
+    config = _alembic_config(sqlite_path)
+    command.upgrade(config, "head")
+
+    now = "2024-01-01T00:00:00"
+    con = sqlite3.connect(str(sqlite_path))
+    try:
+        cur = con.cursor()
+        cur.execute(
+            "INSERT INTO workspaces (id, name, created_at) VALUES ('ws_1', 'ws', ?)", (now,)
+        )
+        cur.execute(
+            "INSERT INTO authorized_sources (id, workspace_id, scope_path, created_at) "
+            "VALUES ('auth_1', 'ws_1', '/tmp', ?)",
+            (now,),
+        )
+        cur.execute(
+            "INSERT INTO sources (id, workspace_id, authorized_source_id, source_type, path, "
+            "status, created_at, updated_at) "
+            "VALUES ('src_1', 'ws_1', 'auth_1', 'local_folder', '/tmp/doc.pdf', 'active', ?, ?)",
+            (now, now),
+        )
+        cur.execute(
+            "INSERT INTO evidence_versions (id, source_id, content_hash, byte_size, mime_type, "
+            "observed_at, parser_name, parser_version, status) "
+            "VALUES ('ev_ready', 'src_1', 'hash_ready', 1, NULL, ?, 'docling', '1.0', 'READY')",
+            (now,),
+        )
+        cur.execute(
+            "INSERT INTO evidence_versions (id, source_id, content_hash, byte_size, mime_type, "
+            "observed_at, parser_name, parser_version, status) "
+            "VALUES ('ev_failed', 'src_1', 'hash_failed', 1, NULL, ?, 'docling', '1.0', 'FAILED')",
+            (now,),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+    command.downgrade(config, "e9d307126406")
+
+    engine = create_engine(f"sqlite:///{sqlite_path}")
+    inspector = inspect(engine)
+    column_names = {col["name"] for col in inspector.get_columns("evidence_versions")}
+    assert "is_current" in column_names
+    assert "status" not in column_names
+
+    with engine.connect() as conn:
+        rows = dict(
+            conn.execute(
+                text("SELECT id, is_current FROM evidence_versions WHERE id IN ('ev_ready', 'ev_failed')")
+            ).all()
+        )
+    assert rows == {"ev_ready": 1, "ev_failed": 0}
+    engine.dispose()
+
+
 def test_fts_chunks_table_created_and_queryable(tmp_path: Path) -> None:
     sqlite_path = tmp_path / "docket.sqlite3"
     config = _alembic_config(sqlite_path)
@@ -91,7 +214,13 @@ def _insert_minimal_chunk_row(con: sqlite3.Connection, chunk_id: str, chunk_text
     """Insert one row into every parent table `chunks` FKs to, then one
     `chunks` row itself -- the minimal fixture for testing that the FTS
     porter-stemming migration (0003) correctly backfills `fts_chunks` from
-    real `chunks` data rather than from a hand-inserted `fts_chunks` row."""
+    real `chunks` data rather than from a hand-inserted `fts_chunks` row.
+
+    Called against both pre-0008 schemas (`evidence_versions.is_current`)
+    and post-0008 schemas (`evidence_versions.status`) by different tests in
+    this module, so the `evidence_versions` insert introspects which column
+    actually exists on the connection it's given rather than hardcoding one.
+    """
     now = "2024-01-01T00:00:00"
     cur = con.cursor()
     cur.execute(
@@ -108,12 +237,23 @@ def _insert_minimal_chunk_row(con: sqlite3.Connection, chunk_id: str, chunk_text
         "VALUES ('src_1', 'ws_1', 'auth_1', 'local_folder', '/tmp/doc.pdf', 'active', ?, ?)",
         (now, now),
     )
-    cur.execute(
-        "INSERT INTO evidence_versions (id, source_id, content_hash, byte_size, mime_type, "
-        "observed_at, parser_name, parser_version, is_current) "
-        "VALUES ('ev_1', 'src_1', 'hash_ev', 100, 'application/pdf', ?, 'docling', '1.0', 1)",
-        (now,),
-    )
+    evidence_version_columns = {
+        row[1] for row in cur.execute("PRAGMA table_info(evidence_versions)").fetchall()
+    }
+    if "status" in evidence_version_columns:
+        cur.execute(
+            "INSERT INTO evidence_versions (id, source_id, content_hash, byte_size, mime_type, "
+            "observed_at, parser_name, parser_version, status) "
+            "VALUES ('ev_1', 'src_1', 'hash_ev', 100, 'application/pdf', ?, 'docling', '1.0', 'READY')",
+            (now,),
+        )
+    else:
+        cur.execute(
+            "INSERT INTO evidence_versions (id, source_id, content_hash, byte_size, mime_type, "
+            "observed_at, parser_name, parser_version, is_current) "
+            "VALUES ('ev_1', 'src_1', 'hash_ev', 100, 'application/pdf', ?, 'docling', '1.0', 1)",
+            (now,),
+        )
     cur.execute(
         "INSERT INTO evidence_units (id, evidence_version_id, unit_index, heading, "
         "content_hash) VALUES ('eu_1', 'ev_1', 0, NULL, 'hash_eu')"

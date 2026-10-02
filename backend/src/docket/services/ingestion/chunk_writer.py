@@ -20,6 +20,7 @@ from docket.core.db.models import (
     ChunkRecipe as ChunkRecipeRow,
     EvidenceUnit,
     EvidenceVersion,
+    VersionStatus,
 )
 from docket.infra.index.base import ChunkRecord
 from docket.infra.parsing.recipes import ChunkRecipe
@@ -50,14 +51,21 @@ class ChunkWriter:
 
     def current_version_id(self, source_id: str, file_path: str) -> str | None:
         # Scoped by (source_id, file_path): a "local_folder" source can hold
-        # many files, each with its own independent `is_current` version --
-        # see `EvidenceManager._current_version` and migration 0002's
-        # docstring for why `source_id` alone isn't enough to identify "the"
-        # current version once a source has more than one file.
+        # many files, each with its own independent version lineage -- see
+        # `EvidenceManager._current_version` and migration 0002's docstring
+        # for why `source_id` alone isn't enough to identify "the" current
+        # version once a source has more than one file.
+        #
+        # "Current" = latest lineage slot (status != SUPERSEDED), matching
+        # `EvidenceManager._current_version`'s own posture -- this is the
+        # before/after snapshot `IngestionPipeline` compares its post-ingest
+        # id against, so it has to use the same notion of "current" or the
+        # unchanged-vs-changed detection breaks. A PENDING or FAILED row is
+        # still the current lineage slot even though it isn't servable yet.
         with self._session_factory() as session:
             stmt = select(EvidenceVersion.id).where(
                 EvidenceVersion.source_id == source_id,
-                EvidenceVersion.is_current.is_(True),
+                EvidenceVersion.status != VersionStatus.SUPERSEDED,
                 EvidenceVersion.file_path == file_path,
             )
             return session.execute(stmt).scalar_one_or_none()
@@ -122,16 +130,28 @@ class ChunkWriter:
             ]
 
     def current_chunk_ids_for_source(self, source_id: str) -> set[str]:
-        """All chunk_ids reachable from `source_id`'s *current*
+        """All chunk_ids reachable from `source_id`'s *servable* (`READY`)
         EvidenceVersions -- the "should still be indexed" set used for the
-        single end-of-run reconcile pass."""
+        single end-of-run reconcile pass.
+
+        Deliberately `status == READY` here, not just "not superseded": a
+        version whose chunking succeeded but whose index upsert then raised
+        ends up `FAILED` with real `Chunk` rows already committed (chunk
+        persistence commits before the index upsert that can fail) -- those
+        orphaned rows must not be treated as "desired" index state, or
+        reconcile would leave stale/partial index entries for a version
+        nothing should be able to retrieve. A `PENDING`/`FAILED` version
+        never legitimately owns chunks that *should* be indexed, so this is
+        equivalent to "not superseded" in the common case and strictly safer
+        in that one.
+        """
         with self._session_factory() as session:
             stmt = (
                 select(Chunk.id)
                 .join(EvidenceVersion, Chunk.evidence_version_id == EvidenceVersion.id)
                 .where(
                     EvidenceVersion.source_id == source_id,
-                    EvidenceVersion.is_current.is_(True),
+                    EvidenceVersion.status == VersionStatus.READY,
                 )
             )
             return set(session.execute(stmt).scalars().all())

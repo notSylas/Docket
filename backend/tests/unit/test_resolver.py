@@ -20,6 +20,7 @@ from docket.core.db.models import (
     EvidenceVersion,
     Source,
     SourceStatus,
+    VersionStatus,
     Workspace,
 )
 from docket.infra.retrieval.resolver import ChunkNotFoundError, EvidenceResolver, ResolvedEvidence
@@ -64,6 +65,7 @@ def _build_chain(session: Session, *, path: str = "/home/user/Documents/report.p
         observed_at=datetime.now(timezone.utc),
         parser_name="docling",
         parser_version="1.0.0",
+        status=VersionStatus.READY,
     )
     session.add(evidence_version)
     session.flush()
@@ -228,7 +230,24 @@ def test_revoked_chunk_cannot_be_resolved_directly(session: Session) -> None:
 def test_superseded_chunk_cannot_be_resolved_directly(session: Session) -> None:
     built = _build_chain(session)
     chunk_id = built["chunk"].id
-    built["evidence_version"].is_current = False
+    built["evidence_version"].status = VersionStatus.SUPERSEDED
+    session.commit()
+
+    with pytest.raises(ChunkNotFoundError):
+        _resolver(session).resolve(chunk_id)
+
+
+@pytest.mark.parametrize("status", [VersionStatus.PENDING, VersionStatus.FAILED])
+def test_not_yet_ready_chunk_cannot_be_resolved_directly(
+    session: Session, status: VersionStatus
+) -> None:
+    """Servable at query time means `status == READY`, not merely
+    "not superseded" -- a version that's the latest lineage slot but still
+    PENDING (not yet processed) or FAILED (processing raised) must be just
+    as unresolvable as a superseded one. See Upgrade doc 03 section 4."""
+    built = _build_chain(session)
+    chunk_id = built["chunk"].id
+    built["evidence_version"].status = status
     session.commit()
 
     with pytest.raises(ChunkNotFoundError):

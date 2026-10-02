@@ -21,19 +21,28 @@ CP8 brief to be documented in code, not just in a report):
    read + hash, duplicating `EvidenceManager`'s own work), we snapshot the
    id of the source's *current* `EvidenceVersion` immediately before calling
    `ingest_file`, then compare it to the id of the version `ingest_file`
-   returns: same id => unchanged (no-op), different id (or no prior current
+   returns: same id => unchanged, different id (or no prior current
    version) => new/changed. This is a single cheap indexed lookup
    (`evidence_versions.source_id`), not a re-read of the file.
+
+   Same id doesn't automatically mean "no-op" any more (Upgrade doc 03
+   section 4): it only does when that row's `status` is already `READY`
+   (chunking + indexing already succeeded -- nothing useful to redo). If the
+   bytes are unchanged but the existing row is `PENDING` (never got
+   processed, e.g. an interrupted earlier run) or `FAILED` (processing
+   raised last time), this pipeline still (re)runs parse/chunk/index against
+   that same row instead of silently treating it as settled -- that's the
+   `Failed -> Ready` transition. See `_ingest_one_file`.
 
    Deviation worth flagging: `EvidenceManager`'s "current version" lookup, as
    originally written, was scoped only by `source_id` -- correct for a
    source that maps to one file, but wrong for a multi-file "local_folder"
    source (this checkpoint's whole premise): ingesting file B under the same
    source_id would flip file A's still-current, still-unchanged version to
-   `is_current=False` (only one row can be "the" current version per
-   source_id), so re-ingesting file A afterwards would look like a false
-   "changed" every time -- breaking the exact idempotency this pipeline
-   needs to prove. Fixed at the source: `EvidenceVersion` gained a nullable
+   `SUPERSEDED` (only one row can be "the" current version per source_id),
+   so re-ingesting file A afterwards would look like a false "changed" every
+   time -- breaking the exact idempotency this pipeline needs to prove.
+   Fixed at the source: `EvidenceVersion` gained a nullable
    `file_path` column (migration `0002_evidence_version_file_path`), and
    `EvidenceManager._current_version`/`ingest_file` now scope "current" by
    (source_id, file_path). This pipeline's own before/after snapshot
@@ -110,17 +119,16 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
 from docket.core.config import Settings
 from docket.core.config import settings as _default_settings
 from docket.core.db.models import (
-    Chunk,
     IngestionJob,
     IngestionJobStatus,
     Source,
     SourceStatus,
+    VersionStatus,
 )
 from docket.infra.evidence.manager import EvidenceManager
 from docket.infra.index.manager import IndexManager
@@ -290,100 +298,113 @@ class IngestionPipeline:
             parser_version=self._parser.parser_version,
         )
 
-        if evidence_version.id == before_id:
-            with self._session_factory() as session:
-                has_chunks = session.execute(
-                    select(Chunk.id).where(Chunk.evidence_version_id == evidence_version.id).limit(1)
-                ).first() is not None
-            if has_chunks:
-                needs_formula_backfill = evidence_version.formula_regions_json is None
-                needs_page_image_backfill = evidence_version.page_images_json is None
-                needs_transcription_backfill = (
-                    self._settings.formula_transcription_enabled
-                    and evidence_version.formula_transcriptions_json is None
-                )
-                if needs_formula_backfill or needs_page_image_backfill or needs_transcription_backfill:
-                    # Backfill coordinates/images/transcriptions on legacy
-                    # versions without replacing their chunks.
-                    if needs_formula_backfill or needs_page_image_backfill:
-                        # Only this branch re-parses (and so re-renders
-                        # pages) -- something is genuinely missing that can
-                        # only come from Docling.
-                        parsed = self._parser.parse(source_id, path)
-                        if needs_formula_backfill:
-                            self._formula_transcriber.save_regions(
-                                evidence_version.id, parsed.formula_regions
-                            )
-                        formula_regions = parsed.formula_regions
-                        if needs_page_image_backfill:
-                            page_image_hashes = self._visual_indexer.save_page_images(
-                                evidence_version.id, parsed.page_images
-                            )
-                            if self._settings.visual_index_enabled:
-                                self._visual_indexer.index_pages(
-                                    evidence_version_id=evidence_version.id,
-                                    source_id=source_id,
-                                    page_images=parsed.page_images,
-                                )
-                        else:
-                            page_image_hashes = json.loads(evidence_version.page_images_json)
-                    else:
-                        # Regions + page images are already stored;
-                        # transcription is the only thing missing (e.g. the
-                        # flag was just turned on). Load both straight from
-                        # the DB/store rather than re-parsing, which would
-                        # re-render every page for nothing -- transcription
-                        # only ever depends on page images already existing.
-                        formula_regions = json.loads(evidence_version.formula_regions_json)
-                        page_image_hashes = json.loads(evidence_version.page_images_json)
-
-                    if needs_transcription_backfill:
-                        self._formula_transcriber.transcribe(
-                            evidence_version_id=evidence_version.id,
-                            formula_regions=formula_regions,
-                            page_image_hashes=page_image_hashes,
+        if evidence_version.id == before_id and evidence_version.status == VersionStatus.READY:
+            # Unchanged bytes AND already fully processed: a genuine no-op
+            # for parsing/chunking/indexing. The only thing left to check is
+            # whether a flag flipped on *after* this version was last
+            # processed (visual index / formula transcription), which is
+            # handled by a narrower backfill pass below, not a full re-ingest.
+            needs_formula_backfill = evidence_version.formula_regions_json is None
+            needs_page_image_backfill = evidence_version.page_images_json is None
+            needs_transcription_backfill = (
+                self._settings.formula_transcription_enabled
+                and evidence_version.formula_transcriptions_json is None
+            )
+            if needs_formula_backfill or needs_page_image_backfill or needs_transcription_backfill:
+                # Backfill coordinates/images/transcriptions on legacy
+                # versions without replacing their chunks.
+                if needs_formula_backfill or needs_page_image_backfill:
+                    # Only this branch re-parses (and so re-renders
+                    # pages) -- something is genuinely missing that can
+                    # only come from Docling.
+                    parsed = self._parser.parse(source_id, path)
+                    if needs_formula_backfill:
+                        self._formula_transcriber.save_regions(
+                            evidence_version.id, parsed.formula_regions
                         )
-                return FileIngestResult(path=path, status="unchanged")
-            # An earlier parse failed after raw bytes were stored; retry derivation.
+                    formula_regions = parsed.formula_regions
+                    if needs_page_image_backfill:
+                        page_image_hashes = self._visual_indexer.save_page_images(
+                            evidence_version.id, parsed.page_images
+                        )
+                        if self._settings.visual_index_enabled:
+                            self._visual_indexer.index_pages(
+                                evidence_version_id=evidence_version.id,
+                                source_id=source_id,
+                                page_images=parsed.page_images,
+                            )
+                    else:
+                        page_image_hashes = json.loads(evidence_version.page_images_json)
+                else:
+                    # Regions + page images are already stored;
+                    # transcription is the only thing missing (e.g. the
+                    # flag was just turned on). Load both straight from
+                    # the DB/store rather than re-parsing, which would
+                    # re-render every page for nothing -- transcription
+                    # only ever depends on page images already existing.
+                    formula_regions = json.loads(evidence_version.formula_regions_json)
+                    page_image_hashes = json.loads(evidence_version.page_images_json)
 
-        parsed = self._parser.parse(source_id, path)
-        self._formula_transcriber.save_regions(evidence_version.id, parsed.formula_regions)
-        page_image_hashes = self._visual_indexer.save_page_images(
-            evidence_version.id, parsed.page_images
-        )
-        if self._settings.visual_index_enabled:
-            self._visual_indexer.index_pages(
-                evidence_version_id=evidence_version.id,
+                if needs_transcription_backfill:
+                    self._formula_transcriber.transcribe(
+                        evidence_version_id=evidence_version.id,
+                        formula_regions=formula_regions,
+                        page_image_hashes=page_image_hashes,
+                    )
+            return FileIngestResult(path=path, status="unchanged")
+
+        # Either genuinely new/changed content (different id), or unchanged
+        # content whose current row is PENDING (never processed) or FAILED
+        # (processing raised last time) -- either way, (re)run the full
+        # parse/chunk/index pipeline against `evidence_version`, tracking its
+        # outcome via `status` (Upgrade doc 03 section 4). A corrupt/
+        # unparseable file raises here; the caller (`run_ingestion_for_source`)
+        # catches it per-file so one bad file never aborts the batch -- this
+        # try/except exists only to record FAILED before letting that
+        # exception propagate, not to change how it's handled.
+        try:
+            parsed = self._parser.parse(source_id, path)
+            self._formula_transcriber.save_regions(evidence_version.id, parsed.formula_regions)
+            page_image_hashes = self._visual_indexer.save_page_images(
+                evidence_version.id, parsed.page_images
+            )
+            if self._settings.visual_index_enabled:
+                self._visual_indexer.index_pages(
+                    evidence_version_id=evidence_version.id,
+                    source_id=source_id,
+                    page_images=parsed.page_images,
+                )
+            if self._settings.formula_transcription_enabled:
+                self._formula_transcriber.transcribe(
+                    evidence_version_id=evidence_version.id,
+                    formula_regions=parsed.formula_regions,
+                    page_image_hashes=page_image_hashes,
+                )
+            # Prefer the page-marker-annotated text so chunks/units get real
+            # page_start/page_end provenance; fall back to the plain text for
+            # a `ParsedDocument` built without marker info (e.g. some
+            # fixtures) -- chunk_document handles marker-free text fine,
+            # yielding page_start=page_end=None throughout, exactly as before
+            # this checkpoint.
+            chunking_text = (
+                parsed.text_with_page_markers
+                if parsed.text_with_page_markers is not None
+                else parsed.text
+            )
+            units, chunks = chunk_document(chunking_text, self._chunk_recipe)
+
+            records = self._chunk_writer.persist_units_and_chunks(
                 source_id=source_id,
-                page_images=parsed.page_images,
-            )
-        if self._settings.formula_transcription_enabled:
-            self._formula_transcriber.transcribe(
                 evidence_version_id=evidence_version.id,
-                formula_regions=parsed.formula_regions,
-                page_image_hashes=page_image_hashes,
+                units=units,
+                chunks=chunks,
             )
-        # Prefer the page-marker-annotated text so chunks/units get real
-        # page_start/page_end provenance; fall back to the plain text for a
-        # `ParsedDocument` built without marker info (e.g. some fixtures) --
-        # chunk_document handles marker-free text fine, yielding
-        # page_start=page_end=None throughout, exactly as before this
-        # checkpoint.
-        chunking_text = (
-            parsed.text_with_page_markers
-            if parsed.text_with_page_markers is not None
-            else parsed.text
-        )
-        units, chunks = chunk_document(chunking_text, self._chunk_recipe)
+            self._index_manager.upsert_chunks(records)
+        except Exception:
+            self._evidence_manager.mark_version_status(evidence_version.id, VersionStatus.FAILED)
+            raise
 
-        records = self._chunk_writer.persist_units_and_chunks(
-            source_id=source_id,
-            evidence_version_id=evidence_version.id,
-            units=units,
-            chunks=chunks,
-        )
-        self._index_manager.upsert_chunks(records)
-
+        self._evidence_manager.mark_version_status(evidence_version.id, VersionStatus.READY)
         return FileIngestResult(path=path, status="ingested", chunks_written=len(records))
 
     def _finalize_job(

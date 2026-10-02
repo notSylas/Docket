@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from sqlalchemy import Engine
 
 from docket.core.db.engine import get_session_factory
@@ -16,6 +17,7 @@ from docket.core.db.models import (
     EvidenceVersion,
     Source,
     SourceStatus,
+    VersionStatus,
     Workspace,
 )
 from docket.infra.index.base import ChunkRecord
@@ -40,11 +42,11 @@ def _insert_metadata(
     records: list[ChunkRecord],
     *,
     status: SourceStatus = SourceStatus.ACTIVE,
-    is_current: bool = True,
+    version_status: VersionStatus = VersionStatus.READY,
 ) -> None:
     """Insert the `Source`/`EvidenceVersion`/`EvidenceUnit`/`ChunkRecipe`/
-    `Chunk` ORM rows that `hybrid_search`'s M3 status/`is_current` join
-    (`fts_search`'s SQL join, `vector_search`'s post-filter) reads from.
+    `Chunk` ORM rows that `hybrid_search`'s M3 source-status/version-status
+    join (`fts_search`'s SQL join, `vector_search`'s post-filter) reads from.
 
     Pre-M3, `fts_search`/`vector_search` only ever touched the `fts_chunks`
     FTS5 table / the LanceDB table directly, so this module's fixtures
@@ -56,10 +58,10 @@ def _insert_metadata(
     to populate them too, or every chunk here would look like it belongs to
     a nonexistent (therefore unfilterable-as-active) source. One call
     handles every (source_id, evidence_version_id) pair present in
-    `records`, defaulting to an ACTIVE, current source -- the status the
-    vast majority of this file's pre-existing tests need to keep passing;
-    the new revoked/non-current tests below pass `status`/`is_current`
-    explicitly.
+    `records`, defaulting to an ACTIVE source and a READY (servable) version
+    -- the status the vast majority of this file's pre-existing tests need
+    to keep passing; the new revoked/non-servable tests below pass
+    `status`/`version_status` explicitly.
     """
     session_factory = get_session_factory(engine)
     with session_factory() as session:
@@ -96,7 +98,7 @@ def _insert_metadata(
                         byte_size=1,
                         parser_name="test",
                         parser_version="1",
-                        is_current=is_current,
+                        status=version_status,
                     )
                 )
             if record.chunk_recipe_id not in seen_recipes:
@@ -741,13 +743,48 @@ def test_fts_search_excludes_non_current_evidence_version_chunk(
     writer.upsert(records, embeddings=None)
     # Same source (ACTIVE), but the old record's evidence version is no
     # longer current -- e.g. the file was re-ingested with new content.
-    _insert_metadata(migrated_sqlite_engine, [records[0]], is_current=False)
-    _insert_metadata(migrated_sqlite_engine, [records[1]], is_current=True)
+    _insert_metadata(migrated_sqlite_engine, [records[0]], version_status=VersionStatus.SUPERSEDED)
+    _insert_metadata(migrated_sqlite_engine, [records[1]], version_status=VersionStatus.READY)
 
     results = fts_search(migrated_sqlite_engine, "glorbnex", top_k=8)
 
     assert "chk_old_version" not in results
     assert "chk_new_version" in results
+
+
+@pytest.mark.parametrize("version_status", [VersionStatus.PENDING, VersionStatus.FAILED])
+def test_fts_search_excludes_not_yet_ready_evidence_version_chunk(
+    migrated_sqlite_engine: Engine, version_status: VersionStatus,
+) -> None:
+    """Servable at query time means `status == READY`, not merely
+    "not superseded" (Upgrade doc 03 section 4): a chunk whose evidence
+    version is still PENDING or FAILED must be excluded the same as a
+    superseded one, even though it's still the latest lineage slot for its
+    file. (In production a PENDING/FAILED version never actually owns a
+    `Chunk` row -- chunks are only written once parsing/chunking succeeds --
+    but this proves the SQL filter itself is READY-specific, not just a
+    not-SUPERSEDED check, independent of that invariant holding elsewhere.)
+    """
+    writer = FtsIndexWriter(migrated_sqlite_engine)
+    records = [
+        ChunkRecord(
+            chunk_id="chk_not_ready",
+            source_id="src_1",
+            evidence_version_id="ev_not_ready",
+            evidence_unit_id="eu_not_ready",
+            chunk_recipe_id="rcp_1",
+            ordinal=0,
+            heading=None,
+            text="flibbertigibbet flibbertigibbet flibbertigibbet.",
+            content_hash="hash_not_ready",
+        ),
+    ]
+    writer.upsert(records, embeddings=None)
+    _insert_metadata(migrated_sqlite_engine, records, version_status=version_status)
+
+    results = fts_search(migrated_sqlite_engine, "flibbertigibbet", top_k=8)
+
+    assert "chk_not_ready" not in results
 
 
 def test_vector_search_excludes_non_current_evidence_version_chunk(
@@ -782,8 +819,8 @@ def test_vector_search_excludes_non_current_evidence_version_chunk(
     ]
     embeddings = [gateway.embed(r.text) for r in records]
     writer.upsert(records, embeddings=embeddings)
-    _insert_metadata(migrated_sqlite_engine, [records[0]], is_current=False)
-    _insert_metadata(migrated_sqlite_engine, [records[1]], is_current=True)
+    _insert_metadata(migrated_sqlite_engine, [records[0]], version_status=VersionStatus.SUPERSEDED)
+    _insert_metadata(migrated_sqlite_engine, [records[1]], version_status=VersionStatus.READY)
     table = writer._open_table()
 
     results = vector_search(table, migrated_sqlite_engine, gateway, old_text, top_k=2)
@@ -890,7 +927,7 @@ def test_filter_active_and_current_versions_drops_non_current_version(
             text="x", content_hash="hash_old",
         )
     ]
-    _insert_metadata(migrated_sqlite_engine, records, is_current=False)
+    _insert_metadata(migrated_sqlite_engine, records, version_status=VersionStatus.SUPERSEDED)
 
     assert _filter_active_and_current_versions(migrated_sqlite_engine, ["ev_old"]) == []
 
@@ -1052,7 +1089,7 @@ def test_visual_search_chunk_level_filter_catches_inconsistent_revoked_chunk(
         session.merge(
             EvidenceVersion(
                 id="ev_1", source_id="src_active_ev", content_hash="hash_ev", byte_size=1,
-                parser_name="test", parser_version="1", is_current=True,
+                parser_name="test", parser_version="1", status=VersionStatus.READY,
             )
         )
         session.merge(

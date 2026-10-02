@@ -32,7 +32,7 @@ from typing import Any
 from sqlalchemy import Engine, bindparam, text
 
 from docket.core.config import settings
-from docket.core.db.models import SourceStatus
+from docket.core.db.models import SourceStatus, VersionStatus
 from docket.infra.inference.gateway import InferenceGateway
 
 _DEFAULT_RRF_K = 60
@@ -124,22 +124,25 @@ def _sanitize_fts_query(query: str) -> str:
     return " OR ".join(f'"{term}"' for term in terms)
 
 
-# M3 -- revoked/current-version correctness: a source can be revoked (its
+# M3 -- revoked/servable-version correctness: a source can be revoked (its
 # `Source.status` flips away from ACTIVE via `SourceManager.deactivate_source`)
-# and re-ingesting a changed file supersedes an old `EvidenceVersion`
-# (`is_current` flips to False). Neither leg of hybrid search is allowed to
-# surface a chunk from a non-ACTIVE source or a non-current evidence version,
-# regardless of how well it ranks lexically or semantically -- the CLI tells
-# the user a revoked source's "evidence is no longer searched", and that has
-# to actually be true. `fts_chunks` has no `source_id`/`evidence_version_id`
-# columns of its own (see `docket.infra.index.fts_index`'s module docstring), but it
-# lives in the same SQLite database as the `chunks`/`sources`/
-# `evidence_versions` ORM tables (both are reached through the same `Engine`),
-# so the FTS query below joins straight through to them. `SourceStatus.ACTIVE`
-# is intentionally the only status treated as searchable (not e.g. MISSING --
-# see the M3 plan) and its `.name` ("ACTIVE") is what SQLAlchemy's `Enum` type
-# actually persists in the `sources.status` column (verified against a real
-# migrated DB), not `.value` ("active").
+# and an `EvidenceVersion` is only servable at query time while its `status`
+# is `READY` -- `PENDING` (not yet processed), `FAILED` (processing raised),
+# and `SUPERSEDED` (newer content stored for the same file) are all
+# excluded, per Upgrade doc 03 section 4. Neither leg of hybrid search is
+# allowed to surface a chunk from a non-ACTIVE source or a non-READY
+# evidence version, regardless of how well it ranks lexically or
+# semantically -- the CLI tells the user a revoked source's "evidence is no
+# longer searched", and that has to actually be true. `fts_chunks` has no
+# `source_id`/`evidence_version_id` columns of its own (see
+# `docket.infra.index.fts_index`'s module docstring), but it lives in the
+# same SQLite database as the `chunks`/`sources`/`evidence_versions` ORM
+# tables (both are reached through the same `Engine`), so the FTS query below
+# joins straight through to them. `SourceStatus.ACTIVE`/`VersionStatus.READY`
+# are intentionally the only statuses treated as searchable, and their
+# `.name` ("ACTIVE"/"READY") is what SQLAlchemy's `Enum` type actually
+# persists in the `status` columns (verified against a real migrated DB), not
+# `.value` ("active"/"ready").
 _FTS_SEARCH_SQL = text(
     "SELECT fts_chunks.chunk_id FROM fts_chunks "
     "JOIN chunks ON chunks.id = fts_chunks.chunk_id "
@@ -147,7 +150,7 @@ _FTS_SEARCH_SQL = text(
     "JOIN evidence_versions ON evidence_versions.id = chunks.evidence_version_id "
     "WHERE fts_chunks MATCH :query "
     "AND sources.status = :active_status "
-    "AND evidence_versions.is_current = :is_current "
+    "AND evidence_versions.status = :ready_status "
     "ORDER BY bm25(fts_chunks) LIMIT :limit"
 )
 
@@ -172,7 +175,7 @@ def fts_search(engine: Engine, query: str, top_k: int) -> list[str]:
                 "query": sanitized,
                 "limit": top_k,
                 "active_status": SourceStatus.ACTIVE.name,
-                "is_current": True,
+                "ready_status": VersionStatus.READY.name,
             },
         )
         return [row[0] for row in rows]
@@ -184,13 +187,14 @@ _ALLOWED_CHUNK_IDS_SQL = text(
     "JOIN evidence_versions ON evidence_versions.id = chunks.evidence_version_id "
     "WHERE chunks.id IN :chunk_ids "
     "AND sources.status = :active_status "
-    "AND evidence_versions.is_current = :is_current"
+    "AND evidence_versions.status = :ready_status"
 ).bindparams(bindparam("chunk_ids", expanding=True))
 
 
 def _filter_active_and_current(engine: Engine, chunk_ids: list[str]) -> list[str]:
     """Filter `chunk_ids` (in-place order preserved) down to those whose
-    source is ACTIVE and whose evidence version is current.
+    source is ACTIVE and whose evidence version is servable (`status ==
+    READY`).
 
     The LanceDB vector table has no `evidence_version_id`/status columns of
     its own (see `docket.infra.index.vector_index`'s schema note -- it only carries
@@ -198,7 +202,7 @@ def _filter_active_and_current(engine: Engine, chunk_ids: list[str]) -> list[str
     join and filter inside the SQL query itself), vector search's result has
     to be post-filtered against the real `chunks`/`sources`/`evidence_versions`
     tables through `engine` after the nearest-neighbor search runs. This can
-    return fewer than `top_k` results when a revoked/superseded chunk would
+    return fewer than `top_k` results when a revoked/non-READY chunk would
     otherwise have ranked in the top `top_k` -- correct filtering matters more
     here than backfilling the slot it leaves (M5's candidate-pool widening is
     the place to do that, not this fix).
@@ -211,7 +215,7 @@ def _filter_active_and_current(engine: Engine, chunk_ids: list[str]) -> list[str
             {
                 "chunk_ids": chunk_ids,
                 "active_status": SourceStatus.ACTIVE.name,
-                "is_current": True,
+                "ready_status": VersionStatus.READY.name,
             },
         )
         allowed = {row[0] for row in rows}
@@ -236,7 +240,7 @@ _ALLOWED_EVIDENCE_VERSION_IDS_SQL = text(
     "JOIN sources ON sources.id = evidence_versions.source_id "
     "WHERE evidence_versions.id IN :evidence_version_ids "
     "AND sources.status = :active_status "
-    "AND evidence_versions.is_current = :is_current"
+    "AND evidence_versions.status = :ready_status"
 ).bindparams(bindparam("evidence_version_ids", expanding=True))
 
 
@@ -244,16 +248,17 @@ def _filter_active_and_current_versions(
     engine: Engine, evidence_version_ids: list[str]
 ) -> list[str]:
     """Filter `evidence_version_ids` (order preserved) down to those whose
-    source is ACTIVE and which are themselves the current evidence version --
+    source is ACTIVE and which are themselves servable (`status == READY`) --
     the same non-negotiable invariant `_filter_active_and_current` enforces
     for chunk_ids, applied here directly to evidence_version_ids.
 
     `visual_search`'s page results come back keyed by
     `(evidence_version_id, page_no)`, not chunk_id -- there's no chunk to
-    filter yet at that point, so a revoked/superseded evidence_version_id
+    filter yet at that point, so a revoked/non-READY evidence_version_id
     has to be dropped here, *before* it's ever used to look up chunks (a
-    superseded version's chunks would otherwise be found and returned as if
-    they were current, defeating the point of filtering at all).
+    superseded or not-yet-processed version's chunks would otherwise be
+    found and returned as if they were servable, defeating the point of
+    filtering at all).
     """
     if not evidence_version_ids:
         return []
@@ -263,7 +268,7 @@ def _filter_active_and_current_versions(
             {
                 "evidence_version_ids": evidence_version_ids,
                 "active_status": SourceStatus.ACTIVE.name,
-                "is_current": True,
+                "ready_status": VersionStatus.READY.name,
             },
         )
         allowed = {row[0] for row in rows}

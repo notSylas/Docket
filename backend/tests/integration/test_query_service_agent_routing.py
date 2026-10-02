@@ -36,6 +36,7 @@ from docket.core.db.models import (
     EvidenceVersion,
     Source,
     SourceStatus,
+    VersionStatus,
     Workspace,
 )
 from docket.infra.index.base import ChunkRecord
@@ -91,6 +92,7 @@ def built(migrated_sqlite_engine: Engine) -> dict:
             observed_at=datetime.now(timezone.utc),
             parser_name="docling",
             parser_version="1.0.0",
+            status=VersionStatus.READY,
         )
         session.add(evidence_version)
         session.flush()

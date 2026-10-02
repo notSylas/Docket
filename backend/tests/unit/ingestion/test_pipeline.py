@@ -20,7 +20,13 @@ from sqlalchemy import select
 
 from conftest import _chunk_ids_for_file, _job_status, _write_docx
 from docket.core.db.engine import get_session_factory
-from docket.core.db.models import Chunk, EvidenceVersion, IngestionJob, IngestionJobStatus
+from docket.core.db.models import (
+    Chunk,
+    EvidenceVersion,
+    IngestionJob,
+    IngestionJobStatus,
+    VersionStatus,
+)
 from docket.services.ingestion.chunk_writer import ChunkWriter
 from docket.infra.parsing.chunker import ChunkDraft, EvidenceUnitDraft
 from docket.infra.parsing.recipes import DEFAULT_SPLITTER, ChunkRecipe
@@ -55,6 +61,11 @@ def test_first_run_ingests_all_files_and_indexes(env: SimpleNamespace) -> None:
         )
     assert chunk_count == sum(r.chunks_written for r in result.file_results)
     assert chunk_count > 0
+
+    # Every successfully-ingested file's EvidenceVersion reaches READY.
+    with env.session_factory() as session:
+        statuses = session.execute(select(EvidenceVersion.status)).scalars().all()
+    assert statuses == [VersionStatus.READY, VersionStatus.READY]
 
     # Chunks actually landed in both indexes (not just SQLite).
     assert len(env.gateway.embed_calls) > 0
@@ -95,6 +106,64 @@ def test_second_run_unchanged_files_are_skipped_and_not_reembedded(
     # files must not trigger a single additional embed call anywhere in the
     # stack (evidence layer -> parser -> chunker -> index manager).
     assert len(env.gateway.embed_calls) == embed_calls_after_first_run
+
+    # And the versions stay READY -- re-scanning unchanged, already-servable
+    # content is a true no-op, not a status churn.
+    with env.session_factory() as session:
+        statuses = session.execute(select(EvidenceVersion.status)).scalars().all()
+    assert statuses == [VersionStatus.READY, VersionStatus.READY]
+
+
+# ---------------------------------------------------------------------------
+# FAILED -> retry on next run (Upgrade doc 03 section 4's Failed->Ready
+# transition): unchanged content against a FAILED row must NOT be treated as
+# a no-op -- it must reprocess, reusing the same row, and can reach READY.
+# ---------------------------------------------------------------------------
+
+
+def test_failed_file_is_retried_on_next_run_and_can_reach_ready(
+    env: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    doc = env.folder / "doc.docx"
+    _write_docx(doc, "Section", "Alpha content about penguins and glaciers.")
+
+    original_parse = env.pipeline._parser.parse
+
+    def boom(source_id, path):
+        raise RuntimeError("simulated parse failure")
+
+    monkeypatch.setattr(env.pipeline._parser, "parse", boom)
+
+    first = env.pipeline.run_ingestion_for_source(env.source.id)
+    assert first.file_results[0].status == "failed"
+    assert first.status == "failed"
+
+    with env.session_factory() as session:
+        failed_version = session.execute(
+            select(EvidenceVersion).where(EvidenceVersion.file_path == str(doc))
+        ).scalar_one()
+        assert failed_version.status == VersionStatus.FAILED
+        failed_version_id = failed_version.id
+
+    # Same (unchanged) bytes, but the parser works this time -- the failure
+    # was transient, not something about the file's content.
+    monkeypatch.setattr(env.pipeline._parser, "parse", original_parse)
+
+    second = env.pipeline.run_ingestion_for_source(env.source.id)
+
+    # Reprocessed, not silently skipped as "unchanged".
+    assert second.file_results[0].status == "ingested"
+    assert second.file_results[0].chunks_written > 0
+    assert second.status == "succeeded"
+
+    with env.session_factory() as session:
+        retried_version = session.execute(
+            select(EvidenceVersion).where(EvidenceVersion.file_path == str(doc))
+        ).scalar_one()
+        # Same row reused -- unchanged content never creates a new version or
+        # supersedes the old one, it just finally finishes processing.
+        assert retried_version.id == failed_version_id
+        assert retried_version.status == VersionStatus.READY
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +231,16 @@ def test_one_corrupt_file_fails_without_aborting_the_batch(env: SimpleNamespace)
     assert results_by_path[doc2].status == "ingested"
     assert results_by_path[corrupt].status == "failed"
     assert results_by_path[corrupt].error is not None
+
+    with env.session_factory() as session:
+        corrupt_version = session.execute(
+            select(EvidenceVersion).where(EvidenceVersion.file_path == str(corrupt))
+        ).scalar_one()
+        assert corrupt_version.status == VersionStatus.FAILED
+        good_versions = session.execute(
+            select(EvidenceVersion.status).where(EvidenceVersion.file_path.in_([str(doc1), str(doc2)]))
+        ).scalars().all()
+        assert good_versions == [VersionStatus.READY, VersionStatus.READY]
 
 
 # ---------------------------------------------------------------------------
@@ -265,7 +344,7 @@ def test_chunk_writer_persists_units_and_chunks_and_tracks_current_version(
             file_path=file_path,
             content_hash="deadbeef",
             byte_size=0,
-            is_current=True,
+            status=VersionStatus.READY,
             parser_name="fixture",
             parser_version="1",
         )

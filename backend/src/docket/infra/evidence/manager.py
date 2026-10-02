@@ -16,7 +16,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from docket.core.db.models import EvidenceVersion
+from docket.core.db.models import EvidenceVersion, VersionStatus
 from docket.infra.evidence.store import ContentAddressedStore
 
 
@@ -42,9 +42,17 @@ class EvidenceManager:
         # source that has never recorded a file_path before; once
         # `ingest_file` runs once for a given path, that path's rows always
         # carry it from then on.
+        #
+        # "Current" here means "the latest lineage slot", not "servable" --
+        # status != SUPERSEDED, not status == READY. A version can be the
+        # latest-known content for a file while still PENDING (not yet
+        # processed) or FAILED (processing raised); either way it's still
+        # the row this file's *next* ingest needs to compare against, and the
+        # one supersession (on changed content) must flip to SUPERSEDED. See
+        # Upgrade doc 03 section 4.
         stmt = select(EvidenceVersion).where(
             EvidenceVersion.source_id == source_id,
-            EvidenceVersion.is_current.is_(True),
+            EvidenceVersion.status != VersionStatus.SUPERSEDED,
             EvidenceVersion.file_path == file_path,
         )
         return session.execute(stmt).scalar_one_or_none()
@@ -66,11 +74,25 @@ class EvidenceManager:
             current = self._current_version(session, source_id, file_path)
 
             if current is not None and current.content_hash == content_hash:
-                # Unchanged rescan: idempotent no-op, return the existing row.
+                # Unchanged bytes. Always return the same row without
+                # touching the store or DB further -- but whether that's a
+                # true no-op or something the *pipeline* should still (re)
+                # process depends on `current.status`, which this manager
+                # deliberately doesn't decide: PENDING/FAILED means
+                # processing never finished successfully for this exact
+                # content, so the caller (`IngestionPipeline`) re-drives it
+                # to READY instead of treating it as settled. Only a READY
+                # row is a genuine no-op. See Upgrade doc 03 section 4's
+                # Failed->Ready transition.
                 return current
 
             if current is not None:
-                current.is_current = False
+                # Supersession always wins immediately, regardless of where
+                # `current` was in its own lifecycle (PENDING, READY, or
+                # FAILED all flip straight to SUPERSEDED) -- see
+                # `mark_version_status` for the mirror-image guard that keeps
+                # an in-flight processing job from overwriting this.
+                current.status = VersionStatus.SUPERSEDED
                 session.add(current)
 
             # Store bytes (globally deduped; no-op if content already exists).
@@ -93,12 +115,31 @@ class EvidenceManager:
                 observed_at=_utcnow(),
                 parser_name=parser_name,
                 parser_version=parser_version,
-                is_current=True,
+                status=VersionStatus.PENDING,
             )
             session.add(evidence_version)
             session.commit()
             session.refresh(evidence_version)
             return evidence_version
+
+    def mark_version_status(self, evidence_version_id: str, status: VersionStatus) -> None:
+        """Transition a version to `READY` or `FAILED` once its processing
+        (parse + chunk + index) finishes, one way or the other.
+
+        No-ops if the row has already moved to `SUPERSEDED` -- a newer
+        version for the same (source_id, file_path) was stored while this
+        one was still being processed, and supersession always wins
+        regardless of how the in-flight processing job turns out (Upgrade
+        doc 03 section 4). No-ops if the row is missing entirely, which
+        shouldn't happen but isn't this method's job to raise on.
+        """
+        with self.session_factory() as session:
+            version = session.get(EvidenceVersion, evidence_version_id)
+            if version is None or version.status == VersionStatus.SUPERSEDED:
+                return
+            version.status = status
+            session.add(version)
+            session.commit()
 
     def get_evidence_bytes(self, evidence_version: EvidenceVersion) -> bytes:
         return self.store.get(evidence_version.content_hash)

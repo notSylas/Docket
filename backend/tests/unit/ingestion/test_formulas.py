@@ -20,7 +20,7 @@ from sqlalchemy import select as sa_select
 from conftest import _write_docx
 from docket.core.config import Settings
 from docket.core.db.engine import get_session_factory
-from docket.core.db.models import Chunk, EvidenceVersion
+from docket.core.db.models import Chunk, EvidenceVersion, VersionStatus
 from docket.infra.evidence.manager import EvidenceManager
 from docket.infra.evidence.store import ContentAddressedStore
 from docket.infra.index.fts_index import FtsIndexWriter
@@ -341,7 +341,7 @@ def test_formula_transcriber_transcribes_only_above_threshold_region(
             file_path=str(folder / "formulas.docx"),
             content_hash="deadbeef",
             byte_size=0,
-            is_current=True,
+            status=VersionStatus.READY,
             parser_name="fixture",
             parser_version="1",
         )

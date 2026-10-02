@@ -47,7 +47,7 @@ import yaml
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
-from docket.core.db.models import EvidenceVersion
+from docket.core.db.models import EvidenceVersion, VersionStatus
 from docket.eval.review import DEFAULT_SAMPLE_SIZE, ReviewResult, bucket_sample, load_labels_yaml
 from docket.infra.evidence.store import ContentAddressedStore
 from docket.infra.parsing.formula_crop import crop_formula_region
@@ -118,13 +118,19 @@ def collect_candidates(
     both columns from the same regions, but defensive rather than assumed
     impossible) is skipped the same way.
 
-    Scoped to `is_current` versions only, same posture as
-    `EvidenceManager._current_version`/`EvidenceResolver`: a superseded
-    version's transcriptions are stale evidence, not worth a human's time.
+    Scoped to the latest lineage slot per (source_id, file_path) -- i.e.
+    `status != SUPERSEDED` -- same posture as
+    `EvidenceManager._current_version`: a superseded version's transcriptions
+    are stale evidence, not worth a human's time. Deliberately broader than
+    `EvidenceResolver`'s `status == READY` posture: a version can have
+    perfectly good formula transcriptions (captured during parsing, before
+    chunking/indexing is even attempted) while still sitting at `PENDING` or
+    `FAILED` because chunking/indexing hasn't finished or didn't succeed --
+    that's still the latest known content and still worth a human's review.
     """
     candidates: list[FormulaRegionCandidate] = []
     with session_factory() as session:
-        stmt = select(EvidenceVersion).where(EvidenceVersion.is_current.is_(True))
+        stmt = select(EvidenceVersion).where(EvidenceVersion.status != VersionStatus.SUPERSEDED)
         if source_id is not None:
             stmt = stmt.where(EvidenceVersion.source_id == source_id)
         for version in session.execute(stmt).scalars().all():

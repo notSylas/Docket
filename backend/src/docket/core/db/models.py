@@ -27,6 +27,7 @@ from docket.core.db.identity import compute_chunk_id, compute_recipe_id
 __all__ = [
     "Base",
     "SourceStatus",
+    "VersionStatus",
     "IngestionJobStatus",
     "Workspace",
     "AuthorizedSource",
@@ -56,6 +57,31 @@ class SourceStatus(str, enum.Enum):
     TOMBSTONED = "tombstoned"
     HARD_DELETE_PENDING = "hard_delete_pending"
     DELETED = "deleted"
+
+
+class VersionStatus(str, enum.Enum):
+    """Lifecycle of one `EvidenceVersion` row -- replaces the old
+    `is_current: bool` column (see Upgrade doc 03 section 4).
+
+    PENDING -> READY | FAILED, with SUPERSEDED reachable directly from any
+    of the three (supersession always wins immediately, regardless of where
+    a row was in its own lifecycle -- see `EvidenceManager.mark_version_status`).
+
+    - PENDING: bytes stored, not yet processed. Set at insert, in the same
+      transaction as the blob write (`EvidenceManager.ingest_file`).
+    - READY: parsing, chunking, and indexing all succeeded; this version's
+      chunks are servable.
+    - FAILED: processing raised; no chunks are servable. Distinct from a
+      document that legitimately parses to zero chunks (READY with no
+      chunks, not FAILED).
+    - SUPERSEDED: newer content has been stored for the same
+      (source_id, file_path).
+    """
+
+    PENDING = "pending"
+    READY = "ready"
+    FAILED = "failed"
+    SUPERSEDED = "superseded"
 
 
 class IngestionJobStatus(str, enum.Enum):
@@ -173,7 +199,11 @@ class EvidenceVersion(Base):
     # experiments" section; promoting them requires a separate, later,
     # manually verified decision this checkpoint does not make.
     formula_transcriptions_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    is_current: Mapped[bool] = mapped_column(default=True, nullable=False)
+    status: Mapped[VersionStatus] = mapped_column(
+        Enum(VersionStatus, name="version_status"),
+        nullable=False,
+        default=VersionStatus.PENDING,
+    )
 
     source: Mapped["Source"] = relationship(back_populates="evidence_versions")
     evidence_units: Mapped[list["EvidenceUnit"]] = relationship(
