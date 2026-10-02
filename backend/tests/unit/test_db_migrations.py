@@ -185,6 +185,110 @@ def test_version_status_migration_downgrade_restores_is_current(tmp_path: Path) 
     engine.dispose()
 
 
+def test_unit_kind_locator_provenance_migration_backfills_existing_rows(tmp_path: Path) -> None:
+    """0009 adds `evidence_units.unit_kind`/`locator_json` and
+    `chunks.provenance` -- prove existing rows (inserted on the pre-0009
+    schema, one revision behind head) get the server_default values
+    (`unit_kind='section'`, `provenance='extracted'`) after upgrading to
+    head, per Upgrade doc 03 section 7."""
+    sqlite_path = tmp_path / "docket.sqlite3"
+    config = _alembic_config(sqlite_path)
+    # One revision behind head (0008), before the new columns exist.
+    command.upgrade(config, "0f0bcf448de1")
+
+    now = "2024-01-01T00:00:00"
+    con = sqlite3.connect(str(sqlite_path))
+    try:
+        cur = con.cursor()
+        cur.execute(
+            "INSERT INTO workspaces (id, name, created_at) VALUES ('ws_1', 'ws', ?)", (now,)
+        )
+        cur.execute(
+            "INSERT INTO authorized_sources (id, workspace_id, scope_path, created_at) "
+            "VALUES ('auth_1', 'ws_1', '/tmp', ?)",
+            (now,),
+        )
+        cur.execute(
+            "INSERT INTO sources (id, workspace_id, authorized_source_id, source_type, path, "
+            "status, created_at, updated_at) "
+            "VALUES ('src_1', 'ws_1', 'auth_1', 'local_folder', '/tmp/doc.pdf', 'active', ?, ?)",
+            (now, now),
+        )
+        cur.execute(
+            "INSERT INTO evidence_versions (id, source_id, content_hash, byte_size, mime_type, "
+            "observed_at, parser_name, parser_version, status) "
+            "VALUES ('ev_1', 'src_1', 'hash_ev', 100, 'application/pdf', ?, 'docling', '1.0', 'READY')",
+            (now,),
+        )
+        cur.execute(
+            "INSERT INTO evidence_units (id, evidence_version_id, unit_index, heading, "
+            "content_hash) VALUES ('eu_1', 'ev_1', 0, NULL, 'hash_eu')"
+        )
+        cur.execute(
+            "INSERT INTO chunk_recipes (id, chunk_size, overlap, splitter, parser_name, "
+            "parser_version, created_at) VALUES ('rcp_1', 400, 50, 'words', 'docling', '1.0', ?)",
+            (now,),
+        )
+        cur.execute(
+            "INSERT INTO chunks (id, source_id, evidence_version_id, evidence_unit_id, "
+            "chunk_recipe_id, ordinal, heading, text, content_hash) "
+            "VALUES ('chk_1', 'src_1', 'ev_1', 'eu_1', 'rcp_1', 0, 'Journeys', 'some text', 'hash_chk')"
+        )
+        con.commit()
+    finally:
+        con.close()
+
+    command.upgrade(config, "head")
+
+    engine = create_engine(f"sqlite:///{sqlite_path}")
+    inspector = inspect(engine)
+    unit_columns = {col["name"] for col in inspector.get_columns("evidence_units")}
+    chunk_columns = {col["name"] for col in inspector.get_columns("chunks")}
+    assert {"unit_kind", "locator_json"} <= unit_columns
+    assert "provenance" in chunk_columns
+
+    with engine.connect() as conn:
+        unit_row = conn.execute(
+            text("SELECT unit_kind, locator_json FROM evidence_units WHERE id = 'eu_1'")
+        ).one()
+        chunk_row = conn.execute(
+            text("SELECT provenance FROM chunks WHERE id = 'chk_1'")
+        ).one()
+    assert unit_row == ("section", None)
+    assert chunk_row == ("extracted",)
+    engine.dispose()
+
+
+def test_unit_kind_locator_provenance_migration_downgrade_drops_columns(tmp_path: Path) -> None:
+    """Downgrading past 0009 must cleanly drop `unit_kind`/`locator_json`/
+    `provenance` and leave the rest of the row intact."""
+    sqlite_path = tmp_path / "docket.sqlite3"
+    config = _alembic_config(sqlite_path)
+    command.upgrade(config, "head")
+
+    now = "2024-01-01T00:00:00"
+    con = sqlite3.connect(str(sqlite_path))
+    try:
+        _insert_minimal_chunk_row(con, "chk_1", "some text")
+    finally:
+        con.close()
+
+    command.downgrade(config, "0f0bcf448de1")
+
+    engine = create_engine(f"sqlite:///{sqlite_path}")
+    inspector = inspect(engine)
+    unit_columns = {col["name"] for col in inspector.get_columns("evidence_units")}
+    chunk_columns = {col["name"] for col in inspector.get_columns("chunks")}
+    assert "unit_kind" not in unit_columns
+    assert "locator_json" not in unit_columns
+    assert "provenance" not in chunk_columns
+
+    with engine.connect() as conn:
+        row = conn.execute(text("SELECT id FROM chunks WHERE id = 'chk_1'")).one()
+    assert row == ("chk_1",)
+    engine.dispose()
+
+
 def test_fts_chunks_table_created_and_queryable(tmp_path: Path) -> None:
     sqlite_path = tmp_path / "docket.sqlite3"
     config = _alembic_config(sqlite_path)

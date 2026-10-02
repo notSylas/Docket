@@ -224,6 +224,25 @@ class EvidenceUnit(Base):
     unit_index: Mapped[int] = mapped_column(Integer, nullable=False)
     heading: Mapped[str | None] = mapped_column(String, nullable=True)
     content_hash: Mapped[str] = mapped_column(String, nullable=False)
+    # Short, open-ended string identifying what kind of structural element
+    # this unit represents -- 'section' (default) for the only kind that
+    # exists today (a Docling markdown-heading section). Future adapters
+    # will introduce values like 'cell', 'range', 'slide', 'message' --
+    # deliberately a plain string, NOT a DB enum, since this set is expected
+    # to grow with each new adapter (see Upgrade doc 03 section 7's closing
+    # paragraph: design the locator shape per-adapter as each is built, not
+    # all up front). Contrast with `VersionStatus`, a real DB enum, whose
+    # value set is fixed and won't grow.
+    unit_kind: Mapped[str] = mapped_column(String, nullable=False, default="section")
+    # JSON-encoded, kind-specific structured location, e.g.
+    # {"sheet": "Revenue", "cell": "B14"} for a future 'cell' kind, or
+    # {"slide": 3, "shape_id": 7} for 'slide'. NULL for the existing
+    # 'section' kind -- a markdown heading section doesn't have this kind of
+    # structured locator; `heading` already serves as its human-readable
+    # label. Same storage convention as `formula_regions_json`/
+    # `page_images_json` above: a plain Text column, application code does
+    # json.dumps/json.loads, not a native JSON column type.
+    locator_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     evidence_version: Mapped["EvidenceVersion"] = relationship(back_populates="evidence_units")
     chunks: Mapped[list["Chunk"]] = relationship(back_populates="evidence_unit")
@@ -282,6 +301,20 @@ class Chunk(Base):
     # docket.infra.parsing.chunker's module docstring.
     page_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
     page_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Distinguishes a literal extracted value from a Docket-computed
+    # derivation (`derived`) from a generated interpretation such as a
+    # visual description or formula transcription (`generated`). Lives on
+    # `Chunk`, not `EvidenceUnit`, because `Chunk` is what retrieval actually
+    # filters and serves -- see Upgrade doc 03 section 7 and
+    # `docket.infra.retrieval.hybrid`, where `Chunk` rows are the thing
+    # returned to the caller. Plain string, NOT a DB enum: `extracted`/
+    # `derived`/`generated` are today's three values but are conceptual
+    # categories that may need refinement later (contrast `VersionStatus`,
+    # whose value set is fixed). Every chunk today is produced only from
+    # parsed document text (see `docket.infra.parsing.chunker`), so
+    # `extracted` is the correct default for all existing and new rows until
+    # a `derived`/`generated` producer actually exists.
+    provenance: Mapped[str] = mapped_column(String, nullable=False, default="extracted")
 
     source: Mapped["Source"] = relationship(back_populates="chunks")
     evidence_version: Mapped["EvidenceVersion"] = relationship(back_populates="chunks")

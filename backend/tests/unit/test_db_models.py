@@ -163,6 +163,24 @@ def test_full_chain_round_trip(session: Session) -> None:
     assert len(fetched_workspace.sources) == 1
 
 
+def test_evidence_unit_and_chunk_default_kind_and_provenance(session: Session) -> None:
+    """`unit_kind`/`provenance` are Python-side defaulted (not just DB
+    server_default), per Upgrade doc 03 section 7 -- confirm they come out
+    with the expected values when constructed via the existing code path
+    (bare `EvidenceUnit(...)`/`Chunk(...)`, no explicit value), exactly as
+    `ChunkWriter.persist_units_and_chunks` constructs them today."""
+    built = _build_chain(session)
+
+    fetched_unit = session.get(EvidenceUnit, built["evidence_unit"].id)
+    assert fetched_unit is not None
+    assert fetched_unit.unit_kind == "section"
+    assert fetched_unit.locator_json is None
+
+    fetched_chunk = session.get(Chunk, built["chunk"].id)
+    assert fetched_chunk is not None
+    assert fetched_chunk.provenance == "extracted"
+
+
 def test_duplicate_chunk_id_raises_integrity_error(session: Session) -> None:
     built = _build_chain(session)
     chunk = built["chunk"]
