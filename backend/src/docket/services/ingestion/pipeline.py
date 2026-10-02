@@ -144,7 +144,7 @@ from docket.infra.parsing.pptx_wrapper import PptxParser
 from docket.infra.parsing.recipes import ChunkRecipe
 from docket.infra.parsing.xlsx_chunker import chunk_workbook
 from docket.infra.parsing.xlsx_wrapper import XlsxParser
-from docket.services.sources.manager import SourceNotFoundError
+from docket.services.sources.manager import SourceManager, SourceNotFoundError
 
 # Deliberately narrow, spike-validated set. Broadening this to more of
 # Docling's supported formats is a one-line change (add to the set); each
@@ -218,8 +218,14 @@ class UnsupportedFormatError(Exception):
 
 class SourceNotActiveError(Exception):
     """Raised when `run_ingestion_for_source` is asked to ingest a source
-    that isn't ACTIVE (e.g. revoked). No `IngestionJob` row is created for a
-    call we refuse outright -- there's nothing to report a job status for."""
+    that isn't ACTIVE or MISSING (e.g. revoked). No `IngestionJob` row is
+    created for a call we refuse outright -- there's nothing to report a job
+    status for.
+
+    MISSING is allowed through (not just ACTIVE) so a source whose root was
+    previously unreachable gets a chance to recover back to ACTIVE on its
+    next scan -- see `run_ingestion_for_source`'s root-reachability check
+    (Upgrade doc 03 section 6)."""
 
     def __init__(self, source_id: str, status: SourceStatus):
         self.source_id = source_id
@@ -277,6 +283,7 @@ class IngestionPipeline:
         visual_indexer: VisualIndexer | None = None,
         xlsx_parser: XlsxParser | None = None,
         pptx_parser: PptxParser | None = None,
+        source_manager: SourceManager | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._evidence_manager = evidence_manager
@@ -337,6 +344,13 @@ class IngestionPipeline:
                 settings=self._settings,
             )
         )
+        # Cheap to default-construct (just wraps session_factory), same
+        # reasoning as `_xlsx_parser`/`_pptx_parser` above -- used only for
+        # the ACTIVE<->MISSING root-reachability hook below (Upgrade doc 03
+        # section 6).
+        self._source_manager = (
+            source_manager if source_manager is not None else SourceManager(session_factory)
+        )
 
     # -- internal helpers ---------------------------------------------------
 
@@ -345,9 +359,38 @@ class IngestionPipeline:
             source = session.get(Source, source_id)
             if source is None:
                 raise SourceNotFoundError(source_id)
-            if source.status != SourceStatus.ACTIVE:
+            # MISSING is allowed through alongside ACTIVE (not just ACTIVE):
+            # a source whose root was previously unreachable needs to keep
+            # attempting runs so `_check_root_reachable` below has a chance
+            # to flip it back to ACTIVE. REVOKED/TOMBSTONED/
+            # HARD_DELETE_PENDING/DELETED all still refuse outright.
+            if source.status not in (SourceStatus.ACTIVE, SourceStatus.MISSING):
                 raise SourceNotActiveError(source_id, source.status)
             return source
+
+    def _check_root_reachable(self, source: Source) -> bool:
+        """Local-folder root-reachability check (Upgrade doc 03 section 6):
+        distinct from a single file going missing mid-batch (an ordinary
+        per-file failure, already handled by `_ingest_one_file`'s own
+        try/except) -- this is "the source's root itself is currently
+        inaccessible", e.g. an unmounted/renamed/deleted folder.
+
+        Drives the `ACTIVE <-> MISSING` transition directly: flips to
+        MISSING on first finding the root unreachable, flips back to ACTIVE
+        on the next run that finds it reachable again. Never escalates to
+        TOMBSTONED itself -- that requires a separate, explicit, confirmed-
+        deletion signal (`SourceManager.mark_tombstoned`), which no
+        local-folder signal today can distinguish from "still trying".
+        """
+        root = Path(source.path)
+        reachable = root.exists() and root.is_dir()
+        if reachable:
+            if source.status == SourceStatus.MISSING:
+                self._source_manager.mark_reachable(source.id)
+        else:
+            if source.status == SourceStatus.ACTIVE:
+                self._source_manager.mark_unreachable(source.id)
+        return reachable
 
     def _discover_files(self, root: Path) -> list[Path]:
         """Recursively walk `root` for ingestable files. Recursive (not just
@@ -617,6 +660,27 @@ class IngestionPipeline:
 
         file_results: list[FileIngestResult] = []
         try:
+            if not self._check_root_reachable(source):
+                # Root is unreachable: already flipped ACTIVE->MISSING above
+                # (or already MISSING) -- this run has nothing to discover,
+                # and per section 6 must NOT automatically escalate to
+                # TOMBSTONED, so it just reports the run as failed, same as
+                # the long-standing "no ingestable files found" case below.
+                self._finalize_job(
+                    job_id,
+                    IngestionJobStatus.FAILED,
+                    f"source root unreachable: {source.path}",
+                    {"files_processed": 0, "files_failed": 0, "chunks_written": 0},
+                )
+                return IngestionJobResult(
+                    source_id=source_id,
+                    job_id=job_id,
+                    status=IngestionJobStatus.FAILED.value,
+                    files_processed=0,
+                    files_failed=0,
+                    file_results=[],
+                )
+
             files = self._discover_files(Path(source.path))
             total = len(files)
             for index, path in enumerate(files, start=1):

@@ -14,6 +14,7 @@ from sqlalchemy.orm import sessionmaker
 
 from docket.core.config import Settings
 from docket.core.db.models import EvidenceVersion
+from docket.infra.evidence.references import add_blob_reference
 from docket.infra.evidence.store import ContentAddressedStore
 from docket.infra.index.visual_index import LancePageIndexWriter, PageRecord
 from docket.infra.inference.gateway import InferenceGateway
@@ -45,11 +46,28 @@ class VisualIndexer:
         description/embedding, this storage step isn't gated behind
         `settings.visual_index_enabled`) -- an empty `page_images` dict is
         still saved as `"{}"`, marking this version as processed so the
-        unchanged-file backfill branch above doesn't keep re-parsing it."""
+        unchanged-file backfill branch above doesn't keep re-parsing it.
+
+        Also records one `EvidenceBlobReference` row per page-image hash, in
+        the SAME transaction as the `page_images_json` write (Upgrade doc 03
+        section 8: `page_images_json` is a second, JSON-buried set of hashes
+        into the same `ContentAddressedStore` as the primary document
+        bytes, so each entry needs its own reference row, not just one row
+        for the whole JSON blob). `add_blob_reference` is idempotent, so a
+        retried/backfilled call with identical hashes doesn't insert
+        duplicate rows."""
         hashes = {page_no: self._store.put(data) for page_no, data in page_images.items()}
         with self._session_factory() as session:
             version = session.get(EvidenceVersion, version_id)
             version.page_images_json = json.dumps(hashes)
+            for page_no, content_hash in hashes.items():
+                add_blob_reference(
+                    session,
+                    content_hash=content_hash,
+                    referencing_table="evidence_versions",
+                    referencing_id=version_id,
+                    role=f"page_image:{page_no}",
+                )
             session.commit()
         return hashes
 

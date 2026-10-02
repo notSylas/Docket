@@ -25,9 +25,11 @@ from docket.core.db.models import (
     EvidenceVersion,
     IngestionJob,
     IngestionJobStatus,
+    SourceStatus,
     VersionStatus,
 )
 from docket.services.ingestion.chunk_writer import ChunkWriter
+from docket.services.ingestion.pipeline import SourceNotActiveError
 from docket.infra.parsing.chunker import ChunkDraft, EvidenceUnitDraft
 from docket.infra.parsing.recipes import DEFAULT_SPLITTER, ChunkRecipe
 from docket.services.sources.manager import SourceManager
@@ -295,6 +297,83 @@ def test_interrupted_run_finalizes_job_as_failed_and_reraises(
         assert job.status == IngestionJobStatus.FAILED
         assert job.error == "interrupted"
         assert job.finished_at is not None
+
+
+# ---------------------------------------------------------------------------
+# ACTIVE <-> MISSING root-reachability hook (Upgrade doc 03 section 6):
+# distinct from a single file going missing mid-batch (an ordinary per-file
+# failure) -- this is "the source's root folder itself is unreachable".
+# ---------------------------------------------------------------------------
+
+
+def test_unreachable_root_flips_active_to_missing_and_fails_the_job(
+    env: SimpleNamespace,
+) -> None:
+    import shutil
+
+    shutil.rmtree(env.folder)
+
+    result = env.pipeline.run_ingestion_for_source(env.source.id)
+
+    assert result.status == IngestionJobStatus.FAILED.value
+    assert result.files_processed == 0
+    assert result.files_failed == 0
+    assert env.source_manager.get_source(env.source.id).status == SourceStatus.MISSING
+    assert _job_status(env, result.job_id) == IngestionJobStatus.FAILED
+
+
+def test_unreachable_root_does_not_raise(env: SimpleNamespace) -> None:
+    """Unlike a non-ACTIVE/MISSING status (which raises `SourceNotActiveError`
+    outright, before any `IngestionJob` row is even created), an unreachable
+    root still produces a normal (failed) `IngestionJobResult` -- the run was
+    attempted, it just found nothing reachable."""
+    import shutil
+
+    shutil.rmtree(env.folder)
+
+    result = env.pipeline.run_ingestion_for_source(env.source.id)  # must not raise
+    assert result.job_id is not None
+
+
+def test_root_reachable_again_flips_missing_back_to_active(env: SimpleNamespace) -> None:
+    import shutil
+
+    shutil.rmtree(env.folder)
+    env.pipeline.run_ingestion_for_source(env.source.id)
+    assert env.source_manager.get_source(env.source.id).status == SourceStatus.MISSING
+
+    env.folder.mkdir()
+    _write_docx(env.folder / "a.docx", "A", "Alpha content about penguins and glaciers.")
+
+    result = env.pipeline.run_ingestion_for_source(env.source.id)
+
+    assert result.status == "succeeded"
+    assert env.source_manager.get_source(env.source.id).status == SourceStatus.ACTIVE
+
+
+def test_repeated_unreachable_runs_never_escalate_past_missing(env: SimpleNamespace) -> None:
+    """No amount of repeated unreachable runs should ever move the source
+    past MISSING on their own -- TOMBSTONED requires a separate, explicit,
+    confirmed-deletion signal (`SourceManager.mark_tombstoned`), which this
+    pipeline never calls itself."""
+    import shutil
+
+    shutil.rmtree(env.folder)
+
+    for _ in range(3):
+        env.pipeline.run_ingestion_for_source(env.source.id)
+
+    assert env.source_manager.get_source(env.source.id).status == SourceStatus.MISSING
+
+
+def test_revoked_source_still_raises_source_not_active_error(env: SimpleNamespace) -> None:
+    """REVOKED (and TOMBSTONED/HARD_DELETE_PENDING/DELETED) must still be
+    refused outright -- only ACTIVE/MISSING are allowed through to the
+    root-reachability check."""
+    env.source_manager.deactivate_source(env.source.id)
+
+    with pytest.raises(SourceNotActiveError):
+        env.pipeline.run_ingestion_for_source(env.source.id)
 
 
 # ---------------------------------------------------------------------------

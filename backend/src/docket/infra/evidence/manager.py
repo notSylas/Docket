@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from docket.core.db.models import EvidenceVersion, VersionStatus
+from docket.infra.evidence.references import add_blob_reference
 from docket.infra.evidence.store import ContentAddressedStore
 
 
@@ -118,6 +119,25 @@ class EvidenceManager:
                 status=VersionStatus.PENDING,
             )
             session.add(evidence_version)
+            # Flush (not commit) so `evidence_version.id` is populated
+            # before the blob-reference row needs it -- same transaction,
+            # same pattern `SourceManager.register_source` already uses for
+            # an analogous "need the child's id before inserting the next
+            # row" case.
+            session.flush()
+
+            # Upgrade doc 03 section 8: record the live reference this
+            # version holds into the ContentAddressedStore, in the SAME
+            # transaction as the version row itself, so refcounts can never
+            # drift from what's actually stored.
+            add_blob_reference(
+                session,
+                content_hash=content_hash,
+                referencing_table="evidence_versions",
+                referencing_id=evidence_version.id,
+                role="content",
+            )
+
             session.commit()
             session.refresh(evidence_version)
             return evidence_version

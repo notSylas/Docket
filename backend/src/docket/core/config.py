@@ -70,6 +70,24 @@ class Settings(BaseSettings):
     max_agent_iterations: int = 4
     max_agent_tool_calls: int = 8
 
+    # Upgrade doc 03 section 6: how long a TOMBSTONED source's retention
+    # countdown runs before it's eligible to advance to HARD_DELETE_PENDING
+    # (`SourceManager.sweep_expired_retentions`). A single global default,
+    # not per-source/per-connector-type -- decided as simple to start with;
+    # can be split later once a real connector exists to justify the extra
+    # config surface.
+    tombstone_retention_days: int = 30
+
+    # Upgrade doc 03 section 8: how long a zero-referenced blob sits in
+    # `trash/` before `ContentAddressedStore.sweep_trash` permanently
+    # deletes it. Deliberately independent of, and shorter than,
+    # `tombstone_retention_days` -- this window is a last-resort safety
+    # margin against a buggy purge job, not a chance for a deleted source to
+    # reappear. Conflating the two would leave a blob double-counted against
+    # the storage budget (part 01 section 7) for up to 30 days for no real
+    # benefit.
+    blob_trash_grace_days: int = 7
+
     @property
     def sqlite_path(self) -> Path:
         return self.data_dir / "docket.sqlite3"

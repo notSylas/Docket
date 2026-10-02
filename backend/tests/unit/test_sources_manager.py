@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 from sqlalchemy.orm import sessionmaker
 
+from docket.core.config import Settings
 from docket.core.db.engine import get_engine, get_session_factory
-from docket.core.db.models import Base, SourceStatus
-from docket.services.sources.manager import SourceManager, SourceNotFoundError
+from docket.core.db.models import Base, Source, SourceStatus
+from docket.services.sources.manager import (
+    InvalidSourceTransitionError,
+    SourceManager,
+    SourceNotFoundError,
+)
 
 
 @pytest.fixture()
@@ -125,3 +131,382 @@ def test_deactivate_source_unknown_id_raises_source_not_found_error(
 ) -> None:
     with pytest.raises(SourceNotFoundError):
         manager.deactivate_source("src_does_not_exist")
+
+
+# ---------------------------------------------------------------------------
+# SourceStatus state machine (Upgrade doc 03 section 6): the rest of the
+# transition graph beyond ACTIVE->REVOKED.
+# ---------------------------------------------------------------------------
+
+
+def _register(manager: SourceManager, tmp_path: Path, name: str = "docs") -> Source:
+    folder = tmp_path / name
+    folder.mkdir()
+    return manager.register_source(folder)
+
+
+def _set_status(
+    session_factory: sessionmaker,
+    source_id: str,
+    status: SourceStatus,
+    *,
+    retention_deadline: datetime | None = None,
+) -> None:
+    with session_factory() as session:
+        source = session.get(Source, source_id)
+        source.status = status
+        if retention_deadline is not None:
+            source.retention_deadline = retention_deadline
+        session.add(source)
+        session.commit()
+
+
+# -- ACTIVE <-> MISSING ------------------------------------------------------
+
+
+def test_mark_unreachable_transitions_active_to_missing(
+    manager: SourceManager, tmp_path: Path
+) -> None:
+    source = _register(manager, tmp_path)
+
+    manager.mark_unreachable(source.id)
+
+    assert manager.get_source(source.id).status == SourceStatus.MISSING
+
+
+def test_mark_unreachable_is_idempotent_when_already_missing(
+    manager: SourceManager, tmp_path: Path
+) -> None:
+    source = _register(manager, tmp_path)
+    manager.mark_unreachable(source.id)
+
+    manager.mark_unreachable(source.id)  # must not raise
+
+    assert manager.get_source(source.id).status == SourceStatus.MISSING
+
+
+def test_mark_unreachable_from_revoked_raises_invalid_transition(
+    manager: SourceManager, session_factory: sessionmaker, tmp_path: Path
+) -> None:
+    source = _register(manager, tmp_path)
+    manager.deactivate_source(source.id)
+
+    with pytest.raises(InvalidSourceTransitionError):
+        manager.mark_unreachable(source.id)
+
+
+def test_mark_unreachable_unknown_id_raises_source_not_found(manager: SourceManager) -> None:
+    with pytest.raises(SourceNotFoundError):
+        manager.mark_unreachable("src_does_not_exist")
+
+
+def test_mark_reachable_transitions_missing_to_active(
+    manager: SourceManager, tmp_path: Path
+) -> None:
+    source = _register(manager, tmp_path)
+    manager.mark_unreachable(source.id)
+
+    manager.mark_reachable(source.id)
+
+    assert manager.get_source(source.id).status == SourceStatus.ACTIVE
+
+
+def test_mark_reachable_is_idempotent_when_already_active(
+    manager: SourceManager, tmp_path: Path
+) -> None:
+    source = _register(manager, tmp_path)
+
+    manager.mark_reachable(source.id)  # already ACTIVE -- must not raise
+
+    assert manager.get_source(source.id).status == SourceStatus.ACTIVE
+
+
+def test_mark_reachable_from_revoked_raises_invalid_transition(
+    manager: SourceManager, tmp_path: Path
+) -> None:
+    source = _register(manager, tmp_path)
+    manager.deactivate_source(source.id)
+
+    with pytest.raises(InvalidSourceTransitionError):
+        manager.mark_reachable(source.id)
+
+
+# -- MISSING -> TOMBSTONED ----------------------------------------------------
+
+
+def test_mark_tombstoned_transitions_missing_to_tombstoned_and_sets_retention_deadline(
+    manager: SourceManager, tmp_path: Path
+) -> None:
+    source = _register(manager, tmp_path)
+    manager.mark_unreachable(source.id)
+    before = datetime.now(timezone.utc)
+
+    manager.mark_tombstoned(source.id, reason="confirmed_deleted_upstream")
+
+    refreshed = manager.get_source(source.id)
+    assert refreshed.status == SourceStatus.TOMBSTONED
+    assert refreshed.status_reason == "confirmed_deleted_upstream"
+    assert refreshed.retention_deadline is not None
+    # Default is settings.tombstone_retention_days (30), within a tolerance
+    # for test execution time.
+    expected = before.replace(tzinfo=None) + timedelta(days=30)
+    actual = refreshed.retention_deadline
+    assert abs((actual - expected).total_seconds()) < 5
+
+
+def test_mark_tombstoned_honors_explicit_retention_days(
+    manager: SourceManager, tmp_path: Path
+) -> None:
+    source = _register(manager, tmp_path)
+    manager.mark_unreachable(source.id)
+    before = datetime.now(timezone.utc)
+
+    manager.mark_tombstoned(source.id, retention_days=5)
+
+    refreshed = manager.get_source(source.id)
+    expected = before.replace(tzinfo=None) + timedelta(days=5)
+    assert abs((refreshed.retention_deadline - expected).total_seconds()) < 5
+
+
+def test_mark_tombstoned_from_active_raises_invalid_transition(
+    manager: SourceManager, tmp_path: Path
+) -> None:
+    """TOMBSTONED is only reachable from MISSING -- never directly from
+    ACTIVE, and never automatically from repeated mark_unreachable calls
+    alone (Upgrade doc 03 section 6's explicit decision)."""
+    source = _register(manager, tmp_path)
+
+    with pytest.raises(InvalidSourceTransitionError):
+        manager.mark_tombstoned(source.id)
+
+
+def test_repeated_mark_unreachable_never_escalates_to_tombstoned(
+    manager: SourceManager, tmp_path: Path
+) -> None:
+    """No amount of repeated `mark_unreachable` calls alone should ever
+    drive a source to TOMBSTONED -- only an explicit `mark_tombstoned` call
+    can (Upgrade doc 03 section 6's explicit decision)."""
+    source = _register(manager, tmp_path)
+
+    for _ in range(5):
+        manager.mark_unreachable(source.id)
+
+    assert manager.get_source(source.id).status == SourceStatus.MISSING
+
+
+# -- ACTIVE/MISSING -> REVOKED (with reason) ---------------------------------
+
+
+def test_deactivate_source_from_missing_sets_status_revoked(
+    manager: SourceManager, tmp_path: Path
+) -> None:
+    source = _register(manager, tmp_path)
+    manager.mark_unreachable(source.id)
+
+    manager.deactivate_source(source.id, reason="access_revoked")
+
+    refreshed = manager.get_source(source.id)
+    assert refreshed.status == SourceStatus.REVOKED
+    assert refreshed.status_reason == "access_revoked"
+
+
+def test_deactivate_source_records_reason_for_manual_disconnect(
+    manager: SourceManager, tmp_path: Path
+) -> None:
+    source = _register(manager, tmp_path)
+
+    manager.deactivate_source(source.id, reason="user_disconnected")
+
+    assert manager.get_source(source.id).status_reason == "user_disconnected"
+
+
+def test_deactivate_source_without_reason_leaves_status_reason_none(
+    manager: SourceManager, tmp_path: Path
+) -> None:
+    source = _register(manager, tmp_path)
+
+    manager.deactivate_source(source.id)
+
+    assert manager.get_source(source.id).status_reason is None
+
+
+def test_deactivate_source_is_idempotent_when_already_revoked(
+    manager: SourceManager, tmp_path: Path
+) -> None:
+    source = _register(manager, tmp_path)
+    manager.deactivate_source(source.id, reason="user_disconnected")
+
+    manager.deactivate_source(source.id, reason="access_revoked")  # must not raise
+
+    refreshed = manager.get_source(source.id)
+    assert refreshed.status == SourceStatus.REVOKED
+    assert refreshed.status_reason == "access_revoked"
+
+
+def test_deactivate_source_from_tombstoned_raises_invalid_transition(
+    manager: SourceManager, tmp_path: Path
+) -> None:
+    source = _register(manager, tmp_path)
+    manager.mark_unreachable(source.id)
+    manager.mark_tombstoned(source.id)
+
+    with pytest.raises(InvalidSourceTransitionError):
+        manager.deactivate_source(source.id)
+
+
+# -- REVOKED/TOMBSTONED -> HARD_DELETE_PENDING -------------------------------
+
+
+def test_request_hard_delete_from_revoked(manager: SourceManager, tmp_path: Path) -> None:
+    source = _register(manager, tmp_path)
+    manager.deactivate_source(source.id)
+
+    manager.request_hard_delete(source.id, reason="user_confirmed_delete")
+
+    refreshed = manager.get_source(source.id)
+    assert refreshed.status == SourceStatus.HARD_DELETE_PENDING
+    assert refreshed.status_reason == "user_confirmed_delete"
+
+
+def test_request_hard_delete_from_tombstoned(manager: SourceManager, tmp_path: Path) -> None:
+    source = _register(manager, tmp_path)
+    manager.mark_unreachable(source.id)
+    manager.mark_tombstoned(source.id)
+
+    manager.request_hard_delete(source.id)
+
+    assert manager.get_source(source.id).status == SourceStatus.HARD_DELETE_PENDING
+
+
+def test_request_hard_delete_from_active_raises_invalid_transition(
+    manager: SourceManager, tmp_path: Path
+) -> None:
+    source = _register(manager, tmp_path)
+
+    with pytest.raises(InvalidSourceTransitionError):
+        manager.request_hard_delete(source.id)
+
+
+# -- sweep_expired_retentions -------------------------------------------------
+
+
+def test_sweep_expired_retentions_advances_expired_tombstoned_sources(
+    manager: SourceManager, session_factory: sessionmaker, tmp_path: Path
+) -> None:
+    source = _register(manager, tmp_path)
+    manager.mark_unreachable(source.id)
+    manager.mark_tombstoned(source.id)
+    past_deadline = datetime.now(timezone.utc) - timedelta(days=1)
+    _set_status(
+        session_factory, source.id, SourceStatus.TOMBSTONED, retention_deadline=past_deadline
+    )
+
+    advanced = manager.sweep_expired_retentions()
+
+    assert advanced == [source.id]
+    refreshed = manager.get_source(source.id)
+    assert refreshed.status == SourceStatus.HARD_DELETE_PENDING
+    assert refreshed.status_reason == "retention_deadline_expired"
+
+
+def test_sweep_expired_retentions_leaves_unexpired_sources_alone(
+    manager: SourceManager, session_factory: sessionmaker, tmp_path: Path
+) -> None:
+    source = _register(manager, tmp_path)
+    manager.mark_unreachable(source.id)
+    manager.mark_tombstoned(source.id)  # deadline 30 days out by default
+
+    advanced = manager.sweep_expired_retentions()
+
+    assert advanced == []
+    assert manager.get_source(source.id).status == SourceStatus.TOMBSTONED
+
+
+def test_sweep_expired_retentions_ignores_non_tombstoned_sources(
+    manager: SourceManager, tmp_path: Path
+) -> None:
+    active = _register(manager, tmp_path, name="a")
+    revoked = _register(manager, tmp_path, name="b")
+    manager.deactivate_source(revoked.id)
+
+    advanced = manager.sweep_expired_retentions()
+
+    assert advanced == []
+    assert manager.get_source(active.id).status == SourceStatus.ACTIVE
+    assert manager.get_source(revoked.id).status == SourceStatus.REVOKED
+
+
+def test_sweep_expired_retentions_respects_explicit_now(
+    manager: SourceManager, session_factory: sessionmaker, tmp_path: Path
+) -> None:
+    source = _register(manager, tmp_path)
+    manager.mark_unreachable(source.id)
+    manager.mark_tombstoned(source.id, retention_days=10)
+
+    # 9 days later: not expired yet.
+    still_pending = manager.sweep_expired_retentions(
+        now=datetime.now(timezone.utc) + timedelta(days=9)
+    )
+    assert still_pending == []
+
+    # 11 days later: expired.
+    advanced = manager.sweep_expired_retentions(
+        now=datetime.now(timezone.utc) + timedelta(days=11)
+    )
+    assert advanced == [source.id]
+
+
+# -- pause/resume sync (orthogonal to SourceStatus) --------------------------
+
+
+def test_pause_sync_sets_sync_paused_at_without_changing_status(
+    manager: SourceManager, tmp_path: Path
+) -> None:
+    source = _register(manager, tmp_path)
+
+    manager.pause_sync(source.id)
+
+    refreshed = manager.get_source(source.id)
+    assert refreshed.sync_paused_at is not None
+    assert refreshed.status == SourceStatus.ACTIVE
+
+
+def test_resume_sync_clears_sync_paused_at(manager: SourceManager, tmp_path: Path) -> None:
+    source = _register(manager, tmp_path)
+    manager.pause_sync(source.id)
+
+    manager.resume_sync(source.id)
+
+    assert manager.get_source(source.id).sync_paused_at is None
+
+
+def test_resume_sync_is_a_noop_when_not_paused(manager: SourceManager, tmp_path: Path) -> None:
+    source = _register(manager, tmp_path)
+
+    manager.resume_sync(source.id)  # must not raise
+
+    assert manager.get_source(source.id).sync_paused_at is None
+
+
+def test_pause_sync_unknown_id_raises_source_not_found(manager: SourceManager) -> None:
+    with pytest.raises(SourceNotFoundError):
+        manager.pause_sync("src_does_not_exist")
+
+
+# -- settings injection -------------------------------------------------------
+
+
+def test_source_manager_honors_injected_settings_for_default_retention(
+    session_factory: sessionmaker, tmp_path: Path
+) -> None:
+    custom_settings = Settings(data_dir=tmp_path, tombstone_retention_days=3)
+    manager = SourceManager(session_factory, settings=custom_settings)
+    source = _register(manager, tmp_path)
+    manager.mark_unreachable(source.id)
+    before = datetime.now(timezone.utc)
+
+    manager.mark_tombstoned(source.id)
+
+    refreshed = manager.get_source(source.id)
+    expected = before.replace(tzinfo=None) + timedelta(days=3)
+    assert abs((refreshed.retention_deadline - expected).total_seconds()) < 5

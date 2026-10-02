@@ -289,6 +289,83 @@ def test_unit_kind_locator_provenance_migration_downgrade_drops_columns(tmp_path
     engine.dispose()
 
 
+def test_source_lifecycle_and_blob_references_migration_adds_columns_and_table(
+    tmp_path: Path,
+) -> None:
+    """0010 adds `sources.sync_paused_at`/`retention_deadline`/`status_reason`
+    and the new `evidence_blob_references` table -- prove the columns/table
+    exist at head and that a pre-existing `sources` row (inserted on the
+    pre-0010 schema) survives the upgrade with NULLs for the new columns
+    (no backfill needed -- see Upgrade doc 03 sections 6/8)."""
+    sqlite_path = tmp_path / "docket.sqlite3"
+    config = _alembic_config(sqlite_path)
+    # One revision behind head (0009), before the new columns/table exist.
+    command.upgrade(config, "f9749e87a0e7")
+
+    now = "2024-01-01T00:00:00"
+    con = sqlite3.connect(str(sqlite_path))
+    try:
+        cur = con.cursor()
+        cur.execute(
+            "INSERT INTO workspaces (id, name, created_at) VALUES ('ws_1', 'ws', ?)", (now,)
+        )
+        cur.execute(
+            "INSERT INTO authorized_sources (id, workspace_id, scope_path, created_at) "
+            "VALUES ('auth_1', 'ws_1', '/tmp', ?)",
+            (now,),
+        )
+        cur.execute(
+            "INSERT INTO sources (id, workspace_id, authorized_source_id, source_type, path, "
+            "status, created_at, updated_at) "
+            "VALUES ('src_1', 'ws_1', 'auth_1', 'local_folder', '/tmp/doc.pdf', 'active', ?, ?)",
+            (now, now),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+    command.upgrade(config, "head")
+
+    engine = create_engine(f"sqlite:///{sqlite_path}")
+    inspector = inspect(engine)
+    source_columns = {col["name"] for col in inspector.get_columns("sources")}
+    assert {"sync_paused_at", "retention_deadline", "status_reason"} <= source_columns
+    assert "evidence_blob_references" in set(inspector.get_table_names())
+    ebr_columns = {col["name"] for col in inspector.get_columns("evidence_blob_references")}
+    assert {"id", "content_hash", "referencing_table", "referencing_id", "role", "created_at"} <= (
+        ebr_columns
+    )
+
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                "SELECT sync_paused_at, retention_deadline, status_reason FROM sources "
+                "WHERE id = 'src_1'"
+            )
+        ).one()
+    assert row == (None, None, None)
+    engine.dispose()
+
+
+def test_source_lifecycle_and_blob_references_migration_downgrade_drops_them(
+    tmp_path: Path,
+) -> None:
+    """Downgrading past 0010 must cleanly drop the three new `sources`
+    columns and the `evidence_blob_references` table."""
+    sqlite_path = tmp_path / "docket.sqlite3"
+    config = _alembic_config(sqlite_path)
+    command.upgrade(config, "head")
+
+    command.downgrade(config, "f9749e87a0e7")
+
+    engine = create_engine(f"sqlite:///{sqlite_path}")
+    inspector = inspect(engine)
+    source_columns = {col["name"] for col in inspector.get_columns("sources")}
+    assert not ({"sync_paused_at", "retention_deadline", "status_reason"} & source_columns)
+    assert "evidence_blob_references" not in set(inspector.get_table_names())
+    engine.dispose()
+
+
 def test_fts_chunks_table_created_and_queryable(tmp_path: Path) -> None:
     sqlite_path = tmp_path / "docket.sqlite3"
     config = _alembic_config(sqlite_path)

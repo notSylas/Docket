@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from docket.core.db.engine import get_engine, get_session_factory
 from docket.core.db.models import (
     Base,
+    EvidenceBlobReference,
     EvidenceVersion,
     Source,
     SourceStatus,
@@ -17,6 +18,7 @@ from docket.core.db.models import (
     Workspace,
 )
 from docket.infra.evidence.manager import EvidenceManager
+from docket.infra.evidence.references import count_blob_references
 from docket.infra.evidence.store import ContentAddressedStore
 
 
@@ -303,3 +305,97 @@ def test_mark_version_status_noops_when_already_superseded(
 
     with session_factory() as session:
         assert session.get(EvidenceVersion, first.id).status == VersionStatus.SUPERSEDED
+
+
+# ---------------------------------------------------------------------------
+# Blob reference counting (Upgrade doc 03 section 8): `ingest_file` writes an
+# `EvidenceBlobReference` row in the same transaction as the blob/version
+# write.
+# ---------------------------------------------------------------------------
+
+
+def test_ingest_file_writes_a_content_blob_reference(
+    manager: EvidenceManager, session_factory: sessionmaker, tmp_path: Path
+) -> None:
+    source_id = _make_source(session_factory)
+    file_path = tmp_path / "report.txt"
+    file_path.write_text("hello world")
+
+    version = manager.ingest_file(
+        source_id, file_path, parser_name="plain", parser_version="1.0.0"
+    )
+
+    with session_factory() as session:
+        refs = (
+            session.query(EvidenceBlobReference)
+            .filter(EvidenceBlobReference.referencing_id == version.id)
+            .all()
+        )
+        assert len(refs) == 1
+        assert refs[0].content_hash == version.content_hash
+        assert refs[0].referencing_table == "evidence_versions"
+        assert refs[0].role == "content"
+        assert count_blob_references(session, version.content_hash) == 1
+
+
+def test_reingest_changed_content_adds_a_second_reference_not_replacing_the_first(
+    manager: EvidenceManager, session_factory: sessionmaker, tmp_path: Path
+) -> None:
+    """Supersession flips the old version's `status` but its blob reference
+    row must survive -- the old content_hash is still "referenced" by that
+    (superseded, but not yet purged) row until a purge actually removes it."""
+    source_id = _make_source(session_factory)
+    file_path = tmp_path / "report.txt"
+    file_path.write_text("version one")
+    first = manager.ingest_file(source_id, file_path, parser_name="plain", parser_version="1.0.0")
+
+    file_path.write_text("version two -- changed content")
+    second = manager.ingest_file(
+        source_id, file_path, parser_name="plain", parser_version="1.0.0"
+    )
+
+    with session_factory() as session:
+        assert count_blob_references(session, first.content_hash) == 1
+        assert count_blob_references(session, second.content_hash) == 1
+
+
+def test_identical_content_across_sources_gets_one_reference_row_each(
+    manager: EvidenceManager, session_factory: sessionmaker, tmp_path: Path
+) -> None:
+    """Two different sources ingesting byte-identical content dedupe in the
+    store (one object on disk) but each gets its OWN blob reference row --
+    the multi-reference case a purge must respect (deleting one source's
+    version must not remove the blob while the other source's version still
+    references it)."""
+    source_a_id = _make_source(session_factory, path="/docs/a.txt")
+    source_b_id = _make_source(session_factory, path="/docs/b.txt")
+    shared_content = b"identical bytes shared across two sources"
+    file_a = tmp_path / "a.txt"
+    file_b = tmp_path / "b.txt"
+    file_a.write_bytes(shared_content)
+    file_b.write_bytes(shared_content)
+
+    version_a = manager.ingest_file(
+        source_a_id, file_a, parser_name="plain", parser_version="1.0.0"
+    )
+    version_b = manager.ingest_file(
+        source_b_id, file_b, parser_name="plain", parser_version="1.0.0"
+    )
+
+    assert version_a.content_hash == version_b.content_hash
+    with session_factory() as session:
+        assert count_blob_references(session, version_a.content_hash) == 2
+
+
+def test_reingest_unchanged_file_does_not_duplicate_reference_rows(
+    manager: EvidenceManager, session_factory: sessionmaker, tmp_path: Path
+) -> None:
+    source_id = _make_source(session_factory)
+    file_path = tmp_path / "report.txt"
+    file_path.write_text("hello world")
+
+    first = manager.ingest_file(source_id, file_path, parser_name="plain", parser_version="1.0.0")
+    manager.ingest_file(source_id, file_path, parser_name="plain", parser_version="1.0.0")
+
+    with session_factory() as session:
+        assert count_blob_references(session, first.content_hash) == 1

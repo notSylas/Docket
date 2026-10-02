@@ -48,6 +48,7 @@ from docket.infra.parsing.docling_wrapper import DoclingParser
 from docket.infra.parsing.recipes import DEFAULT_SPLITTER, ChunkRecipe
 from docket.infra.retrieval.resolver import EvidenceResolver
 from docket.services.sources.manager import SourceManager
+from docket.services.sources.purge import SourcePurgeService
 
 if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
     # Running as a PyInstaller-frozen binary: `__file__`-based nesting no
@@ -252,6 +253,13 @@ class AppContext:
             gateway=self.gateway,
             visual_index_writer=self.visual_index_writer,
             settings=self.settings,
+            source_manager=self.source_manager,
+        )
+
+    @cached_property
+    def purge_service(self) -> SourcePurgeService:
+        return SourcePurgeService(
+            self.session_factory, self.store, index_manager=self.index_manager
         )
 
 

@@ -18,8 +18,9 @@ from sqlalchemy import select as sa_select
 from conftest import _write_docx
 from docket.core.config import Settings
 from docket.core.db.engine import get_session_factory
-from docket.core.db.models import Chunk, EvidenceVersion, VersionStatus
+from docket.core.db.models import Chunk, EvidenceBlobReference, EvidenceVersion, VersionStatus
 from docket.infra.evidence.manager import EvidenceManager
+from docket.infra.evidence.references import count_blob_references
 from docket.infra.evidence.store import ContentAddressedStore
 from docket.infra.index.fts_index import FtsIndexWriter
 from docket.infra.index.manager import IndexManager
@@ -318,6 +319,27 @@ def test_visual_indexer_save_and_index_pages_directly(migrated_sqlite_engine, tm
     with session_factory() as session:
         reloaded = session.get(EvidenceVersion, version_id)
         assert json.loads(reloaded.page_images_json) == {str(k): v for k, v in hashes.items()}
+
+    # Upgrade doc 03 section 8: one EvidenceBlobReference row per page-image
+    # hash (page_images_json is a second, JSON-buried set of hashes into the
+    # same store -- each entry needs its own reference row).
+    with session_factory() as session:
+        refs = (
+            session.query(EvidenceBlobReference)
+            .filter(EvidenceBlobReference.referencing_id == version_id)
+            .all()
+        )
+        assert {r.role for r in refs} == {"page_image:1", "page_image:2"}
+        for page_no, content_hash in hashes.items():
+            assert count_blob_references(session, content_hash) == 1
+
+    # Calling save_page_images again with the same hashes (simulating a
+    # FAILED->retry re-run against the same version id) must not duplicate
+    # reference rows.
+    indexer.save_page_images(version_id, page_images)
+    with session_factory() as session:
+        for content_hash in hashes.values():
+            assert count_blob_references(session, content_hash) == 1
 
     indexer.index_pages(
         evidence_version_id=version_id, source_id=source.id, page_images=page_images

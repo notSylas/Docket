@@ -19,6 +19,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -34,6 +35,7 @@ __all__ = [
     "Source",
     "EvidenceVersion",
     "EvidenceUnit",
+    "EvidenceBlobReference",
     "ChunkRecipe",
     "Chunk",
     "IngestionJob",
@@ -142,6 +144,26 @@ class Source(Base):
         nullable=False,
         default=SourceStatus.ACTIVE,
     )
+    # Orthogonal to `status` -- a paused source is still ACTIVE and
+    # servable on its last-synced content; only background refresh is
+    # suspended. Deliberately NOT a `SourceStatus` value (Upgrade doc 03
+    # section 6: forcing "paused" into the lifecycle enum would need an
+    # awkward "paused-but-still-active" state). `None` means not paused.
+    sync_paused_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # Set to `now + <configured retention window>` on entry to TOMBSTONED
+    # (`SourceManager.mark_tombstoned`); `SourceManager.sweep_expired_retentions`
+    # advances any source whose deadline has passed to HARD_DELETE_PENDING.
+    # `None` outside of TOMBSTONED. See Upgrade doc 03 section 6.
+    retention_deadline: Mapped[datetime | None] = mapped_column(nullable=True)
+    # Free-text reason recorded alongside a status transition -- e.g.
+    # distinguishing a user-initiated disconnect from a connector-detected
+    # access-loss REVOKED (Upgrade doc 03 section 6's explicit decision to
+    # reuse REVOKED for both rather than add a new enum value per cause), or
+    # the tombstone reason left behind once a purge completes (DELETED).
+    # Overwritten on each transition that supplies one; `None` if a
+    # transition never provided one. Deliberately NOT a DB enum: the set of
+    # reasons is expected to grow as real connectors are built.
+    status_reason: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         default=_utcnow, onupdate=_utcnow, nullable=False
@@ -246,6 +268,58 @@ class EvidenceUnit(Base):
 
     evidence_version: Mapped["EvidenceVersion"] = relationship(back_populates="evidence_units")
     chunks: Mapped[list["Chunk"]] = relationship(back_populates="evidence_unit")
+
+
+class EvidenceBlobReference(Base):
+    """One row per live reference from some other row into the
+    `ContentAddressedStore`, keyed by `content_hash` -- Upgrade doc 03
+    section 8. Written in the SAME transaction as any code path that writes
+    a hash into the store (`EvidenceManager.ingest_file` for primary bytes,
+    `VisualIndexer.save_page_images` for each page-image hash inside
+    `EvidenceVersion.page_images_json`), so refcounts can never drift from
+    what's actually stored.
+
+    `COUNT` rows for a given `content_hash` to decide whether a blob is safe
+    to move to `trash/` during a source purge -- a blob is eligible for
+    removal only when it has zero rows here. Two different `EvidenceVersion`
+    rows (from the same source re-ingesting reverted content, or from two
+    different sources with identical bytes) can each hold their own
+    reference row to the same `content_hash`; deleting one must not remove
+    the blob while the other still references it.
+
+    Deliberately NOT a real foreign key to `evidence_versions.id`:
+    `referencing_table`/`referencing_id` are plain strings so this table can
+    hold references from a future referencing table (e.g. a later adapter
+    that writes hashes somewhere else) without a schema change.
+    """
+
+    __tablename__ = "evidence_blob_references"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: _new_id("ebr"))
+    content_hash: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    referencing_table: Mapped[str] = mapped_column(String, nullable=False)
+    referencing_id: Mapped[str] = mapped_column(String, nullable=False)
+    # What this particular reference is *of* -- 'content' for
+    # `EvidenceVersion.content_hash`, `'page_image:<page_no>'` for one entry
+    # of `EvidenceVersion.page_images_json`. Plain string, not a DB enum:
+    # expected to grow as new hash-bearing columns/adapters appear.
+    role: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(default=_utcnow, nullable=False)
+
+    __table_args__ = (
+        Index(
+            "ix_evidence_blob_references_referencing",
+            "referencing_table",
+            "referencing_id",
+        ),
+        UniqueConstraint(
+            "content_hash",
+            "referencing_table",
+            "referencing_id",
+            "role",
+            name="uq_evidence_blob_references_tuple",
+        ),
+    )
 
 
 class ChunkRecipe(Base):
