@@ -13,6 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import docx
+import openpyxl
 import pytest
 from sqlalchemy import Engine, select
 
@@ -41,6 +42,19 @@ def _write_docx(path: Path, heading: str, body: str) -> None:
     document.add_heading(heading, level=1)
     document.add_paragraph(body)
     document.save(str(path))
+
+
+def _write_xlsx(path: Path, sheet_name: str, headers: list[str], rows: list[list]) -> None:
+    """Write a minimal real `.xlsx` fixture: one sheet named `sheet_name`
+    with a header row followed by `rows` of data -- the xlsx-ingestion
+    counterpart to `_write_docx` above."""
+    workbook = openpyxl.Workbook()
+    worksheet = workbook.active
+    worksheet.title = sheet_name
+    worksheet.append(headers)
+    for row in rows:
+        worksheet.append(row)
+    workbook.save(str(path))
 
 
 @pytest.fixture(scope="module")

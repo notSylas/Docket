@@ -80,6 +80,8 @@ class ChunkWriter:
                     unit_index=u.unit_index,
                     heading=u.heading,
                     content_hash=u.content_hash,
+                    unit_kind=u.unit_kind,
+                    locator_json=u.locator_json,
                 )
                 for u in units
             ]
@@ -107,6 +109,7 @@ class ChunkWriter:
                         content_hash=c.content_hash,
                         page_start=c.page_start,
                         page_end=c.page_end,
+                        provenance=c.provenance,
                     )
                 )
             session.add_all(chunk_objs)

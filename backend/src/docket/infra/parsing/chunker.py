@@ -44,6 +44,17 @@ class EvidenceUnitDraft:
     content_hash: str  # sha256 of `text`
     page_start: int | None = None  # 1-indexed page in effect at the start of this unit
     page_end: int | None = None  # 1-indexed page in effect at the end of this unit
+    # Structural-element kind (`EvidenceUnit.unit_kind`) and kind-specific
+    # structured locator (`EvidenceUnit.locator_json`, already JSON-encoded
+    # by the caller) -- see `docket.core.db.models.EvidenceUnit`. Defaulted to
+    # the only kind that existed before CP "xlsx ingestion" (a Docling
+    # markdown-heading section with no structured locator) so every existing
+    # caller of this module (the Docling path) is unaffected; a non-Docling
+    # adapter (e.g. `docket.infra.parsing.xlsx_chunker`) builds its own
+    # `EvidenceUnitDraft`s directly rather than through `chunk_document`, and
+    # sets these explicitly.
+    unit_kind: str = "section"
+    locator_json: str | None = None
 
 
 @dataclass
@@ -55,6 +66,11 @@ class ChunkDraft:
     content_hash: str  # sha256 of `text`
     page_start: int | None = None
     page_end: int | None = None
+    # `Chunk.provenance` -- see that column's docstring in
+    # `docket.core.db.models`. Every chunk produced by this module comes
+    # straight from parsed document text, so `"extracted"` is the correct
+    # default for all existing and new callers of `chunk_document`.
+    provenance: str = "extracted"
 
 
 def _words_with_pages(

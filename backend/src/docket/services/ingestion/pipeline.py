@@ -140,13 +140,36 @@ from docket.services.ingestion.visual_indexer import VisualIndexer
 from docket.infra.parsing.chunker import chunk_document
 from docket.infra.parsing.docling_wrapper import DoclingParser
 from docket.infra.parsing.recipes import ChunkRecipe
+from docket.infra.parsing.xlsx_chunker import chunk_workbook
+from docket.infra.parsing.xlsx_wrapper import XlsxParser
 from docket.services.sources.manager import SourceNotFoundError
 
 # Deliberately narrow, spike-validated set. Broadening this to more of
 # Docling's supported formats is a one-line change (add to the set); each
 # addition just needs its own real-file smoke test, which is out of scope
 # for this checkpoint.
-SUPPORTED_EXTENSIONS = {".docx", ".pdf"}
+DOCLING_EXTENSIONS = {".docx", ".pdf"}
+
+# Native openpyxl path (see `docket.infra.parsing.xlsx_wrapper`/`xlsx_chunker`),
+# first non-Docling format this pipeline ingests.
+XLSX_EXTENSION = ".xlsx"
+
+SUPPORTED_EXTENSIONS = DOCLING_EXTENSIONS | {XLSX_EXTENSION}
+
+# Recognized Excel-family extensions this pipeline explicitly refuses rather
+# than silently never discovering (doc 02 section 3: "Unsupported ... inputs
+# must produce explicit coverage/errors instead of empty successful
+# results"). `.xls` is the legacy binary format openpyxl cannot read at all;
+# `.xlsm` is structurally readable by the same openpyxl code path as
+# `.xlsx` but untested for this checkpoint (doc 02 section 3: "Exact
+# extensions ... must be tested before advertising them") -- both get a
+# named, explicit per-file failure instead of an untested silent attempt.
+UNSUPPORTED_EXCEL_EXTENSIONS = {".xls", ".xlsm"}
+
+# Everything `_discover_files` walks the source folder for -- broader than
+# `SUPPORTED_EXTENSIONS` so an unsupported Excel file shows up as an explicit
+# failed `FileIngestResult` instead of being invisible to the batch.
+DISCOVERABLE_EXTENSIONS = SUPPORTED_EXTENSIONS | UNSUPPORTED_EXCEL_EXTENSIONS
 
 
 logger = logging.getLogger(__name__)
@@ -154,6 +177,22 @@ logger = logging.getLogger(__name__)
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+class UnsupportedFormatError(Exception):
+    """Raised for a file whose extension is recognized as an Excel-family
+    format but not implemented (see `UNSUPPORTED_EXCEL_EXTENSIONS`). Caught
+    by the same per-file try/except as any other ingestion failure in
+    `run_ingestion_for_source`, so it surfaces as one failed
+    `FileIngestResult` rather than aborting the batch or silently vanishing."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        super().__init__(
+            f"unsupported spreadsheet format {path.suffix!r} for {path}: only "
+            ".xlsx is implemented in this checkpoint (legacy .xls and "
+            "macro-enabled .xlsm are not supported)"
+        )
 
 
 class SourceNotActiveError(Exception):
@@ -215,12 +254,18 @@ class IngestionPipeline:
         chunk_writer: ChunkWriter | None = None,
         formula_transcriber: FormulaTranscriber | None = None,
         visual_indexer: VisualIndexer | None = None,
+        xlsx_parser: XlsxParser | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._evidence_manager = evidence_manager
         self._parser = parser
         self._index_manager = index_manager
         self._chunk_recipe = chunk_recipe
+        # Unlike `DoclingParser` (expensive model loading, so every existing
+        # caller builds and passes one explicitly), `XlsxParser` just reads
+        # openpyxl's version -- cheap enough to default-construct here so no
+        # existing caller needs to change.
+        self._xlsx_parser = xlsx_parser if xlsx_parser is not None else XlsxParser()
         # `gateway`/`visual_index_writer` are only exercised when
         # `settings.visual_index_enabled` is True (see `VisualIndexer`).
         # `settings` defaults to the process-wide singleton (whose
@@ -285,10 +330,21 @@ class IngestionPipeline:
         return sorted(
             p
             for p in root.rglob("*")
-            if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS
+            if p.is_file() and p.suffix.lower() in DISCOVERABLE_EXTENSIONS
         )
 
     def _ingest_one_file(self, source_id: str, path: Path) -> FileIngestResult:
+        suffix = path.suffix.lower()
+
+        if suffix in UNSUPPORTED_EXCEL_EXTENSIONS:
+            # Discovered deliberately (see DISCOVERABLE_EXTENSIONS) so this
+            # is an explicit per-file failure, not a silent omission from
+            # the batch.
+            raise UnsupportedFormatError(path)
+
+        if suffix == XLSX_EXTENSION:
+            return self._ingest_one_xlsx_file(source_id, path)
+
         before_id = self._chunk_writer.current_version_id(source_id, str(path))
 
         evidence_version = self._evidence_manager.ingest_file(
@@ -393,6 +449,47 @@ class IngestionPipeline:
             )
             units, chunks = chunk_document(chunking_text, self._chunk_recipe)
 
+            records = self._chunk_writer.persist_units_and_chunks(
+                source_id=source_id,
+                evidence_version_id=evidence_version.id,
+                units=units,
+                chunks=chunks,
+            )
+            self._index_manager.upsert_chunks(records)
+        except Exception:
+            self._evidence_manager.mark_version_status(evidence_version.id, VersionStatus.FAILED)
+            raise
+
+        self._evidence_manager.mark_version_status(evidence_version.id, VersionStatus.READY)
+        return FileIngestResult(path=path, status="ingested", chunks_written=len(records))
+
+    def _ingest_one_xlsx_file(self, source_id: str, path: Path) -> FileIngestResult:
+        """Native `.xlsx` counterpart to the Docling branch in
+        `_ingest_one_file` above -- same before/after unchanged-detection and
+        PENDING/READY/FAILED lifecycle, via `XlsxParser`/`chunk_workbook`
+        instead of `DoclingParser`/`chunk_document`. No formula-transcription
+        or visual-index side passes apply here: those are Docling-specific
+        (page images and cropped formula regions don't exist for a
+        spreadsheet) -- doc 02 section 4/6.
+        """
+        before_id = self._chunk_writer.current_version_id(source_id, str(path))
+
+        evidence_version = self._evidence_manager.ingest_file(
+            source_id,
+            path,
+            parser_name=self._xlsx_parser.parser_name,
+            parser_version=self._xlsx_parser.parser_version,
+        )
+
+        if evidence_version.id == before_id and evidence_version.status == VersionStatus.READY:
+            # Genuine no-op: unchanged bytes, already fully processed. There
+            # is no spreadsheet equivalent of the Docling branch's formula-
+            # region/page-image backfill -- nothing further to check.
+            return FileIngestResult(path=path, status="unchanged")
+
+        try:
+            workbook = self._xlsx_parser.parse(source_id, path)
+            units, chunks = chunk_workbook(workbook)
             records = self._chunk_writer.persist_units_and_chunks(
                 source_id=source_id,
                 evidence_version_id=evidence_version.id,
