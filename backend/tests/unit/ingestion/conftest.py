@@ -15,6 +15,10 @@ from types import SimpleNamespace
 import docx
 import openpyxl
 import pytest
+from pptx import Presentation
+from pptx.chart.data import CategoryChartData
+from pptx.enum.chart import XL_CHART_TYPE
+from pptx.util import Inches
 from sqlalchemy import Engine, select
 
 from docket.core.db.engine import get_session_factory
@@ -55,6 +59,61 @@ def _write_xlsx(path: Path, sheet_name: str, headers: list[str], rows: list[list
     for row in rows:
         worksheet.append(row)
     workbook.save(str(path))
+
+
+def _write_pptx(
+    path: Path,
+    *,
+    slide_text: str | None = "Slide title text",
+    table_headers: list[str] | None = None,
+    table_rows: list[list] | None = None,
+    chart_categories: list[str] | None = None,
+    chart_series: dict[str, list[float]] | None = None,
+    notes_text: str | None = None,
+) -> None:
+    """Write a minimal real `.pptx` fixture with one slide carrying whatever
+    combination of visible text / a table / a chart / speaker notes the
+    caller asks for -- the pptx-ingestion counterpart to `_write_xlsx`
+    above. Passing `None` for a given piece omits it from the slide
+    entirely (e.g. a slide with only a table and no free text)."""
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[6])  # blank layout
+
+    if slide_text is not None:
+        textbox = slide.shapes.add_textbox(Inches(0.5), Inches(0.5), Inches(4), Inches(1))
+        textbox.text_frame.text = slide_text
+
+    if table_headers is not None and table_rows is not None:
+        n_rows = 1 + len(table_rows)
+        n_cols = len(table_headers)
+        table_shape = slide.shapes.add_table(
+            n_rows, n_cols, Inches(0.5), Inches(2), Inches(4), Inches(2)
+        )
+        table = table_shape.table
+        for col, header in enumerate(table_headers):
+            table.cell(0, col).text = str(header)
+        for row_idx, row_values in enumerate(table_rows, start=1):
+            for col, value in enumerate(row_values):
+                table.cell(row_idx, col).text = str(value)
+
+    if chart_categories is not None and chart_series is not None:
+        chart_data = CategoryChartData()
+        chart_data.categories = chart_categories
+        for series_name, values in chart_series.items():
+            chart_data.add_series(series_name, values)
+        slide.shapes.add_chart(
+            XL_CHART_TYPE.COLUMN_CLUSTERED,
+            Inches(5),
+            Inches(0.5),
+            Inches(4),
+            Inches(3),
+            chart_data,
+        )
+
+    if notes_text is not None:
+        slide.notes_slide.notes_text_frame.text = notes_text
+
+    presentation.save(str(path))
 
 
 @pytest.fixture(scope="module")
