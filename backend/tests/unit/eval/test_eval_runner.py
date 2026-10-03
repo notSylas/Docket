@@ -210,3 +210,26 @@ def test_agent_run_records_tool_trace_and_token_metadata(gold, fixtures_dir):
     assert record.prompt_eval_count == 321 and record.eval_count == 24
     assert "25 days of paid vacation" in record.prompt
     assert record.agent_trace[-1]["response_metadata"]["eval_count"] == 24
+
+
+def test_standalone_query_is_recorded_on_follow_up_runs(gold, fixtures_dir, tmp_path):
+    class RewritingGateway(ScriptedGateway):
+        def generate(self, *, system, prompt, **opts):
+            if "standalone search query" in system:
+                self.generate_calls.append({"system": system, "prompt": prompt, **opts})
+                return "What is the engineering budget?"
+            return super().generate(system=system, prompt=prompt, **opts)
+
+    records = run_eval(
+        gold, fixtures_dir / "corpus", tmp_path / "runs.jsonl",
+        gateway=RewritingGateway(SCRIPT), parser=PlainTextParser(),
+        repeats=1, mode=QueryMode.FAST,
+    )
+    by_id = {r.question_id: r for r in records}
+    follow_up = by_id["engineering-follow-up"]
+    assert follow_up.standalone_query == "What is the engineering budget?"
+    assert follow_up.configuration["rewrite_enabled"] is True
+    # The recorded answering prompt/system are the answer call's, not the rewrite's.
+    assert "Conversation so far:" in follow_up.prompt
+    assert "ONLY from the provided" in follow_up.system
+    assert by_id["vacation-days"].standalone_query is None

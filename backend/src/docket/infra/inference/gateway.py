@@ -166,6 +166,9 @@ class OllamaGateway:
         a model the server rejects it for (HTTP 400 "does not support
         thinking"), and the call is retried once without it."""
         opts = dict(opts)
+        # Per-call model override (e.g. a smaller rewrite model); None or
+        # absent means this gateway's own generation model.
+        model = opts.pop("model", None) or self.gen_model
         options = dict(opts.get("options") or {})
         # settings.num_ctx/num_predict are defaults, not overrides: a caller
         # that already put num_ctx/num_predict in its own `options` dict
@@ -173,27 +176,27 @@ class OllamaGateway:
         options.setdefault("num_ctx", settings.num_ctx)
         options.setdefault("num_predict", settings.num_predict)
         opts["options"] = options
-        if opts.get("think") is not None and self.gen_model in self._think_unsupported:
+        if opts.get("think") is not None and model in self._think_unsupported:
             opts.pop("think")
         try:
             try:
                 return _ollama.generate(
-                    model=self.gen_model, system=system, prompt=prompt, **opts
+                    model=model, system=system, prompt=prompt, **opts
                 )
             except _ollama.ResponseError as exc:
                 if opts.get("think") is None or "think" not in str(getattr(exc, "error", exc)).lower():
                     raise
                 logger.warning(
                     "model %r rejected think=%r (%s); retrying without it",
-                    self.gen_model, opts["think"], exc,
+                    model, opts["think"], exc,
                 )
-                self._think_unsupported.add(self.gen_model)
+                self._think_unsupported.add(model)
                 opts.pop("think")
                 return _ollama.generate(
-                    model=self.gen_model, system=system, prompt=prompt, **opts
+                    model=model, system=system, prompt=prompt, **opts
                 )
         except Exception as exc:
-            raise _translate_error(exc, self.gen_model) from exc
+            raise _translate_error(exc, model) from exc
 
     def generate(self, *, system: str, prompt: str, **opts) -> str:
         response = self._generate_response(system=system, prompt=prompt, **opts)

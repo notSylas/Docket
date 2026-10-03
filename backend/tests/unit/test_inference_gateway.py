@@ -381,3 +381,30 @@ def test_generate_keeps_think_tag_that_is_not_leading(mocker) -> None:
         return_value={"response": "Use <think>x</think> tags."},
     )
     assert OllamaGateway().generate(system="s", prompt="p") == "Use <think>x</think> tags."
+
+
+def test_generate_model_override_is_used_and_not_forwarded_as_an_option(mocker) -> None:
+    mock_generate = mocker.patch(
+        "docket.infra.inference.gateway._ollama.generate", return_value={"response": "ok"}
+    )
+    gateway = OllamaGateway(gen_model="big")
+    gateway.generate(system="s", prompt="p", model="small")
+    assert mock_generate.call_args.kwargs["model"] == "small"
+    gateway.generate(system="s", prompt="p", model=None)
+    assert mock_generate.call_args.kwargs["model"] == "big"
+    gateway.generate(system="s", prompt="p")
+    assert mock_generate.call_args.kwargs["model"] == "big"
+
+
+def test_think_rejection_is_tracked_per_model(mocker) -> None:
+    err = ollama.ResponseError('"small" does not support thinking', 400)
+    mock_generate = mocker.patch(
+        "docket.infra.inference.gateway._ollama.generate",
+        side_effect=[err, {"response": "a"}, {"response": "b"}],
+    )
+    gateway = OllamaGateway(gen_model="big")
+    gateway.generate(system="s", prompt="p", think=True, model="small")
+    # "small" is now known not to think; "big" is unaffected.
+    gateway.generate(system="s", prompt="p", think=True)
+    assert mock_generate.call_args_list[2].kwargs["model"] == "big"
+    assert mock_generate.call_args_list[2].kwargs["think"] is True

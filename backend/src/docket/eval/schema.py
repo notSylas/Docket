@@ -262,6 +262,8 @@ class RunRecord(BaseModel):
     eval_count: int | None = None  # generated tokens, if known
     # Chunks retrieved but left out of the prompt to fit the token budget.
     dropped_chunk_ids: list[str] = Field(default_factory=list)
+    # Follow-up rewrite used as a second retrieval query, if any.
+    standalone_query: str | None = None
     agent_trace: list[dict[str, Any]] = Field(default_factory=list)
     model_calls: list[dict[str, Any]] = Field(default_factory=list)
     gold_fingerprint: str | None = None

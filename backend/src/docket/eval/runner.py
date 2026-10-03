@@ -350,6 +350,10 @@ class EvalRunner:
                 "num_predict": self._context.settings.num_predict,
                 "answer_temperature": self._context.settings.answer_temperature,
                 "answer_think": self._context.settings.answer_think,
+                "rewrite_enabled": self._context.settings.rewrite_enabled,
+                "rewrite_model": self._context.settings.rewrite_model,
+                "rewrite_temperature": self._context.settings.rewrite_temperature,
+                "rewrite_think": self._context.settings.rewrite_think,
                 "top_k": self._top_k,
                 "requested_mode": self._mode.value if self._mode else "auto",
             },
@@ -370,6 +374,7 @@ class EvalRunner:
         record.mode = result.mode
         record.validation_warnings = list(result.validation_warnings)
         record.dropped_chunk_ids = list(result.dropped_chunk_ids)
+        record.standalone_query = result.standalone_query
         record.citations = [RecordedCitation(**c.model_dump()) for c in result.citations]
         unique = {c.chunk_id: c for c in self._resolver.resolved}  # first-seen order, deduped
         record.retrieved = _to_record_chunks(list(unique.values()))

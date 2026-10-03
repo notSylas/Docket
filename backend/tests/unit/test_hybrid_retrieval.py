@@ -1193,3 +1193,68 @@ def test_hybrid_search_with_page_table_surfaces_visual_only_chunk(
     )
 
     assert "chk_visual_only" in [rc.chunk_id for rc in fused]
+
+
+# ---------------------------------------------------------------------------
+# Multi-query fusion (`extra_queries`), used for follow-up rewrites.
+# ---------------------------------------------------------------------------
+
+
+def test_extra_queries_fuse_all_legs_of_every_query(
+    migrated_sqlite_engine: Engine, tmp_path: Path
+) -> None:
+    gateway = FakeInferenceGateway()
+    _populate_fts(migrated_sqlite_engine)
+    table = _populate_vector(tmp_path, migrated_sqlite_engine, gateway)
+    gateway.embed_calls.clear()
+
+    fused = hybrid_search(
+        engine=migrated_sqlite_engine, table=table, gateway=gateway,
+        query="fox", top_k=3, extra_queries=["photosynthesis"],
+    )
+
+    ids = [rc.chunk_id for rc in fused]
+    # Each query is embedded once; lexical hits from both queries are present.
+    assert gateway.embed_calls == ["fox", "photosynthesis"]
+    assert "chk_alpha" in ids and "chk_beta" in ids
+    assert len(ids) == len(set(ids))  # deduped
+    assert len(ids) <= 3
+    expected = reciprocal_rank_fusion(
+        [
+            fts_search(migrated_sqlite_engine, "fox", 3),
+            vector_search(table, migrated_sqlite_engine, gateway, "fox", 3),
+            fts_search(migrated_sqlite_engine, "photosynthesis", 3),
+            vector_search(table, migrated_sqlite_engine, gateway, "photosynthesis", 3),
+        ]
+    )[:3]
+    assert fused == expected
+
+
+def test_extra_queries_none_empty_or_duplicate_equal_single_query(
+    migrated_sqlite_engine: Engine, tmp_path: Path
+) -> None:
+    gateway = FakeInferenceGateway()
+    _populate_fts(migrated_sqlite_engine)
+    table = _populate_vector(tmp_path, migrated_sqlite_engine, gateway)
+    kwargs = dict(engine=migrated_sqlite_engine, table=table, gateway=gateway, query="fox", top_k=3)
+
+    base = hybrid_search(**kwargs)
+    gateway.embed_calls.clear()
+    for extra in (None, [], [""], ["  "], ["fox"], [" fox "]):
+        assert hybrid_search(**kwargs, extra_queries=extra) == base
+    assert set(gateway.embed_calls) == {"fox"}
+
+
+def test_extra_queries_still_exclude_revoked_sources(
+    migrated_sqlite_engine: Engine, tmp_path: Path
+) -> None:
+    gateway = FakeInferenceGateway()
+    _populate_fts(migrated_sqlite_engine)
+    table = _populate_vector(tmp_path, migrated_sqlite_engine, gateway)
+    _set_source_status(migrated_sqlite_engine, "src_1", SourceStatus.TOMBSTONED)
+
+    fused = hybrid_search(
+        engine=migrated_sqlite_engine, table=table, gateway=gateway,
+        query="fox", top_k=3, extra_queries=["photosynthesis"],
+    )
+    assert fused == []

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Callable
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
@@ -36,12 +37,18 @@ from docket.core.config import settings as default_settings
 from docket.infra.inference.gateway import InferenceGateway
 from docket.services.query.classifier import HeuristicQueryClassifier, QueryClassifier, QueryMode
 from docket.services.query.conversation import ConversationTurn, format_history_block, trim_history
-from docket.services.query.citations import build_context_block, validate_citations
+from docket.services.query.citations import (
+    CITATION_TAG_PATTERN,
+    build_context_block,
+    validate_citations,
+)
 from docket.services.query.latex import normalize_latex
+from docket.prompts.query import rewrite_prompt
 from docket.services.query.prompts import (
     ABSTENTION_PHRASE,
     AGENT_SYSTEM_PROMPT,
     AGENT_SYSTEM_PROMPT_WITH_HISTORY,
+    REWRITE_SYSTEM_PROMPT,
     SYSTEM_PROMPT,
     SYSTEM_PROMPT_WITH_HISTORY,
 )
@@ -50,6 +57,11 @@ from docket.infra.retrieval.hybrid import hybrid_search
 from docket.infra.retrieval.resolver import ChunkNotFoundError, EvidenceResolver, ResolvedEvidence
 
 logger = logging.getLogger(__name__)
+
+# A rewrite longer than this is treated as a failure (a sane query is short).
+_MAX_REWRITE_CHARS = 300
+# A citation tag plus the blanks before it, so stripping leaves no stray gap.
+_TAG_WITH_LEAD_RE = re.compile(r"[ \t]*" + CITATION_TAG_PATTERN)
 
 
 class Citation(BaseModel):
@@ -68,6 +80,9 @@ class QueryResult(BaseModel):
     # Retrieved chunks left out of the prompt to fit the token budget (lowest
     # ranked first dropped); never citable.
     dropped_chunk_ids: list[str] = []
+    # Follow-up rewrite used as a second retrieval query (None if no rewrite
+    # ran or it was unusable). Never evidence, never cited.
+    standalone_query: str | None = None
 
 
 def _citations_from_agent_messages(
@@ -266,6 +281,9 @@ class QueryService:
     def _ask_fast(
         self, question: str, history: list[ConversationTurn] | None = None
     ) -> QueryResult:
+        # Follow-up rewrite: fast path only, never on the first turn. (The
+        # agent path is unchanged -- the agent writes its own search queries.)
+        standalone = self._rewrite_followup(question, history)
         ranked_chunks = hybrid_search(
             engine=self._engine,
             table=self._table,
@@ -274,6 +292,7 @@ class QueryService:
             top_k=self._top_k,
             page_table=self._page_table,
             manifest_guard=self._manifest_guard,
+            **({"extra_queries": [standalone]} if standalone else {}),
         )
 
         if not ranked_chunks:
@@ -288,6 +307,7 @@ class QueryService:
                 abstained=True,
                 validation_warnings=[],
                 mode=QueryMode.FAST.value,
+                standalone_query=standalone,
             )
 
         try:
@@ -296,7 +316,7 @@ class QueryService:
             return QueryResult(
                 question=question, answer=ABSTENTION_PHRASE, citations=[],
                 abstained=True, validation_warnings=["retrieved evidence is no longer available"],
-                mode=QueryMode.FAST.value,
+                mode=QueryMode.FAST.value, standalone_query=standalone,
             )
         system, prompt, resolved, dropped = self._fit_prompt(question, history, resolved)
 
@@ -306,7 +326,61 @@ class QueryService:
             question=question, answer=answer, resolved=resolved,
             mode=QueryMode.FAST, retry_system=system, retry_prompt=prompt,
             dropped_chunk_ids=dropped,
-        )
+        ).model_copy(update={"standalone_query": standalone})
+
+    def _rewrite_followup(
+        self, question: str, history: list[ConversationTurn] | None
+    ) -> str | None:
+        """One local-model call turning `question` into a standalone search
+        query from the preceding turns, or None when there is no history, the
+        rewrite is disabled, or the result is unusable (error, empty, the
+        abstention phrase, multi-line, over `_MAX_REWRITE_CHARS`, or identical
+        to the question). Never raises: any failure means the original
+        question alone is searched."""
+        if not history or not self._settings.rewrite_enabled:
+            return None
+        # Citation tags would pollute the query; the prior answer text stays.
+        clean = [
+            ConversationTurn(
+                question=_TAG_WITH_LEAD_RE.sub("", turn.question).strip(),
+                answer=_TAG_WITH_LEAD_RE.sub("", turn.answer).strip(),
+            )
+            for turn in history
+        ]
+        opts: dict[str, Any] = {
+            "options": {
+                "temperature": self._settings.rewrite_temperature,
+                "num_predict": self._settings.rewrite_num_predict,
+            },
+            "think": self._settings.rewrite_think,
+        }
+        if self._settings.rewrite_model:
+            opts["model"] = self._settings.rewrite_model
+        try:
+            raw = self._gateway.generate(
+                system=REWRITE_SYSTEM_PROMPT,
+                prompt=rewrite_prompt(format_history_block(clean), question),
+                **opts,
+            )
+        except Exception as exc:  # noqa: BLE001 -- a rewrite must never fail the query
+            logger.warning("follow-up rewrite failed (%s); using the original question", exc)
+            return None
+        candidate = (raw or "").strip()
+        if not candidate:
+            logger.debug("follow-up rewrite was empty; using the original question")
+            return None
+        if "\n" in candidate or "\r" in candidate:
+            logger.debug("follow-up rewrite was multi-line; using the original question")
+            return None
+        if len(candidate) > _MAX_REWRITE_CHARS:
+            logger.debug("follow-up rewrite too long (%d chars); using the original", len(candidate))
+            return None
+        if ABSTENTION_PHRASE.lower() in candidate.lower():
+            logger.debug("follow-up rewrite was the abstention phrase; using the original")
+            return None
+        if candidate == question.strip():
+            return None
+        return candidate
 
     def _answer_opts(self) -> dict[str, Any]:
         """Sampling for the answering path (fast path and citation repair)."""

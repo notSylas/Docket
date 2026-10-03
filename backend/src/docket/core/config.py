@@ -58,6 +58,21 @@ class Settings(BaseSettings):
     # per call; other `generate` callers are unaffected.
     answer_temperature: float = 0.6
     answer_think: bool = True
+    # Follow-up query rewrite (Upgrade doc 05 section 5): with history on the
+    # fast path, one local-model call turns the latest question into a
+    # standalone search query; retrieval then fuses the original and the
+    # rewrite. `rewrite_model=None` means the generation model. With thinking
+    # on, thinking tokens count against `rewrite_num_predict`.
+    # Defaults chosen by measurement (qwen3:14b, follow-up questions + probes):
+    # thinking off at temperature 0 gave the same rewrites and the same
+    # top-8 recall as temperature 0.6 (0.1-0.6 s per call, longer on a cold
+    # model); thinking on cost 3-20 s, returned an EMPTY response at
+    # num_predict=128 (thinking tokens consume it), and recalled no more.
+    rewrite_enabled: bool = True
+    rewrite_model: str | None = None
+    rewrite_temperature: float = 0.0
+    rewrite_think: bool = False
+    rewrite_num_predict: int = 128
     # Tokens kept free for the answer when fitting the prompt into `num_ctx`
     # (`QueryService` drops lowest-ranked chunks past `num_ctx - reserve`).
     answer_token_reserve: int = 1024

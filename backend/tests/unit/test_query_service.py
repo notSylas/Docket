@@ -154,15 +154,18 @@ def _index_chunk(migrated_sqlite_engine: Engine, tmp_path: Path, gateway: FakeIn
 
 
 def _service(
-    migrated_sqlite_engine: Engine, table, gateway: FakeInferenceGateway, built: dict, *, top_k: int = 8
+    migrated_sqlite_engine: Engine, table, gateway: FakeInferenceGateway, built: dict, *, top_k: int = 8,
+    settings=None,
 ) -> QueryService:
     resolver = EvidenceResolver(built["session_factory"])
+    extra = {"settings": settings} if settings is not None else {}
     return QueryService(
         engine=migrated_sqlite_engine,
         table=table,
         gateway=gateway,
         resolver=resolver,
         top_k=top_k,
+        **extra,
     )
 
 
@@ -679,7 +682,11 @@ def test_fast_path_with_history_builds_history_prompt(
     table = _index_chunk(migrated_sqlite_engine, tmp_path, gateway, built)
     label = f"[report.pdf #{built['chunk_id'][:12]}]"
     gateway.canned_response = f"RRF fuses ranked lists {label}."
-    service = _service(migrated_sqlite_engine, table, gateway, built)
+    from docket.core.config import Settings
+
+    service = _service(
+        migrated_sqlite_engine, table, gateway, built, settings=Settings(rewrite_enabled=False)
+    )
 
     gateway.embed_calls.clear()
     service.ask(CHUNK_TEXT, mode=QueryMode.FAST, history=_HISTORY)
@@ -971,3 +978,245 @@ def test_dropped_chunk_is_not_a_valid_citation() -> None:
     assert result.abstained and result.citations == []
     assert result.dropped_chunk_ids == dropped
     assert any("unknown citation" in w for w in result.validation_warnings)
+
+
+# ---------------------------------------------------------------------------
+# Follow-up query rewrite (doc 05 section 5).
+# ---------------------------------------------------------------------------
+
+
+class _RewriteGateway(FakeInferenceGateway):
+    """Answers the rewrite call (recognised by its system prompt) separately
+    from the answering call."""
+
+    def __init__(self, rewrite=None, rewrite_error=None, **kwargs):
+        super().__init__(**kwargs)
+        self.rewrite = rewrite
+        self.rewrite_error = rewrite_error
+
+    def generate(self, *, system, prompt, **opts):
+        from docket.services.query.prompts import REWRITE_SYSTEM_PROMPT
+
+        if system == REWRITE_SYSTEM_PROMPT:
+            self.generate_calls.append({"system": system, "prompt": prompt, **opts})
+            if self.rewrite_error is not None:
+                raise self.rewrite_error
+            return self.rewrite
+        return super().generate(system=system, prompt=prompt, **opts)
+
+
+_FOLLOWUP = "And who wrote reciprocal rank fusion?"
+
+
+def _rewrite_setup(engine, tmp_path, built, **gw_kwargs):
+    gateway = _RewriteGateway(**gw_kwargs)
+    table = _index_chunk(engine, tmp_path, gateway, built)
+    label = f"[report.pdf #{built['chunk_id'][:12]}]"
+    gateway.canned_response = f"RRF fuses ranked lists {label}."
+    return gateway, table
+
+
+def _answer_calls(gateway):
+    from docket.services.query.prompts import REWRITE_SYSTEM_PROMPT
+
+    return [c for c in gateway.generate_calls if c["system"] != REWRITE_SYSTEM_PROMPT]
+
+
+def _rewrite_calls(gateway):
+    from docket.services.query.prompts import REWRITE_SYSTEM_PROMPT
+
+    return [c for c in gateway.generate_calls if c["system"] == REWRITE_SYSTEM_PROMPT]
+
+
+def test_rewrite_runs_with_history_and_both_queries_are_searched(
+    migrated_sqlite_engine, tmp_path, built
+) -> None:
+    gateway, table = _rewrite_setup(
+        migrated_sqlite_engine, tmp_path, built, rewrite="Who wrote Reciprocal Rank Fusion?"
+    )
+    service = _service(migrated_sqlite_engine, table, gateway, built)
+    gateway.embed_calls.clear()
+
+    result = service.ask(_FOLLOWUP, mode=QueryMode.FAST, history=_HISTORY)
+
+    assert result.standalone_query == "Who wrote Reciprocal Rank Fusion?"
+    assert len(_rewrite_calls(gateway)) == 1
+    assert gateway.embed_calls == [_FOLLOWUP, "Who wrote Reciprocal Rank Fusion?"]
+    assert result.question == _FOLLOWUP
+
+
+def test_rewrite_is_not_shown_to_the_answering_model(
+    migrated_sqlite_engine, tmp_path, built
+) -> None:
+    rewritten = "Who wrote Reciprocal Rank Fusion?"
+    gateway, table = _rewrite_setup(migrated_sqlite_engine, tmp_path, built, rewrite=rewritten)
+    service = _service(migrated_sqlite_engine, table, gateway, built)
+    service.ask(_FOLLOWUP, mode=QueryMode.FAST, history=_HISTORY)
+
+    (answer_call,) = _answer_calls(gateway)
+    assert answer_call["system"] == SYSTEM_PROMPT_WITH_HISTORY
+    assert rewritten not in answer_call["prompt"]
+    assert f"Question: {_FOLLOWUP}\n\nAnswer:" in answer_call["prompt"]
+    assert answer_call["prompt"].startswith("Conversation so far:\n")
+
+    # And the context/prompt equal what the same call gives with rewrite off.
+    from docket.core.config import Settings
+
+    off_gateway = _RewriteGateway(rewrite=rewritten, canned_response=gateway.canned_response)
+    off = _service(
+        migrated_sqlite_engine, table, off_gateway, built, settings=Settings(rewrite_enabled=False)
+    )
+    off.ask(_FOLLOWUP, mode=QueryMode.FAST, history=_HISTORY)
+    assert _rewrite_calls(off_gateway) == []
+    assert _answer_calls(off_gateway)[0]["prompt"] == answer_call["prompt"]
+
+
+@pytest.mark.parametrize("history", [None, []])
+def test_first_turn_is_never_rewritten(migrated_sqlite_engine, tmp_path, built, history) -> None:
+    gateway, table = _rewrite_setup(migrated_sqlite_engine, tmp_path, built, rewrite="x y z")
+    service = _service(migrated_sqlite_engine, table, gateway, built)
+    gateway.embed_calls.clear()
+
+    result = service.ask(_FOLLOWUP, mode=QueryMode.FAST, history=history)
+
+    assert _rewrite_calls(gateway) == []
+    assert result.standalone_query is None
+    assert gateway.embed_calls == [_FOLLOWUP]
+
+
+def test_rewrite_disabled_setting_skips_the_call(migrated_sqlite_engine, tmp_path, built) -> None:
+    from docket.core.config import Settings
+
+    gateway, table = _rewrite_setup(migrated_sqlite_engine, tmp_path, built, rewrite="x y z")
+    service = _service(
+        migrated_sqlite_engine, table, gateway, built, settings=Settings(rewrite_enabled=False)
+    )
+    result = service.ask(_FOLLOWUP, mode=QueryMode.FAST, history=_HISTORY)
+    assert _rewrite_calls(gateway) == []
+    assert result.standalone_query is None
+
+
+@pytest.mark.parametrize(
+    "rewrite",
+    [
+        "",
+        "   \n ",
+        ABSTENTION_PHRASE,
+        "line one\nline two",
+        "w" * 301,
+        _FOLLOWUP,
+        f"  {_FOLLOWUP}  ",
+    ],
+)
+def test_unusable_rewrite_falls_back_to_the_original_question(
+    migrated_sqlite_engine, tmp_path, built, rewrite
+) -> None:
+    gateway, table = _rewrite_setup(migrated_sqlite_engine, tmp_path, built, rewrite=rewrite)
+    service = _service(migrated_sqlite_engine, table, gateway, built)
+    gateway.embed_calls.clear()
+
+    result = service.ask(_FOLLOWUP, mode=QueryMode.FAST, history=_HISTORY)
+
+    assert result.standalone_query is None
+    assert gateway.embed_calls == [_FOLLOWUP]
+    assert result.citations  # the query still answered normally
+
+
+def test_rewrite_exception_falls_back_to_the_original_question(
+    migrated_sqlite_engine, tmp_path, built
+) -> None:
+    gateway, table = _rewrite_setup(
+        migrated_sqlite_engine, tmp_path, built, rewrite_error=RuntimeError("boom")
+    )
+    service = _service(migrated_sqlite_engine, table, gateway, built)
+    gateway.embed_calls.clear()
+
+    result = service.ask(_FOLLOWUP, mode=QueryMode.FAST, history=_HISTORY)
+
+    assert result.standalone_query is None
+    assert gateway.embed_calls == [_FOLLOWUP]
+    assert not result.abstained
+
+
+def test_rewriter_sees_history_without_citation_tags(
+    migrated_sqlite_engine, tmp_path, built
+) -> None:
+    gateway, table = _rewrite_setup(migrated_sqlite_engine, tmp_path, built, rewrite="Who wrote RRF?")
+    service = _service(migrated_sqlite_engine, table, gateway, built)
+    history = [
+        ConversationTurn(
+            question="What is RRF?",
+            answer="A fusion method [report.pdf #a1b2c3d4e5f6] from 2009 [x.docx #ffff00001111].",
+        )
+    ]
+    service.ask(_FOLLOWUP, mode=QueryMode.FAST, history=history)
+
+    (call,) = _rewrite_calls(gateway)
+    assert "#" not in call["prompt"]
+    assert "[" not in call["prompt"]
+    assert "A fusion method from 2009." in call["prompt"]  # answer text kept
+    assert f"Latest question: {_FOLLOWUP}" in call["prompt"]
+
+
+def test_rewrite_sampling_and_model_override(migrated_sqlite_engine, tmp_path, built) -> None:
+    from docket.core.config import Settings
+
+    gateway, table = _rewrite_setup(migrated_sqlite_engine, tmp_path, built, rewrite="Who wrote RRF?")
+    default = _service(migrated_sqlite_engine, table, gateway, built)
+    default.ask(_FOLLOWUP, mode=QueryMode.FAST, history=_HISTORY)
+    (call,) = _rewrite_calls(gateway)
+    assert call["think"] is Settings().rewrite_think
+    assert call["options"] == {
+        "temperature": Settings().rewrite_temperature,
+        "num_predict": Settings().rewrite_num_predict,
+    }
+    assert "model" not in call  # None -> the generation model
+
+    gateway.generate_calls.clear()
+    custom = _service(
+        migrated_sqlite_engine, table, gateway, built,
+        settings=Settings(
+            rewrite_model="qwen3:8b", rewrite_temperature=0.6, rewrite_think=True,
+            rewrite_num_predict=999,
+        ),
+    )
+    custom.ask(_FOLLOWUP, mode=QueryMode.FAST, history=_HISTORY)
+    (call,) = _rewrite_calls(gateway)
+    assert call["model"] == "qwen3:8b"
+    assert call["think"] is True
+    assert call["options"] == {"temperature": 0.6, "num_predict": 999}
+    # The answering call carries no rewrite settings.
+    assert all("model" not in c for c in _answer_calls(gateway))
+
+
+def test_agent_mode_does_not_rewrite(migrated_sqlite_engine, tmp_path, built) -> None:
+    gateway, table = _rewrite_setup(migrated_sqlite_engine, tmp_path, built, rewrite="Who wrote RRF?")
+    agent = _FakeAgent([AIMessage(content=ABSTENTION_PHRASE)])
+    service = QueryService(
+        engine=migrated_sqlite_engine, table=table, gateway=gateway,
+        resolver=EvidenceResolver(built["session_factory"]), agent=agent,
+    )
+    result = service.ask(_FOLLOWUP, mode=QueryMode.AGENT, history=_HISTORY)
+    assert _rewrite_calls(gateway) == []
+    assert result.standalone_query is None
+
+
+def test_rewrite_recorded_when_nothing_is_retrieved(
+    migrated_sqlite_engine, tmp_path, built, monkeypatch
+) -> None:
+    import docket.services.query.service as service_module
+
+    gateway, table = _rewrite_setup(migrated_sqlite_engine, tmp_path, built, rewrite="Who wrote RRF?")
+    captured: dict = {}
+
+    def _fake_hybrid_search(**kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(service_module, "hybrid_search", _fake_hybrid_search)
+    service = _service(migrated_sqlite_engine, table, gateway, built)
+    result = service.ask(_FOLLOWUP, mode=QueryMode.FAST, history=_HISTORY)
+
+    assert captured["extra_queries"] == ["Who wrote RRF?"]
+    assert captured["query"] == _FOLLOWUP
+    assert result.abstained and result.standalone_query == "Who wrote RRF?"

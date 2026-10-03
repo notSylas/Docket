@@ -15,6 +15,7 @@ from __future__ import annotations
 from docket.prompts.query import (
     AGENT_SYSTEM_PROMPT,
     AGENT_SYSTEM_PROMPT_WITH_HISTORY,
+    REWRITE_SYSTEM_PROMPT,
     SYSTEM_PROMPT,
     SYSTEM_PROMPT_WITH_HISTORY,
 )
@@ -24,6 +25,7 @@ __all__ = [
     "ABSTENTION_PHRASE",
     "AGENT_SYSTEM_PROMPT",
     "AGENT_SYSTEM_PROMPT_WITH_HISTORY",
+    "REWRITE_SYSTEM_PROMPT",
     "SYSTEM_PROMPT",
     "SYSTEM_PROMPT_WITH_HISTORY",
 ]

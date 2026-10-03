@@ -420,6 +420,7 @@ def hybrid_search(
     top_k: int = settings.default_top_k,
     page_table: Any | None = None,
     manifest_guard: IndexManifestGuard | None = None,
+    extra_queries: list[str] | None = None,
 ) -> list[RankedChunk]:
     """Run lexical and semantic search (each requesting `top_k` results) and
     fuse them via Reciprocal Rank Fusion, returning the top `top_k` fused
@@ -437,12 +438,24 @@ def hybrid_search(
     `page_table` (the `pages` LanceDB table) is given, `visual_search` also
     runs against it and its resolved chunk_ids are fused in as a third
     ranked list, so a chunk_id that only the visual retriever surfaced can
-    still win a spot in the final result."""
-    fts_ranked = fts_search(engine, query, top_k)
-    vector_ranked = vector_search(table, engine, gateway, query, top_k, manifest_guard)
-    ranked_lists = [fts_ranked, vector_ranked]
-    if page_table is not None:
-        visual_ranked = visual_search(page_table, engine, gateway, query, top_k, manifest_guard)
-        ranked_lists.append(visual_ranked)
+    still win a spot in the final result.
+
+    `extra_queries` (e.g. a follow-up's standalone rewrite) adds more queries:
+    every leg (FTS, vector, and visual when enabled) runs for each one at the
+    same per-leg `top_k`, and ALL resulting lists enter one fusion, still
+    returning `top_k`. A chunk found by several lists is scored once per list
+    by RRF (output ids are unique). Queries equal to an earlier one (after
+    stripping) or empty are skipped; with none left this is exactly the
+    single-query behaviour."""
+    queries = [query]
+    for extra in extra_queries or []:
+        if extra.strip() and extra.strip() not in {q.strip() for q in queries}:
+            queries.append(extra)
+    ranked_lists: list[list[str]] = []
+    for q in queries:
+        ranked_lists.append(fts_search(engine, q, top_k))
+        ranked_lists.append(vector_search(table, engine, gateway, q, top_k, manifest_guard))
+        if page_table is not None:
+            ranked_lists.append(visual_search(page_table, engine, gateway, q, top_k, manifest_guard))
     fused = reciprocal_rank_fusion(ranked_lists)
     return fused[:top_k]

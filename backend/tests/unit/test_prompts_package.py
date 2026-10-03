@@ -226,3 +226,23 @@ def test_formula_transcription_prompt_illegible_refusal_untouched() -> None:
     assert "ILLEGIBLE and nothing else" in FORMULA_TRANSCRIPTION_PROMPT
     assert "do not guess, do not reconstruct a" in FORMULA_TRANSCRIPTION_PROMPT
     assert "A wrong transcription is worse than admitting you" in FORMULA_TRANSCRIPTION_PROMPT
+
+
+# ---------------------------------------------------------------------------
+# query.py -- follow-up rewrite prompt
+# ---------------------------------------------------------------------------
+
+
+def test_rewrite_prompt_pins_its_safety_rules() -> None:
+    from docket.prompts.query import REWRITE_SYSTEM_PROMPT, rewrite_prompt
+
+    assert "standalone search query" in REWRITE_SYSTEM_PROMPT
+    assert "Output ONLY the rewritten query, on a single line" in REWRITE_SYSTEM_PROMPT
+    assert "already standalone, return it unchanged" in REWRITE_SYSTEM_PROMPT
+    assert "NEVER answer the question" in REWRITE_SYSTEM_PROMPT
+    assert "NEVER add facts, entities, numbers, periods or file names" in REWRITE_SYSTEM_PROMPT
+    assert "what about September?" in REWRITE_SYSTEM_PROMPT
+    assert rewrite_prompt("User: a\nAssistant: b", "and c?") == (
+        "Conversation so far:\nUser: a\nAssistant: b\n\n"
+        "Latest question: and c?\n\nStandalone search query:"
+    )
