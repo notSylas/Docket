@@ -124,6 +124,7 @@ from sqlalchemy.orm import sessionmaker
 from docket.core.config import Settings
 from docket.core.config import settings as _default_settings
 from docket.core.db.models import (
+    EvidenceVersion,
     IngestionJob,
     IngestionJobStatus,
     Source,
@@ -402,6 +403,16 @@ class IngestionPipeline:
         )
         self._chunk_writer.delete_units_and_chunks(evidence_version_id)
 
+    def _drop_superseded_index_entries(
+        self, before_id: str | None, evidence_version: EvidenceVersion
+    ) -> None:
+        """`EvidenceManager.ingest_file` flips the previous current version
+        to SUPERSEDED when content changed; remove its index entries now
+        rather than waiting for the end-of-run reconcile (which stays as the
+        repair path)."""
+        if before_id is not None and before_id != evidence_version.id:
+            self._index_manager.delete_version(before_id)
+
     def _discover_files(self, root: Path) -> list[Path]:
         """Recursively walk `root` for ingestable files. Recursive (not just
         the top level) because a "local_folder" source is meant to cover the
@@ -435,6 +446,7 @@ class IngestionPipeline:
             parser_name=self._parser.parser_name,
             parser_version=self._parser.parser_version,
         )
+        self._drop_superseded_index_entries(before_id, evidence_version)
 
         if evidence_version.id == before_id and evidence_version.status == VersionStatus.READY:
             # Unchanged bytes AND already fully processed: a genuine no-op
@@ -563,6 +575,7 @@ class IngestionPipeline:
             parser_name=self._xlsx_parser.parser_name,
             parser_version=self._xlsx_parser.parser_version,
         )
+        self._drop_superseded_index_entries(before_id, evidence_version)
 
         if evidence_version.id == before_id and evidence_version.status == VersionStatus.READY:
             # Genuine no-op: unchanged bytes, already fully processed. There
@@ -604,6 +617,7 @@ class IngestionPipeline:
             parser_name=self._pptx_parser.parser_name,
             parser_version=self._pptx_parser.parser_version,
         )
+        self._drop_superseded_index_entries(before_id, evidence_version)
 
         if evidence_version.id == before_id and evidence_version.status == VersionStatus.READY:
             # Genuine no-op: unchanged bytes, already fully processed. There
@@ -708,7 +722,11 @@ class IngestionPipeline:
             # Single end-of-run reconcile pass -- see module docstring for why
             # this must be whole-source, not per-file.
             current_chunk_ids = self._chunk_writer.current_chunk_ids_for_source(source_id)
-            self._index_manager.reconcile_source(source_id, current_chunk_ids=current_chunk_ids)
+            self._index_manager.reconcile_source(
+                source_id,
+                current_chunk_ids=current_chunk_ids,
+                current_version_ids=self._chunk_writer.ready_version_ids_for_source(source_id),
+            )
         except BaseException as exc:
             # Interrupted (Ctrl-C etc.): don't leave the job row RUNNING forever.
             self._finalize_job(

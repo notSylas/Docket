@@ -586,3 +586,67 @@ def test_migration_enables_foreign_keys_pragma_is_settable(tmp_path: Path) -> No
                 )
             )
     engine.dispose()
+
+
+def test_fts_version_columns_migration_backfills_from_chunks(tmp_path: Path) -> None:
+    """0011 recreates `fts_chunks` with `evidence_version_id`/`source_id`
+    columns, backfilled from `chunks`, keeping the porter tokenizer. An FTS
+    row with no `chunks` counterpart (an orphan) is dropped."""
+    sqlite_path = tmp_path / "docket.sqlite3"
+    config = _alembic_config(sqlite_path)
+    command.upgrade(config, "c4753b731e9c")
+
+    con = sqlite3.connect(str(sqlite_path))
+    try:
+        _insert_minimal_chunk_row(con, "chk_1", "The PRD defines six user journeys.")
+        con.execute(
+            "INSERT INTO fts_chunks (chunk_id, text) VALUES ('chk_orphan', 'orphan journeys')"
+        )
+        con.commit()
+    finally:
+        con.close()
+
+    command.upgrade(config, "head")
+
+    con = sqlite3.connect(str(sqlite_path))
+    try:
+        rows = con.execute(
+            "SELECT chunk_id, evidence_version_id, source_id FROM fts_chunks "
+            "WHERE fts_chunks MATCH 'journey'"
+        ).fetchall()
+        assert rows == [("chk_1", "ev_1", "src_1")]
+        assert con.execute("SELECT COUNT(*) FROM fts_chunks").fetchone() == (1,)
+    finally:
+        con.close()
+
+
+def test_fts_version_columns_migration_downgrade_restores_two_column_table(
+    tmp_path: Path,
+) -> None:
+    sqlite_path = tmp_path / "docket.sqlite3"
+    config = _alembic_config(sqlite_path)
+    command.upgrade(config, "head")
+
+    con = sqlite3.connect(str(sqlite_path))
+    try:
+        _insert_minimal_chunk_row(con, "chk_1", "The PRD defines six user journeys.")
+        con.execute(
+            "INSERT INTO fts_chunks (chunk_id, text, evidence_version_id, source_id) "
+            "VALUES ('chk_1', 'The PRD defines six user journeys.', 'ev_1', 'src_1')"
+        )
+        con.commit()
+    finally:
+        con.close()
+
+    command.downgrade(config, "c4753b731e9c")
+
+    con = sqlite3.connect(str(sqlite_path))
+    try:
+        columns = [row[1] for row in con.execute("PRAGMA table_info(fts_chunks)").fetchall()]
+        assert columns == ["chunk_id", "text"]
+        rows = con.execute(
+            "SELECT chunk_id FROM fts_chunks WHERE fts_chunks MATCH 'journey'"
+        ).fetchall()
+        assert rows == [("chk_1",)]
+    finally:
+        con.close()

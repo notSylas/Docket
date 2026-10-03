@@ -117,3 +117,16 @@ class LancePageIndexWriter:
         if table is None:
             return
         table.delete(f"source_id = {_sql_quote(source_id)}")
+
+    def delete_by_version(self, evidence_version_id: str) -> None:
+        table = self._open_table()
+        if table is None:
+            return
+        table.delete(f"evidence_version_id = {_sql_quote(evidence_version_id)}")
+
+    def version_ids_for_source(self, source_id: str) -> set[str]:
+        table = self._open_table()
+        if table is None:
+            return set()
+        rows = table.search().where(f"source_id = {_sql_quote(source_id)}").to_list()
+        return {row["evidence_version_id"] for row in rows}

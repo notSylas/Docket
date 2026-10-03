@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 from sqlalchemy import Engine
 
 from docket.infra.index.base import ChunkRecord
@@ -84,13 +83,24 @@ def test_existing_chunk_ids_empty_input(migrated_sqlite_engine: Engine) -> None:
     assert writer.existing_chunk_ids([]) == set()
 
 
-def test_delete_by_source_not_implemented(migrated_sqlite_engine: Engine) -> None:
+def test_chunk_ids_for_source_and_delete_by_source(migrated_sqlite_engine: Engine) -> None:
     writer = FtsIndexWriter(migrated_sqlite_engine)
-    with pytest.raises(NotImplementedError, match="IndexManager.delete_source"):
-        writer.delete_by_source("src_1")
+    writer.upsert(
+        [_record("chk_a", "alpha", "src_1"), _record("chk_b", "beta", "src_2")], embeddings=None
+    )
+    assert writer.chunk_ids_for_source("src_1") == {"chk_a"}
+
+    writer.delete_by_source("src_1")
+
+    assert writer.existing_chunk_ids(["chk_a", "chk_b"]) == {"chk_b"}
 
 
-def test_chunk_ids_for_source_not_implemented(migrated_sqlite_engine: Engine) -> None:
+def test_delete_by_version_only_removes_that_version(migrated_sqlite_engine: Engine) -> None:
     writer = FtsIndexWriter(migrated_sqlite_engine)
-    with pytest.raises(NotImplementedError, match="IndexManager.reconcile_source"):
-        writer.chunk_ids_for_source("src_1")
+    old = _record("chk_old", "alpha")
+    new = ChunkRecord(**{**old.__dict__, "chunk_id": "chk_new", "evidence_version_id": "ev_2"})
+    writer.upsert([old, new], embeddings=None)
+
+    writer.delete_by_version("ev_1")
+
+    assert writer.existing_chunk_ids(["chk_old", "chk_new"]) == {"chk_new"}

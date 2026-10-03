@@ -33,6 +33,7 @@ from sqlalchemy import Engine, bindparam, text
 
 from docket.core.config import settings
 from docket.core.db.models import SourceStatus, VersionStatus
+from docket.infra.index.vector_index import _sql_in_list
 from docket.infra.inference.gateway import InferenceGateway
 
 _DEFAULT_RRF_K = 60
@@ -196,16 +197,10 @@ def _filter_active_and_current(engine: Engine, chunk_ids: list[str]) -> list[str
     source is ACTIVE and whose evidence version is servable (`status ==
     READY`).
 
-    The LanceDB vector table has no `evidence_version_id`/status columns of
-    its own (see `docket.infra.index.vector_index`'s schema note -- it only carries
-    `chunk_id`/`source_id`/`text`/`vector`), so unlike `fts_search` (which can
-    join and filter inside the SQL query itself), vector search's result has
-    to be post-filtered against the real `chunks`/`sources`/`evidence_versions`
-    tables through `engine` after the nearest-neighbor search runs. This can
-    return fewer than `top_k` results when a revoked/non-READY chunk would
-    otherwise have ranked in the top `top_k` -- correct filtering matters more
-    here than backfilling the slot it leaves (M5's candidate-pool widening is
-    the place to do that, not this fix).
+    The LanceDB vector table carries only `evidence_version_id`, not status,
+    so `vector_search` pre-filters on the eligible version ids
+    (`_search_eligible`) and this chunk-level check is a second line of
+    defense against the real `chunks`/`sources`/`evidence_versions` rows.
     """
     if not chunk_ids:
         return []
@@ -222,15 +217,56 @@ def _filter_active_and_current(engine: Engine, chunk_ids: list[str]) -> list[str
     return [chunk_id for chunk_id in chunk_ids if chunk_id in allowed]
 
 
+_ELIGIBLE_VERSION_IDS_SQL = text(
+    "SELECT evidence_versions.id FROM evidence_versions "
+    "JOIN sources ON sources.id = evidence_versions.source_id "
+    "WHERE sources.status = :active_status "
+    "AND evidence_versions.status = :ready_status"
+)
+
+
+def _eligible_version_ids(engine: Engine) -> list[str]:
+    """Ids of every READY evidence version of an ACTIVE source -- the only
+    versions whose index rows may occupy a vector/visual top-k slot. Used as
+    a LanceDB pre-filter so top-k is drawn from eligible rows only."""
+    with engine.connect() as conn:
+        rows = conn.execute(
+            _ELIGIBLE_VERSION_IDS_SQL,
+            {
+                "active_status": SourceStatus.ACTIVE.name,
+                "ready_status": VersionStatus.READY.name,
+            },
+        )
+        return [row[0] for row in rows]
+
+
+def _search_eligible(table: Any, engine: Engine, query_vector: list[float], top_k: int) -> list:
+    """Nearest-neighbor search over `table` restricted (pre-filter, before
+    top-k) to rows whose `evidence_version_id` is currently eligible."""
+    version_ids = _eligible_version_ids(engine)
+    if not version_ids:
+        return []
+    return (
+        table.search(query_vector)
+        .where(f"evidence_version_id IN ({_sql_in_list(version_ids)})", prefilter=True)
+        .limit(top_k)
+        .to_list()
+    )
+
+
 def vector_search(
     table: Any, engine: Engine, gateway: InferenceGateway, query: str, top_k: int
 ) -> list[str]:
     """Embed `query` via `gateway` and run a nearest-neighbor search against
     `table` (a LanceDB `chunks` table), returning chunk_ids ranked by vector
-    similarity (best match first), filtered to active/current chunks via
-    `engine` (see `_filter_active_and_current`)."""
+    similarity (best match first).
+
+    The search is pre-filtered in LanceDB on `evidence_version_id` (see
+    `_search_eligible`), so stale/non-READY/revoked rows can't crowd valid ones
+    out of the `top_k`. `_filter_active_and_current` still runs afterwards as
+    defense in depth (e.g. a chunk row whose own state diverged)."""
     query_vector = gateway.embed(query)
-    results = table.search(query_vector).limit(top_k).to_list()
+    results = _search_eligible(table, engine, query_vector, top_k)
     chunk_ids = [row["chunk_id"] for row in results]
     return _filter_active_and_current(engine, chunk_ids)
 
@@ -326,7 +362,7 @@ def visual_search(
         return []
 
     query_vector = gateway.embed(query)
-    results = page_table.search(query_vector).limit(top_k).to_list()
+    results = _search_eligible(page_table, engine, query_vector, top_k)
     pairs = [(row["evidence_version_id"], row["page_no"]) for row in results]
     if not pairs:
         return []

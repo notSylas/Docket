@@ -152,6 +152,16 @@ class ChunkWriter:
                 for c in chunk_objs
             ]
 
+    def ready_version_ids_for_source(self, source_id: str) -> set[str]:
+        """Ids of `source_id`'s servable (`READY`) versions -- the "should
+        still have visual pages indexed" set for the end-of-run reconcile."""
+        with self._session_factory() as session:
+            stmt = select(EvidenceVersion.id).where(
+                EvidenceVersion.source_id == source_id,
+                EvidenceVersion.status == VersionStatus.READY,
+            )
+            return set(session.execute(stmt).scalars().all())
+
     def current_chunk_ids_for_source(self, source_id: str) -> set[str]:
         """All chunk_ids reachable from `source_id`'s *servable* (`READY`)
         EvidenceVersions -- the "should still be indexed" set used for the

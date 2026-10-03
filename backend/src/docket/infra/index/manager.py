@@ -3,12 +3,12 @@ keep the FTS5 and LanceDB indexes in sync, replacing the validation spike's
 "re-embed and re-index the whole corpus on every run" behavior with true
 incremental upsert/delete.
 
-Design note (continues the one in `docket.infra.index.fts_index`): `FtsIndexWriter`
-cannot resolve "which chunk_ids belong to source X" on its own (the FTS5
-table has no `source_id` column), so `IndexManager` resolves that via the
-vector writer -- whose table *does* carry `source_id` -- and then drives both
-writers off the resolved chunk_id set. This keeps the "what belongs to a
-source" logic in exactly one place instead of duplicated per-backend joins.
+Design note (continues the one in `docket.infra.index.fts_index`): both
+writers can enumerate rows by source and by evidence version (FTS rows carry
+`source_id`/`evidence_version_id`, as do the LanceDB rows), so reconcile finds
+stale entries in either index independently -- an FTS-only orphan is found
+without the vector table. The optional visual `pages` writer is cleaned up
+alongside, keyed by version.
 """
 
 from __future__ import annotations
@@ -16,16 +16,22 @@ from __future__ import annotations
 from typing import Sequence
 
 from docket.infra.index.base import ChunkRecord, IndexWriteStats, IndexWriter
+from docket.infra.index.visual_index import LancePageIndexWriter
 from docket.infra.inference.gateway import InferenceGateway
 
 
 class IndexManager:
     def __init__(
-        self, fts_writer: IndexWriter, vector_writer: IndexWriter, gateway: InferenceGateway
+        self,
+        fts_writer: IndexWriter,
+        vector_writer: IndexWriter,
+        gateway: InferenceGateway,
+        page_writer: LancePageIndexWriter | None = None,
     ):
         self._fts = fts_writer
         self._vector = vector_writer
         self._gateway = gateway
+        self._pages = page_writer
 
     def upsert_chunks(self, records: Sequence[ChunkRecord]) -> IndexWriteStats:
         """Upsert `records` into both indexes, embedding only what's missing
@@ -54,17 +60,27 @@ class IndexManager:
 
         return IndexWriteStats(upserted=len(to_write), skipped_unchanged=skipped, deleted=0)
 
-    def reconcile_source(self, source_id: str, current_chunk_ids: set[str]) -> IndexWriteStats:
-        """Delete any chunk currently indexed for `source_id` that is no
-        longer present in `current_chunk_ids` (e.g. content removed/changed
-        on re-ingestion)."""
-        indexed_chunk_ids = self._vector.chunk_ids_for_source(source_id)
+    def reconcile_source(
+        self,
+        source_id: str,
+        current_chunk_ids: set[str],
+        current_version_ids: set[str] | None = None,
+    ) -> IndexWriteStats:
+        """Delete any chunk currently indexed for `source_id` (in either
+        index) that is no longer present in `current_chunk_ids` (e.g. content
+        removed/changed on re-ingestion). When `current_version_ids` is
+        given, also delete `pages` rows of any other version of the source."""
+        indexed_chunk_ids = self._fts.chunk_ids_for_source(
+            source_id
+        ) | self._vector.chunk_ids_for_source(source_id)
         stale = indexed_chunk_ids - current_chunk_ids
-        if not stale:
-            return IndexWriteStats(upserted=0, skipped_unchanged=0, deleted=0)
+        if stale:
+            self._fts.delete(stale)
+            self._vector.delete(stale)
 
-        self._fts.delete(stale)
-        self._vector.delete(stale)
+        if self._pages is not None and current_version_ids is not None:
+            for version_id in self._pages.version_ids_for_source(source_id) - current_version_ids:
+                self._pages.delete_by_version(version_id)
 
         return IndexWriteStats(upserted=0, skipped_unchanged=0, deleted=len(stale))
 
@@ -77,9 +93,17 @@ class IndexManager:
         self._fts.delete(chunk_ids)
         self._vector.delete(chunk_ids)
 
+    def delete_version(self, evidence_version_id: str) -> None:
+        """Remove every index entry (FTS, vector, visual pages) owned by one
+        evidence version, e.g. when it has been superseded."""
+        self._fts.delete_by_version(evidence_version_id)
+        self._vector.delete_by_version(evidence_version_id)
+        if self._pages is not None:
+            self._pages.delete_by_version(evidence_version_id)
+
     def delete_source(self, source_id: str) -> None:
-        """Remove all indexed chunks for `source_id` from both indexes."""
-        chunk_ids = self._vector.chunk_ids_for_source(source_id)
-        if chunk_ids:
-            self._fts.delete(chunk_ids)
+        """Remove all indexed chunks and pages for `source_id`."""
+        self._fts.delete_by_source(source_id)
         self._vector.delete_by_source(source_id)
+        if self._pages is not None:
+            self._pages.delete_by_source(source_id)

@@ -71,6 +71,10 @@ class IndexWriter(Protocol):
         """Remove all rows belonging to `source_id`."""
         ...
 
+    def delete_by_version(self, evidence_version_id: str) -> None:
+        """Remove all rows belonging to `evidence_version_id`."""
+        ...
+
     def existing_chunk_ids(self, chunk_ids: Sequence[str]) -> set[str]:
         """Return the subset of `chunk_ids` already present in this index."""
         ...

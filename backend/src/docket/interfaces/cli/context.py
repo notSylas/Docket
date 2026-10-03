@@ -195,7 +195,7 @@ class AppContext:
 
     @cached_property
     def vector_writer(self) -> LanceIndexWriter:
-        return LanceIndexWriter(self.settings.lancedb_path)
+        return LanceIndexWriter(self.settings.lancedb_path, engine=self.engine)
 
     @cached_property
     def visual_index_writer(self) -> LancePageIndexWriter:
@@ -222,7 +222,9 @@ class AppContext:
 
     @cached_property
     def index_manager(self) -> IndexManager:
-        return IndexManager(self.fts_writer, self.vector_writer, self.gateway)
+        return IndexManager(
+            self.fts_writer, self.vector_writer, self.gateway, self.visual_index_writer
+        )
 
     @cached_property
     def chunk_recipe(self) -> ChunkRecipe:
