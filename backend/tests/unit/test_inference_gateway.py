@@ -314,3 +314,70 @@ def test_real_ollama_model_not_found_is_typed(ollama_available) -> None:
     gateway = OllamaGateway(gen_model="definitely-not-a-real-model:latest")
     with pytest.raises(ModelNotFoundError):
         gateway.generate(system="sys", prompt="hello")
+
+
+# --- answer-path sampling: think / options / <think> stripping -------------
+
+
+def test_generate_forwards_think_and_caller_options_and_keeps_defaults(mocker) -> None:
+    mock_generate = mocker.patch(
+        "docket.infra.inference.gateway._ollama.generate", return_value={"response": "ok"}
+    )
+    OllamaGateway().generate(
+        system="s", prompt="p", options={"temperature": 0.0, "num_ctx": 123}, think=False
+    )
+    _, kwargs = mock_generate.call_args
+    assert kwargs["think"] is False
+    assert kwargs["options"] == {
+        "temperature": 0.0, "num_ctx": 123, "num_predict": settings.num_predict,
+    }
+
+
+def test_generate_without_think_does_not_send_it(mocker) -> None:
+    mock_generate = mocker.patch(
+        "docket.infra.inference.gateway._ollama.generate", return_value={"response": "ok"}
+    )
+    OllamaGateway().generate(system="s", prompt="p")
+    assert "think" not in mock_generate.call_args.kwargs
+    assert "temperature" not in mock_generate.call_args.kwargs["options"]
+
+
+def test_generate_retries_once_without_think_when_server_rejects_it(mocker) -> None:
+    err = ollama.ResponseError('"m" does not support thinking', 400)
+    mock_generate = mocker.patch(
+        "docket.infra.inference.gateway._ollama.generate",
+        side_effect=[err, {"response": "answer"}, {"response": "again"}],
+    )
+    gateway = OllamaGateway(gen_model="m")
+    assert gateway.generate(system="s", prompt="p", think=True) == "answer"
+    assert mock_generate.call_count == 2
+    assert "think" not in mock_generate.call_args_list[1].kwargs
+    # Remembered: the next call does not retry the rejected parameter.
+    assert gateway.generate(system="s", prompt="p", think=True) == "again"
+    assert mock_generate.call_count == 3
+    assert "think" not in mock_generate.call_args_list[2].kwargs
+
+
+def test_generate_other_errors_with_think_still_raise(mocker) -> None:
+    mocker.patch(
+        "docket.infra.inference.gateway._ollama.generate",
+        side_effect=ollama.ResponseError("boom", 500),
+    )
+    with pytest.raises(InferenceUnavailableError):
+        OllamaGateway().generate(system="s", prompt="p", think=False)
+
+
+def test_generate_strips_leading_think_block(mocker) -> None:
+    mocker.patch(
+        "docket.infra.inference.gateway._ollama.generate",
+        return_value={"response": "<think>\nhmm <b>\n</think>\n\nThe answer [x #1]."},
+    )
+    assert OllamaGateway().generate(system="s", prompt="p") == "The answer [x #1]."
+
+
+def test_generate_keeps_think_tag_that_is_not_leading(mocker) -> None:
+    mocker.patch(
+        "docket.infra.inference.gateway._ollama.generate",
+        return_value={"response": "Use <think>x</think> tags."},
+    )
+    assert OllamaGateway().generate(system="s", prompt="p") == "Use <think>x</think> tags."

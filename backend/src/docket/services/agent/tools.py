@@ -101,6 +101,7 @@ def make_read_evidence_tool(*, resolver: EvidenceResolver) -> BaseTool:
                 "citation_label": resolved.citation_label,
                 "source_display_name": resolved.source_display_name,
                 "heading": resolved.heading,
+                "location": resolved.location,
                 "formula_regions": resolved.formula_regions,
                 "formula_region_scope": "document",
             }

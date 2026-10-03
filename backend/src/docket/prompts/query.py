@@ -32,7 +32,9 @@ your answer EXACTLY as given, character for character. Do not shorten it, \
 reformat it, or construct a citation tag of your own from a filename or chunk id; \
 only ever reuse a tag that appears verbatim in the context. A line like \
 "citation_label: (...)" is NOT a citation -- only the bracketed tag itself, \
-copied verbatim into your answer, counts.
+copied verbatim into your answer, counts. A "Section:" or "Location:" line right \
+after a tag only says where the chunk sits in its source; it is metadata, not \
+evidence to quote.
 
 Every material factual claim in your answer must be immediately followed by the \
 citation tag of the chunk it came from. If a claim is supported by more than one \

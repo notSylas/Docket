@@ -37,6 +37,7 @@ from docket.infra.index.fts_index import FtsIndexWriter
 from docket.infra.index.vector_index import LanceIndexWriter
 from docket.infra.inference.gateway import FakeInferenceGateway
 from docket.services.query.classifier import QueryMode
+from docket.services.query.conversation import ConversationTurn
 from docket.services.query.prompts import ABSTENTION_PHRASE
 from docket.services.query.service import QueryService, _citations_from_agent_messages
 from docket.infra.retrieval.resolver import EvidenceResolver, ResolvedEvidence
@@ -708,7 +709,7 @@ def test_fast_path_without_history_is_unchanged(
 
     call = gateway.generate_calls[0]
     assert call["system"] == SYSTEM_PROMPT
-    assert call["prompt"] == f"Context:\n{label}\n{CHUNK_TEXT}\n\nQuestion: {CHUNK_TEXT}\n\nAnswer:"
+    assert call["prompt"] == f"Context:\n{label}\nSection: Introduction\n{CHUNK_TEXT}\n\nQuestion: {CHUNK_TEXT}\n\nAnswer:"
     assert "Conversation so far" not in call["prompt"]
 
 
@@ -882,3 +883,91 @@ def test_ask_fast_threads_supplied_page_table_into_hybrid_search(
     service.ask(CHUNK_TEXT)
 
     assert captured["page_table"] is sentinel_page_table
+
+
+# ---------------------------------------------------------------------------
+# Answer-path hygiene: sampling options and token budget.
+# ---------------------------------------------------------------------------
+
+
+def test_fast_path_and_repair_pass_explicit_sampling(
+    migrated_sqlite_engine: Engine, tmp_path: Path, built: dict
+) -> None:
+    gateway = FakeInferenceGateway(canned_response="no citation here")
+    table = _index_chunk(migrated_sqlite_engine, tmp_path, gateway, built)
+    service = _service(migrated_sqlite_engine, table, gateway, built)
+
+    service.ask(CHUNK_TEXT, mode=QueryMode.FAST)
+
+    assert len(gateway.generate_calls) == 2  # answer + citation repair
+    for call in gateway.generate_calls:
+        # Qwen3's recommended thinking-mode temperature; greedy decoding (0)
+        # measured worse on the public gold set (see core/config.py).
+        assert call["options"] == {"temperature": 0.6}
+        # Thinking stays on by default: turning it off measurably lost correct
+        # answers on the public gold set (see `answer_think` in core/config.py).
+        assert call["think"] is True
+
+
+def _chunk(n: int, words: int = 100) -> ResolvedEvidence:
+    return ResolvedEvidence(
+        chunk_id=f"chk_{n}", text=("word " * words).strip(),
+        source_display_name="a.pdf", evidence_version_id="ev", heading=None,
+        citation_label=f"[a.pdf #chk{n}]",
+    )
+
+
+def _budget_service(num_ctx: int, reserve: int = 0) -> QueryService:
+    from docket.core.config import Settings
+
+    return QueryService(
+        engine=None, table=None, gateway=FakeInferenceGateway(), resolver=None,  # type: ignore[arg-type]
+        settings=Settings(num_ctx=num_ctx, answer_token_reserve=reserve),
+    )
+
+
+def test_budget_drops_lowest_ranked_chunks_first_and_keeps_order() -> None:
+    chunks = [_chunk(i) for i in range(6)]
+    # test counter is one token per word: ~100 per chunk, ~300 for the system prompt
+    service = _budget_service(num_ctx=3000)
+    _, _, included, dropped = service._fit_prompt("q?", None, chunks)
+    assert included == chunks and dropped == []
+
+    service = _budget_service(num_ctx=600)
+    system, prompt, included, dropped = service._fit_prompt("q?", None, chunks)
+    assert 0 < len(included) < 6
+    assert included == chunks[: len(included)]
+    assert dropped == [c.chunk_id for c in chunks[len(included):]]
+    assert all(c.citation_label in prompt for c in included)
+    assert not any(chunks[i].citation_label in prompt for i in range(len(included), 6))
+
+
+def test_budget_keeps_at_least_one_chunk() -> None:
+    chunks = [_chunk(i) for i in range(4)]
+    _, prompt, included, dropped = _budget_service(num_ctx=10)._fit_prompt("q?", None, chunks)
+    assert included == chunks[:1]
+    assert len(dropped) == 3
+    assert chunks[0].citation_label in prompt
+
+
+def test_budget_counts_history_tokens() -> None:
+    chunks = [_chunk(i) for i in range(4)]
+    service = _budget_service(num_ctx=600)
+    included_no_history = service._fit_prompt("q?", None, chunks)[2]
+    history = [ConversationTurn(question="q " * 300, answer="a " * 300)]
+    included_history = service._fit_prompt("q?", history, chunks)[2]
+    assert len(included_history) < len(included_no_history)
+
+
+def test_dropped_chunk_is_not_a_valid_citation() -> None:
+    chunks = [_chunk(i) for i in range(4)]
+    service = _budget_service(num_ctx=10)
+    _, _, included, dropped = service._fit_prompt("q?", None, chunks)
+    service._gateway.canned_response = f"Claim {chunks[3].citation_label}."
+    result = service._finalize_answer(
+        question="q?", answer=f"Claim {chunks[3].citation_label}.", resolved=included,
+        mode=QueryMode.FAST, retry_system="s", retry_prompt="p", dropped_chunk_ids=dropped,
+    )
+    assert result.abstained and result.citations == []
+    assert result.dropped_chunk_ids == dropped
+    assert any("unknown citation" in w for w in result.validation_warnings)

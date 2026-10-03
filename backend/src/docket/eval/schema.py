@@ -260,6 +260,8 @@ class RunRecord(BaseModel):
     prompt: str | None = None  # exact user prompt sent
     prompt_eval_count: int | None = None  # tokens Ollama actually evaluated, if known
     eval_count: int | None = None  # generated tokens, if known
+    # Chunks retrieved but left out of the prompt to fit the token budget.
+    dropped_chunk_ids: list[str] = Field(default_factory=list)
     agent_trace: list[dict[str, Any]] = Field(default_factory=list)
     model_calls: list[dict[str, Any]] = Field(default_factory=list)
     gold_fingerprint: str | None = None

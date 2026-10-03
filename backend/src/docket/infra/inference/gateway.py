@@ -10,12 +10,25 @@ on how/where generation and embedding actually happen, and lets tests swap in
 from __future__ import annotations
 
 import hashlib
+import logging
+import re
 import time
 from typing import Callable, Protocol, Sequence, runtime_checkable
 
 import ollama as _ollama
 
 from docket.core.config import settings
+
+logger = logging.getLogger(__name__)
+
+# A leading reasoning block some models emit inline in `response` (Ollama
+# normally moves it to the separate `thinking` field, so this is a backstop).
+_LEADING_THINK_RE = re.compile(r"\A\s*<think>.*?</think>\s*", re.DOTALL)
+
+
+def strip_think_block(text: str) -> str:
+    """`text` without a leading `<think>...</think>` block (if any)."""
+    return _LEADING_THINK_RE.sub("", text, count=1)
 
 
 class InferenceError(Exception):
@@ -145,8 +158,13 @@ class OllamaGateway:
     def __init__(self, gen_model: str | None = None, embed_model: str | None = None):
         self.gen_model = gen_model or settings.gen_model
         self.embed_model = embed_model or settings.embed_model
+        self._think_unsupported: set[str] = set()
 
-    def generate(self, *, system: str, prompt: str, **opts) -> str:
+    def _generate_response(self, *, system: str, prompt: str, **opts):
+        """Raw `ollama.generate` response (dict-like) with default options
+        applied. `think` (if passed) is dropped for good on this gateway for
+        a model the server rejects it for (HTTP 400 "does not support
+        thinking"), and the call is retried once without it."""
         opts = dict(opts)
         options = dict(opts.get("options") or {})
         # settings.num_ctx/num_predict are defaults, not overrides: a caller
@@ -155,13 +173,31 @@ class OllamaGateway:
         options.setdefault("num_ctx", settings.num_ctx)
         options.setdefault("num_predict", settings.num_predict)
         opts["options"] = options
+        if opts.get("think") is not None and self.gen_model in self._think_unsupported:
+            opts.pop("think")
         try:
-            response = _ollama.generate(
-                model=self.gen_model, system=system, prompt=prompt, **opts
-            )
+            try:
+                return _ollama.generate(
+                    model=self.gen_model, system=system, prompt=prompt, **opts
+                )
+            except _ollama.ResponseError as exc:
+                if opts.get("think") is None or "think" not in str(getattr(exc, "error", exc)).lower():
+                    raise
+                logger.warning(
+                    "model %r rejected think=%r (%s); retrying without it",
+                    self.gen_model, opts["think"], exc,
+                )
+                self._think_unsupported.add(self.gen_model)
+                opts.pop("think")
+                return _ollama.generate(
+                    model=self.gen_model, system=system, prompt=prompt, **opts
+                )
         except Exception as exc:
             raise _translate_error(exc, self.gen_model) from exc
-        return response["response"]
+
+    def generate(self, *, system: str, prompt: str, **opts) -> str:
+        response = self._generate_response(system=system, prompt=prompt, **opts)
+        return strip_think_block(response["response"])
 
     def embed(self, text: str) -> list[float]:
         try:

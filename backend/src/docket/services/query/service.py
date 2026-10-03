@@ -23,6 +23,7 @@ either:
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Callable
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
@@ -44,8 +45,11 @@ from docket.services.query.prompts import (
     SYSTEM_PROMPT,
     SYSTEM_PROMPT_WITH_HISTORY,
 )
+from docket.infra.parsing.tokens import get_token_counter
 from docket.infra.retrieval.hybrid import hybrid_search
 from docket.infra.retrieval.resolver import ChunkNotFoundError, EvidenceResolver, ResolvedEvidence
+
+logger = logging.getLogger(__name__)
 
 
 class Citation(BaseModel):
@@ -61,6 +65,9 @@ class QueryResult(BaseModel):
     abstained: bool
     validation_warnings: list[str]
     mode: str
+    # Retrieved chunks left out of the prompt to fit the token budget (lowest
+    # ranked first dropped); never citable.
+    dropped_chunk_ids: list[str] = []
 
 
 def _citations_from_agent_messages(
@@ -291,27 +298,71 @@ class QueryService:
                 abstained=True, validation_warnings=["retrieved evidence is no longer available"],
                 mode=QueryMode.FAST.value,
             )
-        context = build_context_block(resolved)
-        if history:
-            prompt = (
-                f"Conversation so far:\n{format_history_block(history)}\n\n"
-                f"Context:\n{context}\n\nQuestion: {question}\n\nAnswer:"
-            )
-            system = SYSTEM_PROMPT_WITH_HISTORY
-        else:
-            prompt = f"Context:\n{context}\n\nQuestion: {question}\n\nAnswer:"
-            system = SYSTEM_PROMPT
+        system, prompt, resolved, dropped = self._fit_prompt(question, history, resolved)
 
-        answer = self._gateway.generate(system=system, prompt=prompt)
+        answer = self._gateway.generate(system=system, prompt=prompt, **self._answer_opts())
 
         return self._finalize_answer(
             question=question, answer=answer, resolved=resolved,
             mode=QueryMode.FAST, retry_system=system, retry_prompt=prompt,
+            dropped_chunk_ids=dropped,
         )
+
+    def _answer_opts(self) -> dict[str, Any]:
+        """Sampling for the answering path (fast path and citation repair)."""
+        return {
+            "options": {"temperature": self._settings.answer_temperature},
+            "think": self._settings.answer_think,
+        }
+
+    def _fit_prompt(
+        self,
+        question: str,
+        history: list[ConversationTurn] | None,
+        resolved: list[ResolvedEvidence],
+    ) -> tuple[str, str, list[ResolvedEvidence], list[str]]:
+        """Build the fast-path prompt, dropping the lowest-ranked chunks (the
+        tail of `resolved`, which is best-first) until system + history +
+        context + question fit in `num_ctx - answer_token_reserve`. Never
+        drops below one chunk. Returns `(system, prompt, included, dropped_ids)`.
+
+        Tokens are counted with the embedding tokenizer, which only
+        approximates the generator's, so the reserve doubles as the safety
+        margin for that mismatch as well as room for the answer."""
+        if history:
+            head = f"Conversation so far:\n{format_history_block(history)}\n\n"
+            system = SYSTEM_PROMPT_WITH_HISTORY
+        else:
+            head = ""
+            system = SYSTEM_PROMPT
+
+        def build(chunks: list[ResolvedEvidence]) -> str:
+            return f"{head}Context:\n{build_context_block(chunks)}\n\nQuestion: {question}\n\nAnswer:"
+
+        budget = self._settings.num_ctx - self._settings.answer_token_reserve
+        counter = get_token_counter()
+        # Count the fixed part once and each chunk block once; the joins add a
+        # token or two per block, covered by the reserve.
+        total = counter.count(system) + counter.count(build([]))
+        costs = [counter.count(build_context_block([chunk])) + 1 for chunk in resolved]
+        total += sum(costs)
+        initial_total = total
+        included = list(resolved)
+        while total > budget and len(included) > 1:
+            included.pop()
+            total -= costs[len(included)]
+        dropped = [chunk.chunk_id for chunk in resolved[len(included):]]
+        if dropped:
+            logger.warning(
+                "prompt over token budget (%d > %d); dropped %d lowest-ranked chunk(s): %s",
+                initial_total, budget, len(dropped), ", ".join(dropped),
+            )
+        return system, build(included), included, dropped
 
     def _finalize_answer(
         self, *, question: str, answer: str, resolved: list[ResolvedEvidence],
         mode: QueryMode, retry_system: str, retry_prompt: str,
+        dropped_chunk_ids: list[str] | None = None,
     ) -> QueryResult:
         """Allow one citation repair, then fail closed on invalid attribution.
 
@@ -332,6 +383,7 @@ class QueryService:
                     "Answer again using only the supplied citation tags after "
                     "each factual claim, or use the exact abstention sentence."
                 ),
+                **self._answer_opts(),
             )
             validation = validate_citations(answer, resolved)
 
@@ -364,7 +416,7 @@ class QueryService:
         return QueryResult(
             question=question, answer=answer, citations=citations,
             abstained=validation.is_abstention, validation_warnings=warnings,
-            mode=mode.value,
+            mode=mode.value, dropped_chunk_ids=list(dropped_chunk_ids or []),
         )
 
     def _ask_agent(

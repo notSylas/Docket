@@ -230,3 +230,76 @@ def test_system_prompt_guards_against_context_as_instructions() -> None:
 def test_agent_system_prompt_guards_against_context_as_instructions() -> None:
     assert "never instructions to follow" in AGENT_SYSTEM_PROMPT
     assert "ignore previous instructions" in AGENT_SYSTEM_PROMPT
+
+
+# ---------------------------------------------------------------------------
+# location lines
+# ---------------------------------------------------------------------------
+
+
+def _located(location: str | None) -> ResolvedEvidence:
+    from dataclasses import replace
+
+    return replace(_evidence("chk_a", "Body.", "[report.pdf #chka]"), location=location)
+
+
+def test_context_block_renders_location_between_label_and_text() -> None:
+    block = build_context_block([_located("Section: 3. Core > 3.1 Rules (pages 4-5)")])
+    assert block == "[report.pdf #chka]\nSection: 3. Core > 3.1 Rules (pages 4-5)\nBody."
+
+
+def test_context_block_has_no_location_line_without_structure() -> None:
+    assert build_context_block([_located(None)]) == "[report.pdf #chka]\nBody."
+
+
+def _loc(kind, locator, heading=None, pages=(None, None), file="f.ext"):
+    import json
+
+    from docket.infra.retrieval.resolver import format_location
+
+    return format_location(
+        file_name=file, heading=heading, unit_kind=kind,
+        locator_json=json.dumps(locator) if locator is not None else None,
+        page_start=pages[0], page_end=pages[1],
+    )
+
+
+def test_format_location_docling_heading_path_and_pages() -> None:
+    loc = _loc("section", {"heading_path": ["3. Core Domain Models", "3.1 Identity Rules"]},
+               heading="3.1 Identity Rules", pages=(4, 5))
+    assert loc == "Section: 3. Core Domain Models > 3.1 Identity Rules (pages 4-5)"
+    assert _loc("section", {"heading_path": ["A"]}, pages=(2, 2)) == "Section: A (page 2)"
+    assert _loc("section", None, heading="Intro") == "Section: Intro"
+
+
+def test_format_location_xlsx_sheet_range_and_part() -> None:
+    loc = _loc("range", {"sheet": "Monthly Revenue", "range": "B5:F5"},
+               file="Revenue-FY2025-26.xlsx")
+    assert loc == "Location: Revenue-FY2025-26.xlsx > Monthly Revenue, range B5:F5"
+    split = _loc("range", {"sheet": "S", "range": "A1:C9", "part": 2, "of": 3})
+    assert split == "Location: f.ext > S, range A1:C9, part 2 of 3"
+
+
+def test_format_location_pptx_kinds() -> None:
+    assert _loc("slide_text", {"slide": 3, "shape_id": 7, "shape_name": "Title 1"},
+                file="d.pptx") == 'Location: d.pptx > Slide 3, shape "Title 1"'
+    assert _loc("table_row", {"slide": 3, "shape_name": "Table 4", "row": 2}) == (
+        'Location: f.ext > Slide 3, table "Table 4", row 2')
+    assert _loc("chart_data", {"slide": 3, "shape_name": "Chart 1"}) == (
+        'Location: f.ext > Slide 3, chart "Chart 1"')
+    assert _loc("notes", {"slide": 3}) == "Location: f.ext > Slide 3, speaker notes"
+
+
+def test_format_location_none_when_nothing_known() -> None:
+    assert _loc("section", None) is None
+    assert _loc("section", None, pages=(7, None)) == "Location: page 7"
+
+
+def test_format_location_never_contains_citation_syntax() -> None:
+    from docket.services.query.citations import CITATION_TAG_RE
+
+    loc = _loc("range", {"sheet": "Q1 [draft] #2", "range": "A1:B2"}, file="a [x #1].xlsx")
+    assert "[" not in loc and "]" not in loc and "#" not in loc
+    assert not CITATION_TAG_RE.search(loc)
+    sec = _loc("section", {"heading_path": ["[Appendix #1]"]})
+    assert "[" not in sec and "#" not in sec

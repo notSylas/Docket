@@ -24,7 +24,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-import ollama as _ollama
 from sqlalchemy import select
 
 from docket.interfaces.cli.context import AppContext
@@ -46,7 +45,7 @@ from docket.infra.inference.gateway import (
     InferenceError,
     InferenceGateway,
     OllamaGateway,
-    _translate_error,
+    strip_think_block,
 )
 from docket.services.query.classifier import QueryMode
 from docket.services.query.conversation import ConversationTurn
@@ -68,27 +67,14 @@ class OllamaMetaGateway(OllamaGateway):
     last_generate_meta: dict[str, Any] | None = None
 
     def generate(self, *, system: str, prompt: str, **opts) -> str:
-        # Reuses the base class's num_ctx/num_predict-default merging (see
-        # OllamaGateway.generate) rather than calling _ollama.generate
-        # directly, so eval runs measure the same options production calls
-        # get -- otherwise M1's context-window fix would silently not apply
-        # to eval harness runs.
-        opts = dict(opts)
-        options = dict(opts.get("options") or {})
-        options.setdefault("num_ctx", settings.num_ctx)
-        options.setdefault("num_predict", settings.num_predict)
-        opts["options"] = options
-        try:
-            response = _ollama.generate(
-                model=self.gen_model, system=system, prompt=prompt, **opts
-            )
-        except Exception as exc:
-            raise _translate_error(exc, self.gen_model) from exc
+        # Goes through the base class's request path (default options,
+        # think fallback) so eval runs measure what production calls get.
+        response = self._generate_response(system=system, prompt=prompt, **opts)
         self.last_generate_meta = {
             "prompt_eval_count": response.get("prompt_eval_count"),
             "eval_count": response.get("eval_count"),
         }
-        return response["response"]
+        return strip_think_block(response["response"])
 
 
 @dataclass
@@ -362,6 +348,8 @@ class EvalRunner:
                 "embed_model": self._context.settings.embed_model,
                 "num_ctx": self._context.settings.num_ctx,
                 "num_predict": self._context.settings.num_predict,
+                "answer_temperature": self._context.settings.answer_temperature,
+                "answer_think": self._context.settings.answer_think,
                 "top_k": self._top_k,
                 "requested_mode": self._mode.value if self._mode else "auto",
             },
@@ -381,6 +369,7 @@ class EvalRunner:
         record.abstained = result.abstained
         record.mode = result.mode
         record.validation_warnings = list(result.validation_warnings)
+        record.dropped_chunk_ids = list(result.dropped_chunk_ids)
         record.citations = [RecordedCitation(**c.model_dump()) for c in result.citations]
         unique = {c.chunk_id: c for c in self._resolver.resolved}  # first-seen order, deduped
         record.retrieved = _to_record_chunks(list(unique.values()))

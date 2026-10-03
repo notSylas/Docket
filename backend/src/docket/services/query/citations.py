@@ -27,12 +27,21 @@ def build_context_block(resolved_chunks: list[ResolvedEvidence]) -> str:
         [report.pdf #a1b2c3d4e5f6]
         This is the chunk's text.
 
+    When the chunk has a location (`ResolvedEvidence.location`, e.g.
+    ``Section: 3. Core > 3.1 Rules (pages 4-5)``), that line sits between the
+    label and the text. It is metadata, never evidence to quote or cite.
+
     Chunks are separated by a blank line, so it's unambiguous to the model
     (and to a human reading the prompt) which label pairs with which text
     block. Same shape as the spike's `context_blocks` construction in
     `spike/query.py`, just built from `ResolvedEvidence` instead of raw DB rows.
     """
-    blocks = [f"{chunk.citation_label}\n{chunk.text}" for chunk in resolved_chunks]
+    blocks = [
+        f"{chunk.citation_label}\n{chunk.location}\n{chunk.text}"
+        if chunk.location
+        else f"{chunk.citation_label}\n{chunk.text}"
+        for chunk in resolved_chunks
+    ]
     return "\n\n".join(blocks)
 
 

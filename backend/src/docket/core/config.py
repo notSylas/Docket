@@ -44,6 +44,24 @@ class Settings(BaseSettings):
     num_ctx: int = 8192
     num_predict: int = 4096
 
+    # Sampling on the answering path (`QueryService` fast path and citation
+    # repair), set explicitly so it does not depend on a model's Modelfile.
+    # Both defaults were chosen by measurement on the public gold set (qwen3:14b):
+    # - Thinking stays ON. Turning it off made a correct, retrieved answer
+    #   (RETRY_WAIT transitions) fail 3/3 and a gate-name answer terse and
+    #   imprecise, at 0.3-3 s per answer against 8-18 s with thinking. Set
+    #   `DOCKET_ANSWER_THINK=false` to trade that accuracy for latency.
+    # - Temperature is 0.6, Qwen3's recommended value for thinking mode.
+    #   Greedy decoding (0) is discouraged for it and measured worse here
+    #   (strict 29/33 vs 31/33, 2 judged failures vs 0).
+    # Thinking tokens count against `num_predict`, so keep it generous. Passed
+    # per call; other `generate` callers are unaffected.
+    answer_temperature: float = 0.6
+    answer_think: bool = True
+    # Tokens kept free for the answer when fitting the prompt into `num_ctx`
+    # (`QueryService` drops lowest-ranked chunks past `num_ctx - reserve`).
+    answer_token_reserve: int = 1024
+
     # Texts per embedding request (`docket.infra.inference.gateway.embed_texts`).
     embed_batch_size: int = 32
 

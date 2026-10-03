@@ -20,7 +20,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
-from docket.core.db.models import Chunk, EvidenceVersion, Source, SourceStatus, VersionStatus
+from docket.core.db.models import Chunk, EvidenceUnit, EvidenceVersion, Source, SourceStatus, VersionStatus
 
 
 @dataclass(frozen=True)
@@ -33,6 +33,10 @@ class ResolvedEvidence:
     citation_label: str  # centralized, correctly-formatted citation tag
     source_id: str = ""
     formula_regions: list[dict] = field(default_factory=list)  # document-level coordinates
+    # One-line, human-readable position derived from stored structure (see
+    # `format_location`); `None` when the chunk has none. Shown in the context
+    # block and never part of `text`.
+    location: str | None = None
 
 
 class ChunkNotFoundError(Exception):
@@ -59,6 +63,74 @@ def _citation_label(source_display_name: str, chunk_id: str) -> str:
       codebase should construct a citation string by hand.
     """
     return f"[{source_display_name} #{chunk_id[:12]}]"
+
+
+def _clean(value: object) -> str:
+    """One line, with no characters that could form a citation tag."""
+    return " ".join(str(value).replace("[", "(").replace("]", ")").replace("#", "").split())
+
+
+def format_location(
+    *,
+    file_name: str,
+    heading: str | None,
+    unit_kind: str | None,
+    locator_json: str | None,
+    page_start: int | None = None,
+    page_end: int | None = None,
+) -> str | None:
+    """Location line for a chunk, from the unit's stored locator (not the
+    chunk text): ``Section: A > B (pages 4-5)`` for Docling sections,
+    ``Location: file.xlsx > Sheet, range B5:F5`` for XLSX,
+    ``Location: deck.pptx > Slide 3, table "T", row 2`` for PPTX. `None` when
+    nothing is known. Never contains ``[``, ``]`` or ``#``."""
+    try:
+        locator = json.loads(locator_json) if locator_json else {}
+    except ValueError:
+        locator = {}
+    if not isinstance(locator, dict):
+        locator = {}
+
+    pages = ""
+    if page_start is not None:
+        if page_end is None or page_end == page_start:
+            pages = f"page {page_start}"
+        else:
+            pages = f"pages {page_start}-{page_end}"
+
+    part = ""
+    if "part" in locator and "of" in locator:
+        part = f", part {locator['part']} of {locator['of']}"
+
+    if "sheet" in locator:
+        text = f"Location: {_clean(file_name)} > {_clean(locator['sheet'])}"
+        if locator.get("range"):
+            text += f", range {_clean(locator['range'])}"
+        return text + part
+    if "slide" in locator:
+        text = f"Location: {_clean(file_name)} > Slide {_clean(locator['slide'])}"
+        name = locator.get("shape_name")
+        if unit_kind == "notes":
+            text += ", speaker notes"
+        elif unit_kind == "table_row":
+            text += f", table \"{_clean(name)}\"" if name else ", table"
+            if "row" in locator:
+                text += f", row {_clean(locator['row'])}"
+        elif unit_kind == "chart_data":
+            text += f", chart \"{_clean(name)}\"" if name else ", chart"
+        elif name:
+            text += f", shape \"{_clean(name)}\""
+        return text + part
+
+    path = locator.get("heading_path")
+    segments = [_clean(h) for h in path if isinstance(h, str)] if isinstance(path, list) else []
+    if not segments and heading:
+        segments = [_clean(heading)]
+    segments = [s for s in segments if s]
+    if segments:
+        text = "Section: " + " > ".join(segments)
+        return f"{text} ({pages})" if pages else text
+    return f"Location: {pages}" if pages else None
 
 
 class EvidenceResolver:
@@ -92,21 +164,22 @@ class EvidenceResolver:
 
         with self._session_factory() as session:
             rows = session.execute(
-                select(Chunk, Source, EvidenceVersion)
+                select(Chunk, Source, EvidenceVersion, EvidenceUnit)
                 .join(Source, Chunk.source_id == Source.id)
                 .join(EvidenceVersion, Chunk.evidence_version_id == EvidenceVersion.id)
+                .join(EvidenceUnit, Chunk.evidence_unit_id == EvidenceUnit.id)
                 .where(Chunk.id.in_(chunk_ids))
                 .where(Source.status == SourceStatus.ACTIVE)
                 .where(EvidenceVersion.status == VersionStatus.READY)
             ).all()
 
-        by_id = {chunk.id: (chunk, source, ev) for chunk, source, ev in rows}
+        by_id = {chunk.id: (chunk, source, ev, unit) for chunk, source, ev, unit in rows}
 
         resolved: list[ResolvedEvidence] = []
         for chunk_id in chunk_ids:
             if chunk_id not in by_id:
                 raise ChunkNotFoundError(chunk_id)
-            chunk, source, evidence_version = by_id[chunk_id]
+            chunk, source, evidence_version, unit = by_id[chunk_id]
             # Prefer the chunk's own file (CP8's multi-file "local_folder"
             # sources put several files under one Source row, each tracked
             # via EvidenceVersion.file_path -- see migration
@@ -125,6 +198,14 @@ class EvidenceResolver:
                     citation_label=_citation_label(source_display_name, chunk.id),
                     source_id=source.id,
                     formula_regions=json.loads(evidence_version.formula_regions_json or "[]"),
+                    location=format_location(
+                        file_name=source_display_name,
+                        heading=chunk.heading,
+                        unit_kind=unit.unit_kind,
+                        locator_json=unit.locator_json,
+                        page_start=chunk.page_start,
+                        page_end=chunk.page_end,
+                    ),
                 )
             )
         return resolved
