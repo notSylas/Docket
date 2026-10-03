@@ -1,11 +1,5 @@
 # Sources and Lifecycle
 
-The file still contains only its title. **I can’t save changes while Plan mode is active**, but this is the proposed document content, including the diagrams.
-
----
-
-# Sources and Lifecycle
-
 Status: Requirements agreed; implementation approach pending validation.
 
 This document records the source-lifecycle decisions for Docket. It distinguishes accepted product behavior from technical choices that still require research and testing.
