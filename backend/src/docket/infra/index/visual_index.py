@@ -66,6 +66,14 @@ class LancePageIndexWriter:
         `None` if it hasn't been created yet)."""
         return self._open_table()
 
+    def vector_dimension(self) -> int | None:
+        """Dimension of the stored vectors, or `None` if the table doesn't
+        exist yet."""
+        table = self._open_table()
+        if table is None:
+            return None
+        return table.schema.field(_VECTOR_COLUMN).type.list_size
+
     def upsert(
         self, records: Sequence[PageRecord], embeddings: Sequence[list[float]] | None
     ) -> None:

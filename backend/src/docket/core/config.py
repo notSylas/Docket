@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     num_ctx: int = 8192
     num_predict: int = 4096
 
+    # Texts per embedding request (`docket.infra.inference.gateway.embed_texts`).
+    embed_batch_size: int = 32
+
     chunk_size_words: int = 200
     chunk_overlap_words: int = 40
 
@@ -95,6 +98,11 @@ class Settings(BaseSettings):
     @property
     def lancedb_path(self) -> Path:
         return self.data_dir / "lancedb"
+
+    @property
+    def index_manifest_path(self) -> Path:
+        # Next to (not inside) the LanceDB directory, so LanceDB never sees it.
+        return self.data_dir / "index_manifest.json"
 
     @property
     def evidence_store_path(self) -> Path:

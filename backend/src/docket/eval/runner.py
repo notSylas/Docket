@@ -124,6 +124,9 @@ class RecordingGateway:
     def embed(self, text: str) -> list[float]:
         return self.inner.embed(text)
 
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        return self.inner.embed_batch(texts)
+
 
 class RecordingResolver:
     """Delegates to a real `EvidenceResolver`, recording resolved chunks."""

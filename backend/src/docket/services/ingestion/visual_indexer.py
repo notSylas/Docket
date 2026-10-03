@@ -16,8 +16,9 @@ from docket.core.config import Settings
 from docket.core.db.models import EvidenceVersion
 from docket.infra.evidence.references import add_blob_reference
 from docket.infra.evidence.store import ContentAddressedStore
+from docket.infra.index.manifest import IndexManifestGuard
 from docket.infra.index.visual_index import LancePageIndexWriter, PageRecord
-from docket.infra.inference.gateway import InferenceGateway
+from docket.infra.inference.gateway import InferenceGateway, embed_texts
 from docket.prompts.vision import PAGE_DESCRIPTION_PROMPT
 
 
@@ -30,12 +31,14 @@ class VisualIndexer:
         gateway: InferenceGateway | None,
         visual_index_writer: LancePageIndexWriter | None,
         settings: Settings,
+        manifest_guard: IndexManifestGuard | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._store = store
         self._gateway = gateway
         self._visual_index_writer = visual_index_writer
         self._settings = settings
+        self._manifest_guard = manifest_guard
 
     def save_page_images(self, version_id: str, page_images: dict[int, bytes]) -> dict[int, str]:
         """Store each page's PNG bytes in the same `ContentAddressedStore`
@@ -90,14 +93,12 @@ class VisualIndexer:
             )
 
         records: list[PageRecord] = []
-        embeddings: list[list[float]] = []
         for page_no, image_bytes in page_images.items():
             description = self._gateway.describe_image(
                 image_bytes,
                 prompt=PAGE_DESCRIPTION_PROMPT,
                 model=self._settings.vision_model,
             )
-            embeddings.append(self._gateway.embed(description))
             records.append(
                 PageRecord(
                     evidence_version_id=evidence_version_id,
@@ -106,4 +107,11 @@ class VisualIndexer:
                     description=description,
                 )
             )
+        embeddings = embed_texts(
+            self._gateway,
+            [r.description for r in records],
+            batch_size=self._settings.embed_batch_size,
+        )
+        if self._manifest_guard is not None:
+            self._manifest_guard.check_write(len(embeddings[0]))
         self._visual_index_writer.upsert(records, embeddings)

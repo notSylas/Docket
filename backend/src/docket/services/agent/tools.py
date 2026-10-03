@@ -33,7 +33,12 @@ from docket.infra.retrieval.resolver import ChunkNotFoundError, EvidenceResolver
 
 
 def make_search_knowledge_tool(
-    *, engine: Any, table: Any, gateway: InferenceGateway, top_k: int = settings.default_top_k
+    *,
+    engine: Any,
+    table: Any,
+    gateway: InferenceGateway,
+    top_k: int = settings.default_top_k,
+    manifest_guard: Any | None = None,
 ) -> BaseTool:
     """Build a `search_knowledge` tool bound to a specific engine/table/gateway.
 
@@ -48,7 +53,14 @@ def make_search_knowledge_tool(
     @tool(description=SEARCH_KNOWLEDGE_DESCRIPTION)
     def search_knowledge(query: str) -> str:
         """Model-facing description lives in `docket.prompts.agent.SEARCH_KNOWLEDGE_DESCRIPTION`."""
-        ranked = hybrid_search(engine=engine, table=table, gateway=gateway, query=query, top_k=top_k)
+        ranked = hybrid_search(
+            engine=engine,
+            table=table,
+            gateway=gateway,
+            query=query,
+            top_k=top_k,
+            manifest_guard=manifest_guard,
+        )
         return json.dumps({"results": [{"chunk_id": rc.chunk_id, "score": rc.score} for rc in ranked]})
 
     return search_knowledge

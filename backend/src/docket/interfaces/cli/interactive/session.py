@@ -51,6 +51,7 @@ def _default_factory(context: Any, table: Any) -> QueryService:
         resolver=context.resolver,
         settings=context.settings,
         page_table=page_table,
+        manifest_guard=context.index_manifest_guard,
     )
 
 

@@ -137,6 +137,7 @@ from docket.infra.index.visual_index import LancePageIndexWriter
 from docket.infra.inference.gateway import InferenceGateway
 from docket.services.ingestion.chunk_writer import ChunkWriter
 from docket.services.ingestion.formula_transcriber import FormulaTranscriber
+from docket.infra.index.manifest import IndexManifestGuard
 from docket.services.ingestion.visual_indexer import VisualIndexer
 from docket.infra.parsing.chunker import chunk_document
 from docket.infra.parsing.docling_wrapper import DoclingParser
@@ -285,6 +286,7 @@ class IngestionPipeline:
         xlsx_parser: XlsxParser | None = None,
         pptx_parser: PptxParser | None = None,
         source_manager: SourceManager | None = None,
+        manifest_guard: IndexManifestGuard | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._evidence_manager = evidence_manager
@@ -343,6 +345,7 @@ class IngestionPipeline:
                 gateway=gateway,
                 visual_index_writer=visual_index_writer,
                 settings=self._settings,
+                manifest_guard=manifest_guard,
             )
         )
         # Cheap to default-construct (just wraps session_factory), same

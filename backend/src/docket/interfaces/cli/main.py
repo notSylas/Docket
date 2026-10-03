@@ -10,6 +10,9 @@ import typer.core
 import typer.main
 
 from docket import __version__
+from docket.infra.index.manifest import IndexManifestMismatchError
+from docket.infra.index.reindex import reindex as run_reindex
+from docket.infra.inference.gateway import InferenceError
 from docket.interfaces.cli.context import build_context
 from docket.interfaces.cli.interactive import run_session
 from docket.core.db.models import SourceStatus
@@ -195,6 +198,41 @@ def ingest(
     raise typer.Exit(code=exit_code)
 
 
+# -- reindex -------------------------------------------------------------
+
+
+@app.command("reindex")
+def reindex() -> None:
+    """Rebuild the search indexes from stored chunks under the current embedding model.
+
+    Re-embeds every chunk (and, if present, every visual page description)
+    into scratch tables first, then swaps them in and writes the index
+    manifest last. The existing index stays intact if anything fails.
+    """
+    context = build_context()
+    settings = context.settings
+    typer.echo(
+        f"Reindexing with embedding model {settings.embed_model!r} "
+        "(the existing index is kept until the new one is fully built)..."
+    )
+    try:
+        result = run_reindex(
+            engine=context.engine,
+            db_path=settings.lancedb_path,
+            gateway=context.gateway,
+            manifest_path=settings.index_manifest_path,
+            embed_model=settings.embed_model,
+            batch_size=settings.embed_batch_size,
+        )
+    except (InferenceError, ValueError) as exc:
+        typer.echo(f"Error: reindex failed, the existing index is unchanged: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(
+        f"Reindexed chunks={result.chunks} pages={result.pages} "
+        f"model={result.embed_model} dimension={result.embed_dimension}"
+    )
+
+
 # -- query -----------------------------------------------------------------
 
 
@@ -219,8 +257,13 @@ def query(question: str = typer.Argument(..., help="Question to ask over ingeste
         resolver=context.resolver,
         settings=context.settings,
         page_table=page_table,
+        manifest_guard=context.index_manifest_guard,
     )
-    result = query_service.ask(question)
+    try:
+        result = query_service.ask(question)
+    except IndexManifestMismatchError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
 
     typer.echo(f"[{result.mode}] {result.answer}")
     if result.citations:

@@ -13,11 +13,13 @@ alongside, keyed by version.
 
 from __future__ import annotations
 
-from typing import Sequence
+import time
+from typing import Callable, Sequence
 
 from docket.infra.index.base import ChunkRecord, IndexWriteStats, IndexWriter
+from docket.infra.index.manifest import IndexManifestGuard
 from docket.infra.index.visual_index import LancePageIndexWriter
-from docket.infra.inference.gateway import InferenceGateway
+from docket.infra.inference.gateway import InferenceGateway, embed_texts
 
 
 class IndexManager:
@@ -27,11 +29,18 @@ class IndexManager:
         vector_writer: IndexWriter,
         gateway: InferenceGateway,
         page_writer: LancePageIndexWriter | None = None,
+        manifest_guard: IndexManifestGuard | None = None,
+        embed_batch_size: int | None = None,
+        sleep: Callable[[float], None] = time.sleep,
     ):
         self._fts = fts_writer
         self._vector = vector_writer
         self._gateway = gateway
         self._pages = page_writer
+        # `None` skips the embedding-space check (see `index.manifest`).
+        self._manifest_guard = manifest_guard
+        self._embed_batch_size = embed_batch_size
+        self._sleep = sleep
 
     def upsert_chunks(self, records: Sequence[ChunkRecord]) -> IndexWriteStats:
         """Upsert `records` into both indexes, embedding only what's missing
@@ -53,7 +62,15 @@ class IndexManager:
         if not to_write:
             return IndexWriteStats(upserted=0, skipped_unchanged=skipped, deleted=0)
 
-        embeddings = [self._gateway.embed(r.text) for r in to_write]
+        embeddings = embed_texts(
+            self._gateway,
+            [r.text for r in to_write],
+            batch_size=self._embed_batch_size,
+            sleep=self._sleep,
+        )
+        # After embedding (the dimension is only known now), before any write.
+        if self._manifest_guard is not None:
+            self._manifest_guard.check_write(len(embeddings[0]))
 
         self._fts.upsert(to_write, embeddings)
         self._vector.upsert(to_write, embeddings)

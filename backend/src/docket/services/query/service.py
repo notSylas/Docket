@@ -145,6 +145,7 @@ class QueryService:
         agent: Any | None = None,
         trace_callback: Callable[[dict[str, Any]], None] | None = None,
         page_table: Any | None = None,
+        manifest_guard: Any | None = None,
     ):
         """
         `classifier` defaults to `HeuristicQueryClassifier()` -- zero-cost,
@@ -200,6 +201,9 @@ class QueryService:
         self._agent = agent
         self._trace_callback = trace_callback
         self._page_table = page_table
+        # Refuses queries when the index manifest names a different embedding
+        # model (see `docket.infra.index.manifest`); `None` skips the check.
+        self._manifest_guard = manifest_guard
 
     def _get_agent(self) -> Any:
         if self._agent is None:
@@ -211,6 +215,7 @@ class QueryService:
                 settings=self._settings,
                 trace_callback=self._trace_callback,
                 top_k=self._top_k,
+                manifest_guard=self._manifest_guard,
             )
         return self._agent
 
@@ -261,6 +266,7 @@ class QueryService:
             query=question,
             top_k=self._top_k,
             page_table=self._page_table,
+            manifest_guard=self._manifest_guard,
         )
 
         if not ranked_chunks:

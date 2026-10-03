@@ -40,6 +40,7 @@ from docket.infra.evidence.manager import EvidenceManager
 from docket.infra.evidence.store import ContentAddressedStore
 from docket.infra.index.fts_index import FtsIndexWriter
 from docket.infra.index.manager import IndexManager
+from docket.infra.index.manifest import IndexManifestGuard
 from docket.infra.index.vector_index import LanceIndexWriter
 from docket.infra.index.visual_index import LancePageIndexWriter
 from docket.infra.inference.gateway import OllamaGateway
@@ -221,9 +222,25 @@ class AppContext:
         return self.visual_index_writer.table
 
     @cached_property
+    def index_manifest_guard(self) -> IndexManifestGuard:
+        return IndexManifestGuard(
+            self.settings.index_manifest_path,
+            self.settings.embed_model,
+            lambda: [
+                self.vector_writer.vector_dimension(),
+                self.visual_index_writer.vector_dimension(),
+            ],
+        )
+
+    @cached_property
     def index_manager(self) -> IndexManager:
         return IndexManager(
-            self.fts_writer, self.vector_writer, self.gateway, self.visual_index_writer
+            self.fts_writer,
+            self.vector_writer,
+            self.gateway,
+            self.visual_index_writer,
+            manifest_guard=self.index_manifest_guard,
+            embed_batch_size=self.settings.embed_batch_size,
         )
 
     @cached_property
@@ -256,6 +273,7 @@ class AppContext:
             visual_index_writer=self.visual_index_writer,
             settings=self.settings,
             source_manager=self.source_manager,
+            manifest_guard=self.index_manifest_guard,
         )
 
     @cached_property

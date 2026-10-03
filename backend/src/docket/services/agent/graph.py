@@ -219,13 +219,16 @@ def build_investigation_agent(
     settings: Settings = default_settings,
     trace_callback: Callable[[dict[str, Any]], None] | None = None,
     top_k: int = default_settings.default_top_k,
+    manifest_guard: Any | None = None,
 ):
     """Real-use convenience wrapper: builds the real `search_knowledge`/
     `read_evidence` tools bound to `engine`/`table`/`gateway`/`resolver`,
     then compiles a bounded agent graph over them via `build_agent()`,
     using `settings.gen_model`/`max_agent_iterations`/`max_agent_tool_calls`.
     """
-    search_knowledge = make_search_knowledge_tool(engine=engine, table=table, gateway=gateway, top_k=top_k)
+    search_knowledge = make_search_knowledge_tool(
+        engine=engine, table=table, gateway=gateway, top_k=top_k, manifest_guard=manifest_guard
+    )
     read_evidence = make_read_evidence_tool(resolver=resolver)
     allowed_tools = {"search_knowledge": search_knowledge, "read_evidence": read_evidence}
 

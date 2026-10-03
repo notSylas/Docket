@@ -33,6 +33,7 @@ from sqlalchemy import Engine, bindparam, text
 
 from docket.core.config import settings
 from docket.core.db.models import SourceStatus, VersionStatus
+from docket.infra.index.manifest import IndexManifestGuard
 from docket.infra.index.vector_index import _sql_in_list
 from docket.infra.inference.gateway import InferenceGateway
 
@@ -255,7 +256,12 @@ def _search_eligible(table: Any, engine: Engine, query_vector: list[float], top_
 
 
 def vector_search(
-    table: Any, engine: Engine, gateway: InferenceGateway, query: str, top_k: int
+    table: Any,
+    engine: Engine,
+    gateway: InferenceGateway,
+    query: str,
+    top_k: int,
+    manifest_guard: IndexManifestGuard | None = None,
 ) -> list[str]:
     """Embed `query` via `gateway` and run a nearest-neighbor search against
     `table` (a LanceDB `chunks` table), returning chunk_ids ranked by vector
@@ -264,8 +270,13 @@ def vector_search(
     The search is pre-filtered in LanceDB on `evidence_version_id` (see
     `_search_eligible`), so stale/non-READY/revoked rows can't crowd valid ones
     out of the `top_k`. `_filter_active_and_current` still runs afterwards as
-    defense in depth (e.g. a chunk row whose own state diverged)."""
+    defense in depth (e.g. a chunk row whose own state diverged).
+
+    With a `manifest_guard`, raises `IndexManifestMismatchError` when the
+    index manifest disagrees with the configured embedding model."""
     query_vector = gateway.embed(query)
+    if manifest_guard is not None:
+        manifest_guard.check_query(len(query_vector))
     results = _search_eligible(table, engine, query_vector, top_k)
     chunk_ids = [row["chunk_id"] for row in results]
     return _filter_active_and_current(engine, chunk_ids)
@@ -329,7 +340,12 @@ _CHUNKS_FOR_PAGE_SQL = text(
 
 
 def visual_search(
-    page_table: Any, engine: Engine, gateway: InferenceGateway, query: str, top_k: int
+    page_table: Any,
+    engine: Engine,
+    gateway: InferenceGateway,
+    query: str,
+    top_k: int,
+    manifest_guard: IndexManifestGuard | None = None,
 ) -> list[str]:
     """Embed `query` via `gateway` and run a nearest-neighbor search against
     `page_table` (a LanceDB `pages` table -- see `docket.infra.index.visual_index`),
@@ -362,6 +378,8 @@ def visual_search(
         return []
 
     query_vector = gateway.embed(query)
+    if manifest_guard is not None:
+        manifest_guard.check_query(len(query_vector))
     results = _search_eligible(page_table, engine, query_vector, top_k)
     pairs = [(row["evidence_version_id"], row["page_no"]) for row in results]
     if not pairs:
@@ -401,6 +419,7 @@ def hybrid_search(
     query: str,
     top_k: int = settings.default_top_k,
     page_table: Any | None = None,
+    manifest_guard: IndexManifestGuard | None = None,
 ) -> list[RankedChunk]:
     """Run lexical and semantic search (each requesting `top_k` results) and
     fuse them via Reciprocal Rank Fusion, returning the top `top_k` fused
@@ -420,10 +439,10 @@ def hybrid_search(
     ranked list, so a chunk_id that only the visual retriever surfaced can
     still win a spot in the final result."""
     fts_ranked = fts_search(engine, query, top_k)
-    vector_ranked = vector_search(table, engine, gateway, query, top_k)
+    vector_ranked = vector_search(table, engine, gateway, query, top_k, manifest_guard)
     ranked_lists = [fts_ranked, vector_ranked]
     if page_table is not None:
-        visual_ranked = visual_search(page_table, engine, gateway, query, top_k)
+        visual_ranked = visual_search(page_table, engine, gateway, query, top_k, manifest_guard)
         ranked_lists.append(visual_ranked)
     fused = reciprocal_rank_fusion(ranked_lists)
     return fused[:top_k]

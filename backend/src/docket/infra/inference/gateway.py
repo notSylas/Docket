@@ -10,7 +10,8 @@ on how/where generation and embedding actually happen, and lets tests swap in
 from __future__ import annotations
 
 import hashlib
-from typing import Protocol, runtime_checkable
+import time
+from typing import Callable, Protocol, Sequence, runtime_checkable
 
 import ollama as _ollama
 
@@ -53,6 +54,11 @@ class InferenceGateway(Protocol):
         """Returns the embedding vector for a single piece of text."""
         ...
 
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        """Returns one embedding vector per text, in the same order. Must
+        return exactly `len(texts)` vectors."""
+        ...
+
     def describe_image(self, image_bytes: bytes, *, prompt: str, model: str, **opts) -> str:
         """Returns a short text description of an image, produced by a
         vision-language model.
@@ -62,6 +68,46 @@ class InferenceGateway(Protocol):
         be shown to a user or flow into `validate_citations`/
         `EvidenceResolver`."""
         ...
+
+
+def embed_texts(
+    gateway: InferenceGateway,
+    texts: Sequence[str],
+    *,
+    batch_size: int | None = None,
+    max_attempts: int = 3,
+    backoff_seconds: float = 0.5,
+    sleep: Callable[[float], None] = time.sleep,
+) -> list[list[float]]:
+    """Embed `texts` in batches of `batch_size`, preserving order.
+
+    Each batch is retried (up to `max_attempts` calls, with a doubling
+    backoff) only on `InferenceUnavailableError`; `ModelNotFoundError` and
+    anything else propagates immediately. A batch that returns a different
+    number of vectors than texts raises rather than letting records and
+    vectors drift out of alignment.
+    """
+    size = batch_size if batch_size is not None else settings.embed_batch_size
+    if size < 1:
+        raise ValueError(f"batch_size must be >= 1 (got {size})")
+    texts = list(texts)
+    vectors: list[list[float]] = []
+    for start in range(0, len(texts), size):
+        batch = texts[start : start + size]
+        for attempt in range(1, max_attempts + 1):
+            try:
+                result = gateway.embed_batch(batch)
+                break
+            except InferenceUnavailableError:
+                if attempt == max_attempts:
+                    raise
+                sleep(backoff_seconds * 2 ** (attempt - 1))
+        if len(result) != len(batch):
+            raise InferenceError(
+                f"embed_batch returned {len(result)} vectors for {len(batch)} texts"
+            )
+        vectors.extend(result)
+    return vectors
 
 
 def _translate_error(exc: Exception, model: str) -> InferenceError:
@@ -124,6 +170,15 @@ class OllamaGateway:
             raise _translate_error(exc, self.embed_model) from exc
         return response["embeddings"][0]
 
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        try:
+            response = _ollama.embed(model=self.embed_model, input=list(texts))
+        except Exception as exc:
+            raise _translate_error(exc, self.embed_model) from exc
+        return [list(vector) for vector in response["embeddings"]]
+
     def describe_image(self, image_bytes: bytes, *, prompt: str, model: str, **opts) -> str:
         opts = dict(opts)
         options = dict(opts.get("options") or {})
@@ -169,6 +224,7 @@ class FakeInferenceGateway:
         self.canned_description = canned_description
         self.generate_calls: list[dict] = []
         self.embed_calls: list[str] = []
+        self.embed_batch_calls: list[list[str]] = []
         self.describe_image_calls: list[dict] = []
 
     def generate(self, *, system: str, prompt: str, **opts) -> str:
@@ -182,6 +238,12 @@ class FakeInferenceGateway:
         digest = hashlib.sha256(text.encode("utf-8")).digest()
         repeated = (digest * ((self.embed_dim // len(digest)) + 1))[: self.embed_dim]
         return [byte / 255.0 for byte in repeated]
+
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        # Records each text on `embed_calls` (as `embed` does) and each call
+        # on `embed_batch_calls`, so tests can assert on either.
+        self.embed_batch_calls.append(list(texts))
+        return [self.embed(text) for text in texts]
 
     def describe_image(self, image_bytes: bytes, *, prompt: str, model: str, **opts) -> str:
         self.describe_image_calls.append(
