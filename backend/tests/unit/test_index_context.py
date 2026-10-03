@@ -142,7 +142,7 @@ def test_no_index_text_means_same_as_text(migrated_sqlite_engine: Engine, tmp_pa
 def test_new_manifest_records_index_text_version(tmp_path: Path) -> None:
     path = tmp_path / "m.json"
     write_manifest(path, new_manifest("m1", 32))
-    assert read_manifest(path).index_text_version == INDEX_TEXT_VERSION == 1
+    assert read_manifest(path).index_text_version == INDEX_TEXT_VERSION == 2
 
 
 def test_legacy_manifest_without_field_reads_as_zero(tmp_path: Path) -> None:
@@ -177,7 +177,7 @@ def test_first_write_records_version_and_ordinary_writes_do_not_bump_old_manifes
 ) -> None:
     manager, path = _guarded(migrated_sqlite_engine, tmp_path)
     manager.upsert_chunks([_record("chk_a", "alpha")])
-    assert read_manifest(path).index_text_version == 1
+    assert read_manifest(path).index_text_version == INDEX_TEXT_VERSION == 2
 
     old = read_manifest(path)
     write_manifest(path, IndexManifest(**{**old.__dict__, "index_text_version": 0}))
@@ -193,3 +193,46 @@ def test_legacy_adoption_records_zero(migrated_sqlite_engine: Engine, tmp_path: 
     manager, path = _guarded(migrated_sqlite_engine, tmp_path)
     manager.upsert_chunks([_record("chk_b", "beta")])
     assert read_manifest(path).index_text_version == 0
+
+
+# --- doc 05 step 3: Context line ------------------------------------------
+
+
+def test_context_line_rendered_after_heading_line() -> None:
+    loc = json.dumps({"sheet": "S", "context": ["FY2025-26", "fiscal year 2025 2026"]})
+    assert index_text_for_chunk("/d/R.xlsx", loc, "S", "row") == (
+        "R.xlsx > S\nContext: FY2025-26; fiscal year 2025 2026\nrow"
+    )
+
+
+def test_context_absent_or_malformed_leaves_text_unchanged() -> None:
+    assert index_text_for_chunk("/d/R.xlsx", json.dumps({"sheet": "S"}), "S", "t") == "R.xlsx > S\nt"
+    assert index_text_for_chunk("/d/R.xlsx", json.dumps({"context": "x"}), "S", "t") == "R.xlsx > S\nt"
+    assert index_text_for_chunk("/d/R.xlsx", json.dumps({"context": []}), "S", "t") == "R.xlsx > S\nt"
+    assert index_text_for_chunk("/d/f.docx", json.dumps({"heading_path": ["A"]}), None, "t") == (
+        "f.docx > A\nt"
+    )
+
+
+def test_context_line_has_hard_cap() -> None:
+    loc = json.dumps({"context": ["x" * 1000]})
+    line = index_text_for_chunk("/d/R.xlsx", loc, "S", "t").split("\n")[1]
+    assert len(line) == len("Context: ") + 400
+
+
+def test_fts_matches_bare_year_token_from_context(migrated_sqlite_engine: Engine, tmp_path: Path) -> None:
+    manager = IndexManager(
+        FtsIndexWriter(migrated_sqlite_engine),
+        LanceIndexWriter(tmp_path / "lancedb"),
+        FakeInferenceGateway(),
+    )
+    loc = json.dumps({"sheet": "S", "context": ["FY2025-26", "fiscal year 2025 2026", "July"]})
+    body = "Sheet: S | Row: 7\nMonth: Jul"
+    manager.upsert_chunks(
+        [
+            _record("ctx", body, index_text_for_chunk("/d/Revenue-FY2025-26.xlsx", loc, "S", body)),
+            _record("plain", body, index_text_for_chunk("/d/Revenue-FY2025-26.xlsx", None, "S", body)),
+        ]
+    )
+    assert _fts_match(migrated_sqlite_engine, "2025") == {"ctx"}
+    assert _fts_match(migrated_sqlite_engine, "july") == {"ctx"}

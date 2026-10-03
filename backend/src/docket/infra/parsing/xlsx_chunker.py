@@ -42,6 +42,7 @@ from openpyxl.utils import get_column_letter
 
 from docket.core.config import settings
 from docket.infra.parsing.chunker import ChunkDraft, EvidenceUnitDraft
+from docket.infra.parsing.xlsx_context import build_sheet_contexts, row_context
 from docket.infra.parsing.tokens import TokenCounter, get_token_counter, part_locator, split_to_fit
 from docket.infra.parsing.xlsx_wrapper import (
     MISSING_FORMULA_CACHE_ERROR,
@@ -181,6 +182,10 @@ def chunk_workbook(
     units: list[EvidenceUnitDraft] = []
     chunks: list[ChunkDraft] = []
     ordinal = 0
+    # Sheet/period context (doc 05 step 3): indexed text only, never `Chunk.text`.
+    sheet_contexts = (
+        build_sheet_contexts(workbook) if settings.xlsx_period_context_enabled else {}
+    )
 
     for sheet in workbook.sheets:
         for row in sheet.rows:
@@ -189,6 +194,10 @@ def chunk_workbook(
                 continue
 
             locator = _row_locator(sheet, row)
+            if sheet_contexts:
+                context = row_context(sheet_contexts.get(sheet.name, []), sheet, row)
+                if context:
+                    locator["context"] = context
             parts = _split_row_text(text, counter, cap)
 
             for part_index, part_text in enumerate(parts):

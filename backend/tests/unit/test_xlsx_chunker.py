@@ -90,7 +90,8 @@ def test_row_becomes_one_unit_with_header_labels_attached() -> None:
     assert unit.unit_kind == "range"
     assert unit.heading == "Revenue"
     locator = json.loads(unit.locator_json)
-    assert locator == {"sheet": "Revenue", "range": "A2:B2"}
+    # "context" = month expansion (Month header + "January"), doc 05 step 3
+    assert locator == {"sheet": "Revenue", "range": "A2:B2", "context": ["January"]}
     assert "Month: January" in unit.text
     assert "Amount: 120.5" in unit.text
     assert "Sheet: Revenue" in unit.text and "Row: 2" in unit.text

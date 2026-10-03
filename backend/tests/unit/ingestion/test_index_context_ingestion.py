@@ -112,4 +112,4 @@ def test_reindex_rebuilds_identical_fts_text_and_vectors(
     for chunk_id, (text, vector) in vec_after.items():
         assert text == chunks[chunk_id].text
         assert vector == vec_before[chunk_id][1]
-    assert read_manifest(manifest_path).index_text_version == 1
+    assert read_manifest(manifest_path).index_text_version == 2

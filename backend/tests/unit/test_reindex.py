@@ -206,3 +206,29 @@ def test_reindex_cli(migrated_sqlite_engine, tmp_path, monkeypatch) -> None:
     assert result.exit_code == 0, result.output
     assert "chunks=2" in result.output and "dimension=16" in result.output
     assert read_manifest(context.settings.index_manifest_path).embed_dimension == 16
+
+
+def test_reindex_renders_locator_context_same_as_ingestion(env: _Env) -> None:
+    import json
+
+    from docket.infra.index.context import index_text_for_chunk
+
+    import dataclasses
+
+    rec = dataclasses.replace(_rec("chk_x", "Sheet: S | Row: 7\nMonth: Jul"), heading="S")
+    env.build([rec])
+    locator = json.dumps({"sheet": "S", "context": ["FY2025-26", "fiscal year 2025 2026", "July"]})
+    with env.engine.begin() as conn:
+        conn.execute(text("UPDATE evidence_units SET locator_json = :l"), {"l": locator})
+        conn.execute(
+            text("UPDATE evidence_versions SET file_path = '/d/Revenue-FY2025-26.xlsx'")
+        )
+    env.reindex(FakeInferenceGateway(embed_dim=16))
+
+    expected = index_text_for_chunk("/d/Revenue-FY2025-26.xlsx", locator, "S", rec.text)
+    assert "Context: FY2025-26; fiscal year 2025 2026; July" in expected
+    with env.engine.connect() as conn:
+        fts_text = conn.exec_driver_sql("SELECT text FROM fts_chunks").scalar()
+    assert fts_text == expected
+    assert fts_search(env.engine, "2025", 2) == ["chk_x"]
+    assert read_manifest(env.manifest_path).index_text_version == 2

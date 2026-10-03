@@ -9,6 +9,14 @@ stay verbatim: the prefix exists only in the vector and the FTS5 row.
 Ingestion (`ChunkWriter`) and `docket reindex` both call `index_text_for_chunk`,
 so a rebuilt index is identical to a freshly ingested one. Deterministic, no
 model calls. Only the file's basename is used, never directory names.
+
+Version 2 (doc 05 step 3): a spreadsheet row whose unit locator carries a
+`context` list (fiscal-year labels, units, month names; see
+`docket.infra.parsing.xlsx_context`) gets one extra line,
+`Context: a; b; c`, between the `<file> > <heading>` line and the row text.
+Other chunks are unchanged. Indexes built at version 1 (or adopted/legacy
+ones, which read as 0) lack that line and need `docket reindex`; rows only have
+the locator context if they were re-chunked after the feature shipped.
 """
 
 from __future__ import annotations
@@ -17,17 +25,30 @@ import json
 from typing import Sequence
 
 # Recorded in the index manifest (`index_text_version`); bump if the format changes.
-INDEX_TEXT_VERSION = 1
+INDEX_TEXT_VERSION = 2
+
+# Hard cap on the rendered `Context:` line (characters, excluding the label).
+CONTEXT_LINE_MAX_CHARS = 400
 
 
-def build_index_text(file_name: str | None, heading_path: Sequence[str], text: str) -> str:
-    """`text` prefixed with `file name > heading > ...` on one line. Missing or
-    blank segments are omitted; with none left, `text` is returned unchanged."""
+def build_index_text(
+    file_name: str | None,
+    heading_path: Sequence[str],
+    text: str,
+    context: Sequence[str] = (),
+) -> str:
+    """`text` prefixed with `file name > heading > ...` on one line, then an
+    optional `Context: ...` line. Missing or blank segments are omitted; with
+    none left, `text` is returned unchanged."""
     name = _basename(file_name)
     segments = [s for s in (name, *(str(h).strip() for h in heading_path)) if s]
-    if not segments:
+    context_line = _context_line(context)
+    if not segments and not context_line:
         return text
-    return " > ".join(segments) + "\n" + text
+    prefix = " > ".join(segments)
+    if context_line:
+        prefix = prefix + "\n" + context_line if prefix else context_line
+    return prefix + "\n" + text
 
 
 def index_text_for_chunk(
@@ -39,7 +60,7 @@ def index_text_for_chunk(
     path = _heading_path(locator_json)
     if not path and heading:
         path = [heading]
-    return build_index_text(file_path, path, text)
+    return build_index_text(file_path, path, text, _context(locator_json))
 
 
 def _basename(file_path: str | None) -> str:
@@ -56,3 +77,20 @@ def _heading_path(locator_json: str | None) -> list[str]:
     except (ValueError, AttributeError):
         return []
     return [h for h in path if isinstance(h, str)] if isinstance(path, list) else []
+
+
+def _context(locator_json: str | None) -> list[str]:
+    if not locator_json:
+        return []
+    try:
+        items = json.loads(locator_json).get("context")
+    except (ValueError, AttributeError):
+        return []
+    return [i for i in items if isinstance(i, str)] if isinstance(items, list) else []
+
+
+def _context_line(context: Sequence[str]) -> str:
+    joined = "; ".join(c.strip() for c in context if c and c.strip())
+    if not joined:
+        return ""
+    return "Context: " + joined[:CONTEXT_LINE_MAX_CHARS]

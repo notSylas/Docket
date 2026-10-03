@@ -86,6 +86,13 @@ class Settings(BaseSettings):
     # Upper bound on tokens per chunk, enforced by every chunker
     # (`docket.infra.parsing.tokens`). Sized for `embed_model`'s context.
     chunk_max_tokens: int = 512
+    # Sheet/period context (fiscal-year labels, units from Notes sheets/title
+    # rows, month names) stored in each spreadsheet row's `locator_json["context"]`
+    # and rendered into the INDEXED text only (doc 05 step 3). Read at chunking
+    # time: already-ingested workbooks keep their old locators until their rows
+    # are re-chunked (an unchanged file hash makes ingestion skip them), and only
+    # then does `docket reindex` pick the context up. Set false to ablate.
+    xlsx_period_context_enabled: bool = True
     # Hugging Face tokenizer used to count those tokens; keep it matched to
     # `embed_model` (Ollama `qwen3-embedding:0.6b` is Qwen/Qwen3-Embedding-0.6B).
     # "heuristic" skips the download and uses a character-count estimate.
