@@ -11,7 +11,7 @@ persistence logic independently testable; no behavior changed in the move.
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import sessionmaker
 
 from docket.core.db.identity import compute_chunk_id
@@ -69,6 +69,26 @@ class ChunkWriter:
                 EvidenceVersion.file_path == file_path,
             )
             return session.execute(stmt).scalar_one_or_none()
+
+    def chunk_ids_for_version(self, evidence_version_id: str) -> list[str]:
+        with self._session_factory() as session:
+            stmt = select(Chunk.id).where(Chunk.evidence_version_id == evidence_version_id)
+            return list(session.execute(stmt).scalars().all())
+
+    def delete_units_and_chunks(self, evidence_version_id: str) -> None:
+        """Remove one version's `Chunk` and `EvidenceUnit` rows in a single
+        transaction (chunks first: they reference units). Used before a
+        retry rebuilds them -- chunk ids are deterministic, so leftover rows
+        from a failed attempt would collide on `chunks.id`, and unit ids are
+        random, so they would otherwise be duplicated. Blob references are
+        untouched: none are keyed by chunk/unit rows (they belong to the
+        version's content and page images)."""
+        with self._session_factory() as session:
+            session.execute(delete(Chunk).where(Chunk.evidence_version_id == evidence_version_id))
+            session.execute(
+                delete(EvidenceUnit).where(EvidenceUnit.evidence_version_id == evidence_version_id)
+            )
+            session.commit()
 
     def persist_units_and_chunks(
         self, *, source_id: str, evidence_version_id: str, units, chunks

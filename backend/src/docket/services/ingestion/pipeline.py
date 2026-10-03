@@ -392,6 +392,16 @@ class IngestionPipeline:
                 self._source_manager.mark_unreachable(source.id)
         return reachable
 
+    def _clear_version_chunks(self, evidence_version_id: str) -> None:
+        """Drop a version's prior units/chunks and their index entries before
+        rebuilding (retry of a PENDING/FAILED version that already persisted
+        rows). Index entries go first, so a failure here leaves the SQLite
+        rows as the record of what still needs removing."""
+        self._index_manager.delete_chunks(
+            self._chunk_writer.chunk_ids_for_version(evidence_version_id)
+        )
+        self._chunk_writer.delete_units_and_chunks(evidence_version_id)
+
     def _discover_files(self, root: Path) -> list[Path]:
         """Recursively walk `root` for ingestable files. Recursive (not just
         the top level) because a "local_folder" source is meant to cover the
@@ -521,6 +531,7 @@ class IngestionPipeline:
             )
             units, chunks = chunk_document(chunking_text, self._chunk_recipe)
 
+            self._clear_version_chunks(evidence_version.id)
             records = self._chunk_writer.persist_units_and_chunks(
                 source_id=source_id,
                 evidence_version_id=evidence_version.id,
@@ -562,6 +573,7 @@ class IngestionPipeline:
         try:
             workbook = self._xlsx_parser.parse(source_id, path)
             units, chunks = chunk_workbook(workbook)
+            self._clear_version_chunks(evidence_version.id)
             records = self._chunk_writer.persist_units_and_chunks(
                 source_id=source_id,
                 evidence_version_id=evidence_version.id,
@@ -602,6 +614,7 @@ class IngestionPipeline:
         try:
             presentation = self._pptx_parser.parse(source_id, path)
             units, chunks = chunk_presentation(presentation)
+            self._clear_version_chunks(evidence_version.id)
             records = self._chunk_writer.persist_units_and_chunks(
                 source_id=source_id,
                 evidence_version_id=evidence_version.id,

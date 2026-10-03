@@ -22,6 +22,7 @@ from conftest import _chunk_ids_for_file, _job_status, _write_docx
 from docket.core.db.engine import get_session_factory
 from docket.core.db.models import (
     Chunk,
+    EvidenceUnit,
     EvidenceVersion,
     IngestionJob,
     IngestionJobStatus,
@@ -166,6 +167,51 @@ def test_failed_file_is_retried_on_next_run_and_can_reach_ready(
         # supersedes the old one, it just finally finishes processing.
         assert retried_version.id == failed_version_id
         assert retried_version.status == VersionStatus.READY
+
+
+def test_failed_after_persist_is_retried_without_duplicate_units_or_chunks(
+    env: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    doc = env.folder / "doc.docx"
+    _write_docx(doc, "Section", "Alpha content about penguins and glaciers.")
+
+    original_upsert = env.pipeline._index_manager.upsert_chunks
+
+    def boom(records):
+        raise RuntimeError("simulated index failure")
+
+    # Fails AFTER `persist_units_and_chunks` has committed its rows.
+    monkeypatch.setattr(env.pipeline._index_manager, "upsert_chunks", boom)
+    first = env.pipeline.run_ingestion_for_source(env.source.id)
+    assert first.file_results[0].status == "failed"
+
+    with env.session_factory() as session:
+        version = session.execute(
+            select(EvidenceVersion).where(EvidenceVersion.file_path == str(doc))
+        ).scalar_one()
+        assert version.status == VersionStatus.FAILED
+        version_id = version.id
+
+    monkeypatch.setattr(env.pipeline._index_manager, "upsert_chunks", original_upsert)
+    second = env.pipeline.run_ingestion_for_source(env.source.id)
+    assert second.file_results[0].status == "ingested", second.file_results[0].error
+    assert second.status == "succeeded"
+
+    with env.session_factory() as session:
+        assert session.get(EvidenceVersion, version_id).status == VersionStatus.READY
+        unit_count = len(
+            session.execute(
+                select(EvidenceUnit.id).where(EvidenceUnit.evidence_version_id == version_id)
+            ).scalars().all()
+        )
+        chunk_ids = set(
+            session.execute(
+                select(Chunk.id).where(Chunk.evidence_version_id == version_id)
+            ).scalars().all()
+        )
+    assert unit_count == len(chunk_ids) == second.file_results[0].chunks_written
+    assert env.vector.existing_chunk_ids(chunk_ids) == chunk_ids
+    assert env.fts.existing_chunk_ids(chunk_ids) == chunk_ids
 
 
 # ---------------------------------------------------------------------------

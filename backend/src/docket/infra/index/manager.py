@@ -68,6 +68,15 @@ class IndexManager:
 
         return IndexWriteStats(upserted=0, skipped_unchanged=0, deleted=len(stale))
 
+    def delete_chunks(self, chunk_ids: Sequence[str]) -> None:
+        """Remove exactly `chunk_ids` from both indexes (a no-op for ids
+        that were never indexed)."""
+        chunk_ids = list(chunk_ids)
+        if not chunk_ids:
+            return
+        self._fts.delete(chunk_ids)
+        self._vector.delete(chunk_ids)
+
     def delete_source(self, source_id: str) -> None:
         """Remove all indexed chunks for `source_id` from both indexes."""
         chunk_ids = self._vector.chunk_ids_for_source(source_id)
