@@ -285,3 +285,93 @@ def test_empty_slide_produces_no_units_without_crashing() -> None:
     units, chunks = chunk_presentation(_presentation([slide]))
     assert units == []
     assert chunks == []
+
+
+# ---------------------------------------------------------------------------
+# Token cap
+# ---------------------------------------------------------------------------
+
+
+class _WordCounter:
+    name = "test:words"
+
+    def count(self, text: str) -> int:
+        return len(text.split())
+
+
+def _chunk(slide: SlideData, cap: int):
+    return chunk_presentation(_presentation([slide]), _WordCounter(), max_tokens=cap)
+
+
+def test_over_cap_shape_splits_on_paragraphs_with_part_locator() -> None:
+    paragraphs = [" ".join(f"p{p}w{w}" for w in range(5)) for p in range(6)]
+    slide = _slide(
+        1, text_shapes=[TextShapeData(shape_id=7, shape_name="Box", text="\n".join(paragraphs))]
+    )
+    units, chunks = _chunk(slide, 14)
+    assert len(units) == len(chunks) > 1
+    for i, unit in enumerate(units, start=1):
+        lines = unit.text.split("\n")
+        assert lines[0] == "Slide: 1 | Shape: Box"
+        assert all(line in paragraphs for line in lines[1:])  # never mid-paragraph
+        assert _WordCounter().count(unit.text) <= 14
+        locator = json.loads(unit.locator_json)
+        assert locator["slide"] == 1 and locator["shape_id"] == 7
+        assert locator["part"] == i and locator["of"] == len(units)
+        assert unit.unit_kind == "slide_text"
+
+
+def test_over_cap_notes_split_on_sentences() -> None:
+    notes = " ".join(f"Sentence number {i} ends here." for i in range(10))
+    units, _ = _chunk(_slide(2, notes_text=notes), 14)
+    assert len(units) > 1
+    assert all(u.text.startswith("Slide: 2 | Speaker notes\n") for u in units)
+    assert all(u.unit_kind == "notes" for u in units)
+    assert all(_WordCounter().count(u.text) <= 14 for u in units)
+    assert json.loads(units[1].locator_json) == {"slide": 2, "part": 2, "of": len(units)}
+
+
+def test_over_cap_table_row_splits_on_cells_repeating_label() -> None:
+    table = TableData(
+        shape_id=9,
+        shape_name="T",
+        rows=[[f"H{i}" for i in range(8)], [f"v{i}" for i in range(8)]],
+        header_row=[f"H{i}" for i in range(8)],
+        n_rows=2,
+        n_cols=8,
+    )
+    units, _ = _chunk(_slide(1, tables=[table]), 12)
+    assert len(units) > 1
+    assert all(u.text.split("\n")[0] == "Slide: 1 | Table: T | Row: 1" for u in units)
+    cells = [line for u in units for line in u.text.split("\n")[1:]]
+    assert cells == [f"H{i}: v{i}" for i in range(8)]
+    assert json.loads(units[0].locator_json)["row"] == 1
+
+
+def test_over_cap_chart_series_splits_on_pairs_repeating_series_label() -> None:
+    cats = [f"c{i}" for i in range(12)]
+    chart = ChartData(
+        shape_id=5,
+        shape_name="Ch",
+        chart_type=None,
+        title="T",
+        categories=cats,
+        series=[ChartSeriesData(name="Rev", values=list(range(12)))],
+    )
+    units, _ = _chunk(_slide(1, charts=[chart]), 12)
+    assert len(units) > 1
+    assert all(u.text.startswith("Slide: 1 | Chart: T\n") for u in units)
+    series_lines = [l for u in units for l in u.text.split("\n") if l.startswith("Rev: ")]
+    assert len(series_lines) > 1
+    pairs = [p for l in series_lines for p in l[len("Rev: "):].split(", ")]
+    assert pairs == [f"c{i}={i}" for i in range(12)]
+    assert all(_WordCounter().count(u.text) <= 12 for u in units)
+
+
+def test_under_cap_units_unchanged_without_part() -> None:
+    slide = _slide(
+        1, text_shapes=[TextShapeData(shape_id=7, shape_name="Box", text="Hello there")]
+    )
+    [unit], _ = _chunk(slide, 512)
+    assert unit.text == "Slide: 1 | Shape: Box\nHello there"
+    assert json.loads(unit.locator_json) == {"slide": 1, "shape_id": 7, "shape_name": "Box"}

@@ -2,8 +2,9 @@
 
 A small JSON file (`Settings.index_manifest_path`, next to the LanceDB
 directory) holding `schema_version`, `embed_model`, `embed_dimension`,
-`embed_instruction` and `tokenizer` (both null for now) and
-`created_at`/`updated_at`. It is written atomically (temp file +
+`embed_instruction` (null for now), `tokenizer` (the chunk-size token counter's
+name, informational only: it decides chunk cuts, not the vector space, so a
+difference is never a mismatch) and `created_at`/`updated_at`. It is written atomically (temp file +
 `os.replace`).
 
 Policy, enforced by `IndexManifestGuard`:
@@ -29,7 +30,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable
@@ -58,7 +59,11 @@ def _now() -> str:
 
 
 def new_manifest(
-    embed_model: str, embed_dimension: int, *, created_at: str | None = None
+    embed_model: str,
+    embed_dimension: int,
+    *,
+    created_at: str | None = None,
+    tokenizer: str | None = None,
 ) -> IndexManifest:
     now = _now()
     return IndexManifest(
@@ -66,7 +71,7 @@ def new_manifest(
         embed_model=embed_model,
         embed_dimension=embed_dimension,
         embed_instruction=None,
-        tokenizer=None,
+        tokenizer=tokenizer,
         created_at=created_at or now,
         updated_at=now,
     )
@@ -130,16 +135,24 @@ class IndexManifestGuard:
         path: Path,
         embed_model: str,
         table_dimensions: Callable[[], Iterable[int | None]] = lambda: (),
+        tokenizer_name: Callable[[], str] | None = None,
     ):
         self._path = path
         self._embed_model = embed_model
         self._table_dimensions = table_dimensions
+        self._tokenizer_name = tokenizer_name
 
     def check_write(self, dimension: int) -> None:
         """Call with the actual embedding dimension before writing vectors."""
         manifest = read_manifest(self._path)
+        tokenizer = self._tokenizer_name() if self._tokenizer_name else None
         if manifest is not None:
             check_compatible(manifest, self._embed_model, dimension)
+            if tokenizer and manifest.tokenizer != tokenizer:
+                # Informational only (see module docstring): keep it current.
+                write_manifest(
+                    self._path, replace(manifest, tokenizer=tokenizer, updated_at=_now())
+                )
             return
         for existing in self._table_dimensions():
             if existing is not None and existing != dimension:
@@ -148,7 +161,9 @@ class IndexManifestGuard:
                     f"index manifest) but the embedding model produced {dimension}. "
                     "Run `docket reindex` to rebuild it."
                 )
-        write_manifest(self._path, new_manifest(self._embed_model, dimension))
+        write_manifest(
+            self._path, new_manifest(self._embed_model, dimension, tokenizer=tokenizer)
+        )
 
     def check_query(self, dimension: int) -> None:
         """Call with the query vector's dimension before searching."""

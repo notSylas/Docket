@@ -118,6 +118,7 @@ def reindex(
     embed_model: str,
     batch_size: int = 32,
     sleep: Callable[[float], None] | None = None,
+    tokenizer: str | None = None,
 ) -> ReindexResult:
     import lancedb
 
@@ -227,6 +228,7 @@ def reindex(
                     embed_model,
                     dimension,
                     created_at=previous.created_at if previous else None,
+                    tokenizer=tokenizer or (previous.tokenizer if previous else None),
                 ),
             )
         except BaseException:

@@ -50,6 +50,14 @@ class Settings(BaseSettings):
     chunk_size_words: int = 200
     chunk_overlap_words: int = 40
 
+    # Upper bound on tokens per chunk, enforced by every chunker
+    # (`docket.infra.parsing.tokens`). Sized for `embed_model`'s context.
+    chunk_max_tokens: int = 512
+    # Hugging Face tokenizer used to count those tokens; keep it matched to
+    # `embed_model` (Ollama `qwen3-embedding:0.6b` is Qwen/Qwen3-Embedding-0.6B).
+    # "heuristic" skips the download and uses a character-count estimate.
+    embed_tokenizer: str = "Qwen/Qwen3-Embedding-0.6B"
+
     # Single source of truth for the fused-retrieval result count. Read as
     # each call site's own `top_k` parameter default (`retrieval.hybrid.
     # hybrid_search`, `query.service.QueryService`, `agent.graph.

@@ -13,6 +13,7 @@ from docket import __version__
 from docket.infra.index.manifest import IndexManifestMismatchError
 from docket.infra.index.reindex import reindex as run_reindex
 from docket.infra.inference.gateway import InferenceError
+from docket.infra.parsing.tokens import get_token_counter
 from docket.interfaces.cli.context import build_context
 from docket.interfaces.cli.interactive import run_session
 from docket.core.db.models import SourceStatus
@@ -223,6 +224,7 @@ def reindex() -> None:
             manifest_path=settings.index_manifest_path,
             embed_model=settings.embed_model,
             batch_size=settings.embed_batch_size,
+            tokenizer=get_token_counter().name,
         )
     except (InferenceError, ValueError) as exc:
         typer.echo(f"Error: reindex failed, the existing index is unchanged: {exc}", err=True)

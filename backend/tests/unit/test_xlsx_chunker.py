@@ -328,3 +328,55 @@ def test_row_with_no_renderable_fragments_produces_no_unit() -> None:
     units, chunks = chunk_workbook(_workbook([sheet]))
     assert units == []
     assert chunks == []
+
+
+# ---------------------------------------------------------------------------
+# Token cap
+# ---------------------------------------------------------------------------
+
+
+class _WordCounter:
+    name = "test:words"
+
+    def count(self, text: str) -> int:
+        return len(text.split())
+
+
+def _wide_sheet(n_cols: int) -> SheetData:
+    cells = [_cell("S", f"{chr(65 + i)}2", 2, i + 1, f"value{i}") for i in range(n_cols)]
+    return SheetData(
+        name="S",
+        headers={i + 1: f"Col{i}" for i in range(n_cols)},
+        header_row=1,
+        rows=[RowData(row=2, hidden=False, cells=cells)],
+        merged_ranges=[],
+        hidden_columns=[],
+        filtered=False,
+    )
+
+
+def test_over_cap_row_splits_on_lines_with_header_and_part_locator() -> None:
+    units, chunks = chunk_workbook(_workbook([_wide_sheet(10)]), _WordCounter(), max_tokens=12)
+    assert len(units) == len(chunks) > 1
+    n = len(units)
+    seen = []
+    for i, (unit, chunk) in enumerate(zip(units, chunks), start=1):
+        lines = unit.text.split("\n")
+        assert lines[0] == "Sheet: S | Row: 2"
+        assert all(": value" in line for line in lines[1:])  # whole `Header: value` lines
+        assert _WordCounter().count(unit.text) <= 12
+        locator = json.loads(unit.locator_json)
+        assert locator["range"] == "A2:J2" and locator["sheet"] == "S"
+        assert locator["part"] == i and locator["of"] == n
+        assert chunk.text == unit.text
+        seen.extend(lines[1:])
+    assert seen == [f"Col{i}: value{i}" for i in range(10)]
+    assert [c.ordinal for c in chunks] == list(range(n))
+
+
+def test_under_cap_row_is_byte_identical_and_has_no_part() -> None:
+    sheet = _wide_sheet(3)
+    [unit], [chunk] = chunk_workbook(_workbook([sheet]), _WordCounter(), max_tokens=512)
+    assert unit.text == "Sheet: S | Row: 2\nCol0: value0\nCol1: value1\nCol2: value2"
+    assert json.loads(unit.locator_json) == {"sheet": "S", "range": "A2:C2"}
+    assert chunk.content_hash == unit.content_hash

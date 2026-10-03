@@ -14,7 +14,9 @@ from dataclasses import dataclass
 
 from docket.core.db.identity import compute_recipe_id
 
-DEFAULT_SPLITTER = "heading_then_sliding_window"
+# `_tokcap` marks the checkpoint that added token-bounded chunks and table-aware
+# splitting: chunk boundaries changed, so new chunks get a new recipe id.
+DEFAULT_SPLITTER = "heading_then_sliding_window_tokcap"
 
 
 @dataclass(frozen=True)

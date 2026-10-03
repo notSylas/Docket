@@ -19,13 +19,18 @@ earlier in the document either, both fields are ``None`` -- an honest
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass
 
+from docket.core.config import settings
 from docket.infra.parsing.recipes import ChunkRecipe
+from docket.infra.parsing.tokens import TokenCounter, get_token_counter, pack_parts, split_to_fit
 
 _HEADING_RE = re.compile(r"^(#{1,3})[ \t]+(.*)$", re.MULTILINE)
 _PAGE_MARKER_RE = re.compile(r"<!--PAGE:(\d+)-->")
+_TABLE_ROW_RE = re.compile(r"^\s*\|")
+_TABLE_SEPARATOR_RE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$")
 
 
 def _sha256_hex(text: str) -> str:
@@ -105,8 +110,10 @@ def _words_with_pages(
     return words, pages, page
 
 
-def _iter_sections(markdown_text: str) -> list[tuple[str | None, str]]:
-    """Yield ``(heading, raw_section_text)`` pairs in document order.
+def _iter_sections(markdown_text: str) -> list[tuple[str | None, str, list[str]]]:
+    """Yield ``(heading, raw_section_text, heading_path)`` triples in document
+    order. ``heading_path`` is the heading plus its ancestors (levels 1-3,
+    outermost first); empty before the first heading.
 
     ``raw_section_text`` may still contain ``<!--PAGE:N-->`` markers --
     callers derive marker-free text/page spans themselves (via
@@ -125,22 +132,36 @@ def _iter_sections(markdown_text: str) -> list[tuple[str | None, str]]:
 
     matches = list(_HEADING_RE.finditer(text))
     if not matches:
-        return [(None, text)]
+        return [(None, text, [])]
 
-    sections: list[tuple[str | None, str]] = []
+    sections: list[tuple[str | None, str, list[str]]] = []
 
     preamble = text[: matches[0].start()]
     if preamble:
-        sections.append((None, preamble))
+        sections.append((None, preamble, []))
+
+    stack: list[tuple[int, str]] = []  # (level, heading) of the open ancestors
 
     for i, match in enumerate(matches):
         start = match.start()
         end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
         section = text[start:end]
         heading_text = _strip_page_markers(match.group(2)).strip()
-        sections.append((heading_text, section))
+        level = len(match.group(1))
+        while stack and stack[-1][0] >= level:
+            stack.pop()
+        stack.append((level, heading_text))
+        sections.append((heading_text, section, [h for _, h in stack]))
 
     return sections
+
+
+def _heading_locator(heading_path: list[str]) -> str | None:
+    """`locator_json` for a Docling section unit: its heading path as
+    structure (the leaf stays in `heading`). `None` before any heading."""
+    if not heading_path:
+        return None
+    return json.dumps({"heading_path": heading_path}, sort_keys=True)
 
 
 def split_into_units(markdown_text: str) -> list[EvidenceUnitDraft]:
@@ -163,7 +184,7 @@ def split_into_units(markdown_text: str) -> list[EvidenceUnitDraft]:
     units: list[EvidenceUnitDraft] = []
     current_page: int | None = None
 
-    for heading, raw_section in _iter_sections(markdown_text):
+    for heading, raw_section, heading_path in _iter_sections(markdown_text):
         # Always walk the section for its page marker(s) -- even one that
         # ends up producing no unit (e.g. a marker-only preamble) still
         # advances the running page tracker for every section after it.
@@ -179,6 +200,7 @@ def split_into_units(markdown_text: str) -> list[EvidenceUnitDraft]:
                 content_hash=_sha256_hex(clean_text),
                 page_start=word_pages[0] if word_pages else None,
                 page_end=word_pages[-1] if word_pages else None,
+                locator_json=_heading_locator(heading_path),
             )
         )
 
@@ -223,13 +245,185 @@ def _sliding_word_windows(words: list[str], chunk_size: int, overlap: int) -> li
     return [words[start:end] for start, end in _sliding_window_ranges(len(words), chunk_size, overlap)]
 
 
+def _fit_word_ranges(
+    words: list[str], start: int, end: int, counter: TokenCounter, cap: int
+) -> list[tuple[int, int]]:
+    """Halve ``words[start:end]`` until each piece is within ``cap`` tokens.
+    A single word over the cap is returned as is (the caller cuts it by
+    characters)."""
+    if end - start <= 1 or counter.count(" ".join(words[start:end])) <= cap:
+        return [(start, end)]
+    mid = (start + end) // 2
+    return _fit_word_ranges(words, start, mid, counter, cap) + _fit_word_ranges(
+        words, mid, end, counter, cap
+    )
+
+
+def _window_chunks(
+    words: list[str],
+    word_pages: list[int | None],
+    recipe: ChunkRecipe,
+    counter: TokenCounter,
+    cap: int,
+) -> list[tuple[str, int | None, int | None]]:
+    """``(text, page_start, page_end)`` per chunk for plain prose: the usual
+    sliding word windows, with any window over ``cap`` tokens split further
+    by words. Pieces split from one window do not overlap each other; the
+    windows they came from still do."""
+    out: list[tuple[str, int | None, int | None]] = []
+    for w_start, w_end in _sliding_window_ranges(len(words), recipe.chunk_size, recipe.overlap):
+        for start, end in _fit_word_ranges(words, w_start, min(w_end, len(words)), counter, cap):
+            text = " ".join(words[start:end])
+            pieces = split_to_fit(text, counter, cap) if end - start == 1 else [text]
+            for piece in pieces:
+                out.append((piece, word_pages[start], word_pages[end - 1]))
+    return out
+
+
+def _segment_section(raw_section: str) -> list[tuple[str, list[str]]]:
+    """Split a raw section into ``("text", lines)`` and ``("table", lines)``
+    segments. A table is a Markdown pipe table: a ``|`` header row, a
+    ``|---|`` separator row, then ``|`` data rows. Page-marker-only lines
+    inside a table are kept with it, so they do not end the table."""
+    lines = raw_section.split("\n")
+    clean = [_strip_page_markers(line) for line in lines]
+    marker_only = [not c.strip() and line != c for line, c in zip(lines, clean)]
+
+    def next_content(i: int) -> int | None:
+        while i < len(lines) and marker_only[i]:
+            i += 1
+        return i if i < len(lines) else None
+
+    segments: list[tuple[str, list[str]]] = []
+    text_lines: list[str] = []
+    i = 0
+    while i < len(lines):
+        j = next_content(i + 1) if _TABLE_ROW_RE.match(clean[i]) else None
+        if j is not None and _TABLE_SEPARATOR_RE.match(clean[j]):
+            if text_lines:
+                segments.append(("text", text_lines))
+                text_lines = []
+            table_lines = lines[i : j + 1]
+            i = j + 1
+            while True:
+                k = next_content(i)
+                if k is None or not _TABLE_ROW_RE.match(clean[k]):
+                    break
+                table_lines.extend(lines[i : k + 1])
+                i = k + 1
+            segments.append(("table", table_lines))
+        else:
+            text_lines.append(lines[i])
+            i += 1
+    if text_lines:
+        segments.append(("text", text_lines))
+    return segments
+
+
+def _cells(row: str) -> list[str]:
+    row = row.strip()
+    row = row[1:] if row.startswith("|") else row
+    row = row[:-1] if row.endswith("|") else row
+    return [c.strip() for c in row.split("|")]
+
+
+def _render_row(cells: list[str]) -> str:
+    return "| " + " | ".join(cells) + " |"
+
+
+def _split_row_by_cells(
+    header: str, separator: str, row: str, counter: TokenCounter, cap: int
+) -> list[str]:
+    """Last resort for a single row too big for ``cap``: pack its cells into
+    narrower tables, each with the matching slice of the header and separator
+    so columns stay labelled. A single oversized cell is cut by words."""
+    head, sep, body = _cells(header), _cells(separator), _cells(row)
+    sep += ["---"] * (len(body) - len(sep))
+    head += [""] * (len(body) - len(head))
+
+    def render(lo: int, hi: int, cells: list[str] | None = None) -> str:
+        return "\n".join(
+            _render_row(part)
+            for part in (head[lo:hi], sep[lo:hi], cells if cells is not None else body[lo:hi])
+        )
+
+    out: list[str] = []
+    lo = 0
+    while lo < len(body):
+        hi = lo + 1
+        while hi < len(body) and counter.count(render(lo, hi + 1)) <= cap:
+            hi += 1
+        if hi == lo + 1 and counter.count(render(lo, hi)) > cap:
+            # `- 4`: room for the cell's surrounding pipes.
+            prefix = render(lo, hi, [""])
+            out.extend(render(lo, hi, [p]) for p in split_to_fit(body[lo], counter, cap - 4, prefix))
+        else:
+            out.append(render(lo, hi))
+        lo = hi
+    return out
+
+
+def _table_chunks(
+    lines: list[str], page: int | None, counter: TokenCounter, cap: int
+) -> tuple[list[tuple[str, int | None, int | None]], int | None]:
+    """``(text, page_start, page_end)`` per chunk for one pipe table, plus the
+    page in effect after it. Newlines are kept (unlike prose chunks) so rows
+    stay rows. Cuts only fall between rows, and the header and separator rows
+    are repeated at the top of every part, so a part is self-describing. That
+    repetition duplicates extracted content on purpose: ``Chunk.text`` of a
+    later part is not a verbatim slice of the document. A row too big for
+    ``cap`` on its own is split by cells."""
+    rows: list[tuple[str, int | None]] = []
+    for line in lines:
+        words, pages, page = _words_with_pages(line, page)
+        text = _strip_page_markers(line).strip()
+        if text:
+            rows.append((text, pages[0] if words else page))
+    texts = [t for t, _ in rows]
+
+    if counter.count("\n".join(texts)) <= cap:
+        return [("\n".join(texts), rows[0][1], rows[-1][1])], page
+
+    header = "\n".join(texts[:2])
+    # A header that takes up half the cap leaves no room to repeat; then only
+    # the first part carries it.
+    repeat = header if counter.count(header) <= cap // 2 else ""
+    start = 2 if repeat else 0
+    parts = texts[start:]
+    out: list[tuple[str, int | None, int | None]] = []
+    index = start
+    for group in pack_parts(parts, "\n", counter, cap, repeat):
+        # The first part also covers the header row's page.
+        first = rows[0][1] if index == start else rows[index][1]
+        last = rows[index + len(group) - 1][1]
+        body = "\n".join(group)
+        text = f"{repeat}\n{body}" if repeat else body
+        if len(group) == 1 and counter.count(text) > cap and repeat:
+            for piece in _split_row_by_cells(texts[0], texts[1], group[0], counter, cap):
+                out.append((piece, first, last))
+        elif len(group) == 1 and counter.count(text) > cap:
+            for piece in split_to_fit(body, counter, cap):
+                out.append((piece, first, last))
+        else:
+            out.append((text, first, last))
+        index += len(group)
+    return out, page
+
+
 def chunk_document(
-    markdown_text: str, recipe: ChunkRecipe
+    markdown_text: str,
+    recipe: ChunkRecipe,
+    counter: TokenCounter | None = None,
+    max_tokens: int | None = None,
 ) -> tuple[list[EvidenceUnitDraft], list[ChunkDraft]]:
     """Split ``markdown_text`` into units, then sub-chunk each unit by
     ``recipe.chunk_size`` words with ``recipe.overlap`` words of sliding
-    overlap. ``ordinal`` runs across the whole document's chunk sequence,
-    starting at 0, not reset per-unit.
+    overlap, never exceeding ``max_tokens`` (default
+    ``settings.chunk_max_tokens``) as measured by ``counter`` (default
+    ``get_token_counter()``). Pipe tables inside a unit are chunked
+    separately, on row boundaries (see ``_table_chunks``). ``ordinal`` runs
+    across the whole document's chunk sequence, starting at 0, not reset
+    per-unit.
 
     ``markdown_text`` may contain ``<!--PAGE:N-->`` page-boundary markers
     (see module docstring); they are stripped from every unit's and chunk's
@@ -238,16 +432,19 @@ def chunk_document(
     provenance) works exactly as before and yields ``page_start=page_end=None``
     everywhere.
     """
+    counter = counter or get_token_counter()
+    cap = max_tokens or settings.chunk_max_tokens
     units: list[EvidenceUnitDraft] = []
     chunks: list[ChunkDraft] = []
     current_page: int | None = None
     ordinal = 0
 
-    for heading, raw_section in _iter_sections(markdown_text):
+    for heading, raw_section, heading_path in _iter_sections(markdown_text):
         # Always walk the section for its page marker(s) -- even one that
         # ends up producing no unit (e.g. a marker-only preamble) still
         # advances the running page tracker for every section after it.
-        words, word_pages, current_page = _words_with_pages(raw_section, current_page)
+        section_start_page = current_page
+        _, word_pages, current_page = _words_with_pages(raw_section, current_page)
         clean_text = _strip_page_markers(raw_section).strip()
         if not clean_text:
             continue
@@ -260,13 +457,21 @@ def chunk_document(
                 content_hash=_sha256_hex(clean_text),
                 page_start=word_pages[0] if word_pages else None,
                 page_end=word_pages[-1] if word_pages else None,
+                locator_json=_heading_locator(heading_path),
             )
         )
 
-        for start, end in _sliding_window_ranges(len(words), recipe.chunk_size, recipe.overlap):
-            window_words = words[start:end]
-            window_pages = word_pages[start:end]
-            chunk_text = " ".join(window_words)
+        drafts: list[tuple[str, int | None, int | None]] = []
+        page = section_start_page
+        for kind, seg_lines in _segment_section(raw_section):
+            if kind == "table":
+                table_drafts, page = _table_chunks(seg_lines, page, counter, cap)
+                drafts.extend(table_drafts)
+            else:
+                words, pages, page = _words_with_pages("\n".join(seg_lines), page)
+                drafts.extend(_window_chunks(words, pages, recipe, counter, cap))
+
+        for chunk_text, page_start, page_end in drafts:
             chunks.append(
                 ChunkDraft(
                     evidence_unit_index=unit_index,
@@ -274,8 +479,8 @@ def chunk_document(
                     heading=heading,
                     text=chunk_text,
                     content_hash=_sha256_hex(chunk_text),
-                    page_start=window_pages[0] if window_pages else None,
-                    page_end=window_pages[-1] if window_pages else None,
+                    page_start=page_start,
+                    page_end=page_end,
                 )
             )
             ordinal += 1

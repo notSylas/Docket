@@ -40,7 +40,9 @@ from datetime import date, datetime
 
 from openpyxl.utils import get_column_letter
 
+from docket.core.config import settings
 from docket.infra.parsing.chunker import ChunkDraft, EvidenceUnitDraft
+from docket.infra.parsing.tokens import TokenCounter, get_token_counter, part_locator, split_to_fit
 from docket.infra.parsing.xlsx_wrapper import (
     MISSING_FORMULA_CACHE_ERROR,
     CellData,
@@ -147,14 +149,35 @@ def _row_locator(sheet: SheetData, row: RowData) -> dict:
     return locator
 
 
-def chunk_workbook(workbook: ParsedWorkbook) -> tuple[list[EvidenceUnitDraft], list[ChunkDraft]]:
+def _split_row_text(text: str, counter: TokenCounter, cap: int) -> list[str]:
+    """`text` unchanged when within `cap` tokens; otherwise split on
+    `Header: value` line boundaries (then sentence/word, only for a single
+    over-long value), repeating the leading `Sheet: ... | Row: ...` line in
+    every part."""
+    if counter.count(text) <= cap:
+        return [text]
+    header_line, _, body = text.partition("\n")
+    return [f"{header_line}\n{part}" for part in split_to_fit(body, counter, cap, header_line)]
+
+
+def chunk_workbook(
+    workbook: ParsedWorkbook,
+    counter: TokenCounter | None = None,
+    max_tokens: int | None = None,
+) -> tuple[list[EvidenceUnitDraft], list[ChunkDraft]]:
     """Build one `EvidenceUnitDraft` + one `ChunkDraft` per populated row
     across every sheet in `workbook`, in sheet order then row order.
 
     Page provenance doesn't apply to spreadsheets (no concept of a "page" in
     a workbook) -- `page_start`/`page_end` are left `None` throughout,
     exactly like a Docling document with no page markers.
+
+    A row over `max_tokens` (default `settings.chunk_max_tokens`) becomes
+    several unit/chunk pairs sharing the row's locator plus
+    `{"part": i, "of": n}`; a row within the cap is emitted unchanged.
     """
+    counter = counter or get_token_counter()
+    cap = max_tokens or settings.chunk_max_tokens
     units: list[EvidenceUnitDraft] = []
     chunks: list[ChunkDraft] = []
     ordinal = 0
@@ -165,30 +188,34 @@ def chunk_workbook(workbook: ParsedWorkbook) -> tuple[list[EvidenceUnitDraft], l
             if not text:
                 continue
 
-            unit_index = len(units)
-            content_hash = _sha256_hex(text)
             locator = _row_locator(sheet, row)
+            parts = _split_row_text(text, counter, cap)
 
-            units.append(
-                EvidenceUnitDraft(
-                    unit_index=unit_index,
-                    heading=sheet.name,
-                    text=text,
-                    content_hash=content_hash,
-                    unit_kind="range",
-                    locator_json=json.dumps(locator, sort_keys=True),
+            for part_index, part_text in enumerate(parts):
+                unit_index = len(units)
+                content_hash = _sha256_hex(part_text)
+                part_loc = part_locator(locator, part_index, len(parts))
+
+                units.append(
+                    EvidenceUnitDraft(
+                        unit_index=unit_index,
+                        heading=sheet.name,
+                        text=part_text,
+                        content_hash=content_hash,
+                        unit_kind="range",
+                        locator_json=json.dumps(part_loc, sort_keys=True),
+                    )
                 )
-            )
-            chunks.append(
-                ChunkDraft(
-                    evidence_unit_index=unit_index,
-                    ordinal=ordinal,
-                    heading=sheet.name,
-                    text=text,
-                    content_hash=content_hash,
-                    provenance="extracted",
+                chunks.append(
+                    ChunkDraft(
+                        evidence_unit_index=unit_index,
+                        ordinal=ordinal,
+                        heading=sheet.name,
+                        text=part_text,
+                        content_hash=content_hash,
+                        provenance="extracted",
+                    )
                 )
-            )
-            ordinal += 1
+                ordinal += 1
 
     return units, chunks

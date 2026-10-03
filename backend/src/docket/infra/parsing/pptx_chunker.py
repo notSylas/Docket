@@ -47,12 +47,20 @@ import hashlib
 import json
 from itertools import zip_longest
 
+from docket.core.config import settings
 from docket.infra.parsing.chunker import ChunkDraft, EvidenceUnitDraft
 from docket.infra.parsing.pptx_wrapper import (
     ChartData,
     ParsedPresentation,
     SlideData,
     TableData,
+)
+from docket.infra.parsing.tokens import (
+    TokenCounter,
+    get_token_counter,
+    pack_parts,
+    part_locator,
+    split_to_fit,
 )
 
 
@@ -166,8 +174,32 @@ def _notes_unit(slide: SlideData) -> tuple[str, dict] | None:
     return text, locator
 
 
+def _split_unit_text(text: str, unit_kind: str, counter: TokenCounter, cap: int) -> list[str]:
+    """`text` unchanged when within `cap` tokens. Otherwise split the body
+    under its first (label) line, which is repeated in every part: shape and
+    notes text on paragraph, then sentence, then word boundaries; table rows
+    on `Header: value` cell lines; chart data on `name=value` pair
+    boundaries, with each series' (or `Categories`) label repeated."""
+    if counter.count(text) <= cap:
+        return [text]
+    header_line, _, body = text.partition("\n")
+    if unit_kind == "chart_data":
+        lines = []
+        for line in body.split("\n"):
+            if counter.count(f"{header_line}\n{line}") <= cap:
+                lines.append(line)
+                continue
+            label, _, rest = line.partition(": ")
+            groups = pack_parts(rest.split(", "), ", ", counter, cap, f"{header_line}\n{label}:")
+            lines.extend(f"{label}: {', '.join(group)}" for group in groups)
+        body = "\n".join(lines)
+    return [f"{header_line}\n{part}" for part in split_to_fit(body, counter, cap, header_line)]
+
+
 def chunk_presentation(
     presentation: ParsedPresentation,
+    counter: TokenCounter | None = None,
+    max_tokens: int | None = None,
 ) -> tuple[list[EvidenceUnitDraft], list[ChunkDraft]]:
     """Build one `EvidenceUnitDraft` + one `ChunkDraft` per text shape, table
     data row, chart, and non-empty notes slide across `presentation`, in
@@ -177,38 +209,48 @@ def chunk_presentation(
     Page provenance doesn't apply to presentations (no concept of a "page" in
     a deck) -- `page_start`/`page_end` are left `None` throughout, exactly
     like a Docling document with no page markers or an `.xlsx` workbook.
+
+    A unit over `max_tokens` (default `settings.chunk_max_tokens`) becomes
+    several unit/chunk pairs sharing its locator plus `{"part": i, "of": n}`;
+    a unit within the cap is emitted unchanged.
     """
+    counter = counter or get_token_counter()
+    cap = max_tokens or settings.chunk_max_tokens
     units: list[EvidenceUnitDraft] = []
     chunks: list[ChunkDraft] = []
     ordinal = 0
 
     def _emit(text: str, locator: dict, unit_kind: str) -> None:
         nonlocal ordinal
-        unit_index = len(units)
-        content_hash = _sha256_hex(text)
         heading = _slide_heading(slide.slide_number)
+        parts = _split_unit_text(text, unit_kind, counter, cap)
 
-        units.append(
-            EvidenceUnitDraft(
-                unit_index=unit_index,
-                heading=heading,
-                text=text,
-                content_hash=content_hash,
-                unit_kind=unit_kind,
-                locator_json=json.dumps(locator, sort_keys=True),
+        for part_index, part_text in enumerate(parts):
+            unit_index = len(units)
+            content_hash = _sha256_hex(part_text)
+            part_loc = part_locator(locator, part_index, len(parts))
+
+            units.append(
+                EvidenceUnitDraft(
+                    unit_index=unit_index,
+                    heading=heading,
+                    text=part_text,
+                    content_hash=content_hash,
+                    unit_kind=unit_kind,
+                    locator_json=json.dumps(part_loc, sort_keys=True),
+                )
             )
-        )
-        chunks.append(
-            ChunkDraft(
-                evidence_unit_index=unit_index,
-                ordinal=ordinal,
-                heading=heading,
-                text=text,
-                content_hash=content_hash,
-                provenance="extracted",
+            chunks.append(
+                ChunkDraft(
+                    evidence_unit_index=unit_index,
+                    ordinal=ordinal,
+                    heading=heading,
+                    text=part_text,
+                    content_hash=content_hash,
+                    provenance="extracted",
+                )
             )
-        )
-        ordinal += 1
+            ordinal += 1
 
     for slide in presentation.slides:
         for text, locator in _slide_text_units(slide):

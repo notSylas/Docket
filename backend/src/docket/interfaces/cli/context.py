@@ -46,6 +46,7 @@ from docket.infra.index.visual_index import LancePageIndexWriter
 from docket.infra.inference.gateway import OllamaGateway
 from docket.services.ingestion.pipeline import IngestionPipeline
 from docket.infra.parsing.docling_wrapper import DoclingParser
+from docket.infra.parsing.tokens import get_token_counter
 from docket.infra.parsing.recipes import DEFAULT_SPLITTER, ChunkRecipe
 from docket.infra.retrieval.resolver import EvidenceResolver
 from docket.services.sources.manager import SourceManager
@@ -230,6 +231,7 @@ class AppContext:
                 self.vector_writer.vector_dimension(),
                 self.visual_index_writer.vector_dimension(),
             ],
+            tokenizer_name=lambda: get_token_counter().name,
         )
 
     @cached_property
@@ -248,7 +250,8 @@ class AppContext:
         return ChunkRecipe(
             chunk_size=self.settings.chunk_size_words,
             overlap=self.settings.chunk_overlap_words,
-            splitter=DEFAULT_SPLITTER,
+            # The cap moves chunk boundaries, so it is part of the recipe identity.
+            splitter=f"{DEFAULT_SPLITTER}:max_tokens={self.settings.chunk_max_tokens}",
             parser_name=self.parser.parser_name,
             parser_version=self.parser.parser_version,
         )
