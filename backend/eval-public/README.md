@@ -137,3 +137,20 @@ measured starting point for Upgrade/05 (rewrite, query signals, numeric tools),
 not a defect in the questions: every failure was read and confirmed to be the
 system's. 100% on out_of_corpus and revoked says nothing about those features
 beyond this synthetic set.
+
+### Extended results after doc 05 steps 1-3 (1 repeat, no judge)
+
+Recorded in `after-period-context-extended-runs.jsonl`. Steps: explicit answer
+sampling, token-budgeted prompt and location lines (step 1), follow-up rewrite
+(step 2), sheet/period context in spreadsheet chunks' indexed text (step 3).
+
+Strict regex accuracy 81.8% (45/55), up from 61.8% at the baseline above. By
+type: numeric 18/24, multi_doc 6/9, follow_up 5/6, table_lookup 5/5,
+out_of_corpus 8/8, revoked 3/3. Retrieval recall@8 (any span) 88.6% (39/44),
+up from 68.2%; wrongful abstention 11.4% (5/44), down from 36.4%; revoked
+leaks 0. The 10 remaining failures are 6 retrieval misses and 4 generation
+errors (wrong arithmetic or units from retrieved evidence), the targets of the
+planned `read_range`/`calculate` tools. The gain comes almost entirely from
+step 3; steps 1 and 2 were roughly neutral on this set (see Upgrade/05).
+Run-to-run noise is about one or two questions. The original 33-question set
+stays at retrieval recall@8 100%.
