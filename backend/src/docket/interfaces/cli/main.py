@@ -150,14 +150,34 @@ def sources_list() -> None:
 # -- ingest --------------------------------------------------------------
 
 
+def _stale_notice(count: int) -> str:
+    noun = "file has" if count == 1 else "files have"
+    return (
+        f"{count} already-ingested {noun} chunks from an older chunking recipe; "
+        "run `docket ingest --rechunk` to update."
+    )
+
+
 @app.command("ingest")
 def ingest(
     source_id: str = typer.Argument(None, help="Source id to ingest."),
     all_sources: bool = typer.Option(False, "--all", help="Ingest every active source."),
+    rechunk: bool = typer.Option(
+        False,
+        "--rechunk",
+        help="Re-chunk already-ingested files whose chunks use an older recipe "
+        "(from the stored originals, not the live files).",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="With --rechunk: list what would be re-chunked, change nothing."
+    ),
 ) -> None:
     """Run (incremental) ingestion for one source, or every active source."""
     if bool(source_id) == bool(all_sources):
         typer.echo("Error: pass exactly one of a source_id or --all.", err=True)
+        raise typer.Exit(code=1)
+    if dry_run and not rechunk:
+        typer.echo("Error: --dry-run only applies together with --rechunk.", err=True)
         raise typer.Exit(code=1)
 
     context = build_context()
@@ -174,7 +194,11 @@ def ingest(
     else:
         target_ids = [source_id]
 
+    if rechunk:
+        raise typer.Exit(code=_rechunk_sources(context, target_ids, dry_run))
+
     exit_code = 0
+    stale_total = 0
     for target_id in target_ids:
         try:
             result = context.pipeline.run_ingestion_for_source(target_id)
@@ -195,8 +219,56 @@ def ingest(
 
         if result.status != "succeeded":
             exit_code = 1
+        stale_total += len(context.pipeline.find_stale_versions(target_id))
+
+    if stale_total:
+        typer.echo(_stale_notice(stale_total))
 
     raise typer.Exit(code=exit_code)
+
+
+def _rechunk_sources(context, target_ids: list[str], dry_run: bool) -> int:
+    exit_code = 0
+    rechunked = failed = up_to_date = 0
+    for target_id in target_ids:
+        try:
+            report = context.pipeline.rechunk_source(target_id, dry_run=dry_run)
+        except (SourceNotFoundError, SourceNotActiveError) as exc:
+            typer.echo(f"Error re-chunking {target_id}: {exc}", err=True)
+            exit_code = 1
+            continue
+        up_to_date += report.up_to_date
+        if dry_run:
+            typer.echo(f"[{target_id}] would re-chunk {len(report.candidates)} file(s):")
+            for candidate in report.candidates:
+                typer.echo(f"  {candidate.path} ({candidate.reason})")
+            continue
+        for result in report.results:
+            if result.status == "failed":
+                failed += 1
+                typer.echo(f"  FAILED: {result.path} -- {result.error}")
+            else:
+                rechunked += 1
+
+    if dry_run:
+        typer.echo(f"Dry run: nothing changed; {up_to_date} file(s) already up to date.")
+        return exit_code
+
+    typer.echo(f"Re-chunked {rechunked}, failed {failed}, skipped {up_to_date} up to date.")
+    if failed:
+        exit_code = 1
+    if rechunked:
+        from docket.infra.index.context import INDEX_TEXT_VERSION
+        from docket.infra.index.manifest import read_manifest
+
+        manifest = read_manifest(context.settings.index_manifest_path)
+        if manifest is not None and manifest.index_text_version < INDEX_TEXT_VERSION:
+            typer.echo(
+                "Other index rows still lack the chunk context prefix "
+                f"(index_text_version {manifest.index_text_version} < {INDEX_TEXT_VERSION}); "
+                "run `docket reindex` to update them."
+            )
+    return exit_code
 
 
 # -- reindex -------------------------------------------------------------

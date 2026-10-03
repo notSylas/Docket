@@ -34,6 +34,10 @@ from pathlib import Path
 
 from docket.infra.parsing.xlsx_wrapper import ParsedWorkbook, RowData, SheetData
 
+# Bump when the context rules above change: it is part of the xlsx chunk recipe,
+# so already-ingested workbooks are reported stale (`docket ingest --rechunk`).
+XLSX_CONTEXT_VERSION = 1
+
 ITEM_MAX_CHARS = 80
 SHEET_CONTEXT_MAX_CHARS = 270
 

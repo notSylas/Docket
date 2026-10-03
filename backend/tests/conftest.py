@@ -1,10 +1,29 @@
 import os
+import tempfile
+from pathlib import Path
 
 import pytest
 
 # The unit suite must never download the embedding tokenizer. Set before
 # `docket.core.config.settings` is first imported.
 os.environ.setdefault("DOCKET_EMBED_TOKENIZER", "heuristic")
+
+# SAFETY NET: no test may ever resolve the real user data directory. Opening
+# the app against it runs database migrations on the user's live data (a test
+# bug once did exactly that). Point every test process at a throwaway dir
+# BEFORE `docket.core.config.settings` is imported; individual tests still
+# override DOCKET_DATA_DIR with their own tmp_path via monkeypatch.
+_REAL_DATA_DIR = Path.home() / ".local" / "share" / "docket"
+os.environ["DOCKET_DATA_DIR"] = tempfile.mkdtemp(prefix="docket-tests-data-")
+
+
+@pytest.fixture(autouse=True)
+def _never_touch_real_data_dir():
+    """Fail loudly (before any code runs) if a test's data dir is the real one."""
+    configured = os.environ.get("DOCKET_DATA_DIR")
+    if configured and Path(configured).expanduser().resolve() == _REAL_DATA_DIR.resolve():
+        pytest.fail(f"test would use the real data dir {_REAL_DATA_DIR}", pytrace=False)
+    yield
 
 
 class WordCounter:

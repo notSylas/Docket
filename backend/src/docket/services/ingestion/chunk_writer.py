@@ -32,20 +32,22 @@ class ChunkWriter:
         self._session_factory = session_factory
         self._chunk_recipe = chunk_recipe
 
-    def ensure_recipe_row(self) -> None:
-        """Get-or-create the `ChunkRecipe` row for `self._chunk_recipe.id`."""
+    def ensure_recipe_row(self, recipe: ChunkRecipe | None = None) -> None:
+        """Get-or-create the `ChunkRecipe` row for `recipe` (default: the
+        writer's own recipe)."""
+        recipe = recipe or self._chunk_recipe
         with self._session_factory() as session:
-            existing = session.get(ChunkRecipeRow, self._chunk_recipe.id)
+            existing = session.get(ChunkRecipeRow, recipe.id)
             if existing is not None:
                 return
             session.add(
                 ChunkRecipeRow(
-                    id=self._chunk_recipe.id,
-                    chunk_size=self._chunk_recipe.chunk_size,
-                    overlap=self._chunk_recipe.overlap,
-                    splitter=self._chunk_recipe.splitter,
-                    parser_name=self._chunk_recipe.parser_name,
-                    parser_version=self._chunk_recipe.parser_version,
+                    id=recipe.id,
+                    chunk_size=recipe.chunk_size,
+                    overlap=recipe.overlap,
+                    splitter=recipe.splitter,
+                    parser_name=recipe.parser_name,
+                    parser_version=recipe.parser_version,
                 )
             )
             session.commit()
@@ -91,9 +93,30 @@ class ChunkWriter:
             )
             session.commit()
 
+    def chunk_recipe_ids_by_version(self, source_id: str) -> dict[str, set[str]]:
+        """`{evidence_version_id: {recipe ids stamped on its chunks}}` for
+        every version of `source_id` that has at least one chunk."""
+        with self._session_factory() as session:
+            stmt = (
+                select(Chunk.evidence_version_id, Chunk.chunk_recipe_id)
+                .where(Chunk.source_id == source_id)
+                .distinct()
+            )
+            out: dict[str, set[str]] = {}
+            for version_id, recipe_id in session.execute(stmt).all():
+                out.setdefault(version_id, set()).add(recipe_id)
+            return out
+
     def persist_units_and_chunks(
-        self, *, source_id: str, evidence_version_id: str, units, chunks
+        self,
+        *,
+        source_id: str,
+        evidence_version_id: str,
+        units,
+        chunks,
+        recipe: ChunkRecipe | None = None,
     ) -> list[ChunkRecord]:
+        recipe = recipe or self._chunk_recipe
         with self._session_factory() as session:
             unit_objs = [
                 EvidenceUnit(
@@ -117,7 +140,7 @@ class ChunkWriter:
             chunk_objs = []
             for c in chunks:
                 chunk_id = compute_chunk_id(
-                    evidence_version_id, self._chunk_recipe.id, c.ordinal, c.content_hash
+                    evidence_version_id, recipe.id, c.ordinal, c.content_hash
                 )
                 chunk_objs.append(
                     Chunk(
@@ -125,7 +148,7 @@ class ChunkWriter:
                         source_id=source_id,
                         evidence_version_id=evidence_version_id,
                         evidence_unit_id=unit_id_by_index[c.evidence_unit_index],
-                        chunk_recipe_id=self._chunk_recipe.id,
+                        chunk_recipe_id=recipe.id,
                         ordinal=c.ordinal,
                         heading=c.heading,
                         text=c.text,

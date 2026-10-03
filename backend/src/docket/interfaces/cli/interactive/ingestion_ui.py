@@ -67,6 +67,13 @@ def _ingest_targets(session: Any, target_ids: list[str]) -> None:
             session.error(f"Error ingesting {target_id}: {exc}")
             continue
         _summarize(session, target_id, result)
+        stale = len(pipeline.find_stale_versions(target_id))
+        if stale:
+            session.say(
+                f"{stale} already-ingested file(s) have chunks from an older recipe; "
+                "run `docket ingest --rechunk` to update.",
+                style="dim",
+            )
 
 
 def _summarize(session: Any, target_id: str, result: Any) -> None:

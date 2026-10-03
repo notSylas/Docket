@@ -114,11 +114,13 @@ from __future__ import annotations
 
 import json
 import logging
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
 from docket.core.config import Settings
@@ -143,7 +145,15 @@ from docket.infra.parsing.chunker import chunk_document
 from docket.infra.parsing.docling_wrapper import DoclingParser
 from docket.infra.parsing.pptx_chunker import chunk_presentation
 from docket.infra.parsing.pptx_wrapper import PptxParser
-from docket.infra.parsing.recipes import ChunkRecipe
+from docket.infra.parsing.recipes import (
+    FAMILY_DOCLING,
+    FAMILY_PPTX,
+    FAMILY_XLSX,
+    ChunkRecipe,
+    pptx_recipe as build_pptx_recipe,
+    recipe_family,
+    xlsx_recipe as build_xlsx_recipe,
+)
 from docket.infra.parsing.xlsx_chunker import chunk_workbook
 from docket.infra.parsing.xlsx_wrapper import XlsxParser
 from docket.services.sources.manager import SourceManager, SourceNotFoundError
@@ -258,6 +268,25 @@ class ProgressEvent:
     result: FileIngestResult | None = None
 
 
+@dataclass(frozen=True)
+class RechunkCandidate:
+    """A version `--rechunk` would (re)process. `reason` is "stale" (READY,
+    chunks carry a recipe other than the current one for its parser family)
+    or "failed" (status FAILED)."""
+
+    version_id: str
+    path: Path
+    reason: str
+
+
+@dataclass
+class RechunkReport:
+    source_id: str
+    candidates: list[RechunkCandidate] = field(default_factory=list)
+    results: list[FileIngestResult] = field(default_factory=list)
+    up_to_date: int = 0
+
+
 @dataclass
 class IngestionJobResult:
     source_id: str
@@ -285,6 +314,8 @@ class IngestionPipeline:
         visual_indexer: VisualIndexer | None = None,
         xlsx_parser: XlsxParser | None = None,
         pptx_parser: PptxParser | None = None,
+        xlsx_recipe: ChunkRecipe | None = None,
+        pptx_recipe: ChunkRecipe | None = None,
         source_manager: SourceManager | None = None,
         manifest_guard: IndexManifestGuard | None = None,
     ) -> None:
@@ -312,6 +343,23 @@ class IngestionPipeline:
         self._gateway = gateway
         self._visual_index_writer = visual_index_writer
         self._settings = settings if settings is not None else _default_settings
+        # One recipe per parser family, each hashing only what its chunker
+        # depends on (see `docket.infra.parsing.recipes`). `chunk_recipe` is
+        # the Docling text-path recipe.
+        self._recipes: dict[str, ChunkRecipe] = {
+            FAMILY_DOCLING: chunk_recipe,
+            FAMILY_XLSX: xlsx_recipe
+            if xlsx_recipe is not None
+            else build_xlsx_recipe(
+                self._settings, self._xlsx_parser.parser_name, self._xlsx_parser.parser_version
+            ),
+            FAMILY_PPTX: pptx_recipe
+            if pptx_recipe is not None
+            else build_pptx_recipe(
+                self._settings, self._pptx_parser.parser_name, self._pptx_parser.parser_version
+            ),
+        }
+
 
         # Three collaborators, each built from these same params (matching
         # `IndexManager`'s dependency-injection precedent: real components
@@ -405,6 +453,48 @@ class IngestionPipeline:
             self._chunk_writer.chunk_ids_for_version(evidence_version_id)
         )
         self._chunk_writer.delete_units_and_chunks(evidence_version_id)
+
+    def _parse_for_family(self, family: str, source_id: str, path: Path):
+        if family == FAMILY_XLSX:
+            return self._xlsx_parser.parse(source_id, path)
+        if family == FAMILY_PPTX:
+            return self._pptx_parser.parse(source_id, path)
+        return self._parser.parse(source_id, path)
+
+    def _chunk_and_index_version(
+        self, family: str, source_id: str, evidence_version_id: str, parsed
+    ) -> list:
+        """Chunk `parsed` with the family's chunker + current recipe, replace
+        the version's units/chunks (and index entries), and index the new
+        chunks. Shared by normal ingestion and `--rechunk`."""
+        recipe = self._recipes[family]
+        if family == FAMILY_XLSX:
+            units, chunks = chunk_workbook(parsed)
+        elif family == FAMILY_PPTX:
+            units, chunks = chunk_presentation(parsed)
+        else:
+            # Prefer the page-marker-annotated text so chunks/units get real
+            # page_start/page_end provenance; fall back to the plain text for
+            # a `ParsedDocument` built without marker info (e.g. some
+            # fixtures) -- chunk_document handles marker-free text fine,
+            # yielding page_start=page_end=None throughout.
+            chunking_text = (
+                parsed.text_with_page_markers
+                if parsed.text_with_page_markers is not None
+                else parsed.text
+            )
+            units, chunks = chunk_document(chunking_text, recipe)
+        self._clear_version_chunks(evidence_version_id)
+        self._chunk_writer.ensure_recipe_row(recipe)
+        records = self._chunk_writer.persist_units_and_chunks(
+            source_id=source_id,
+            evidence_version_id=evidence_version_id,
+            units=units,
+            chunks=chunks,
+            recipe=recipe,
+        )
+        self._index_manager.upsert_chunks(records)
+        return records
 
     def _drop_superseded_index_entries(
         self, before_id: str | None, evidence_version: EvidenceVersion
@@ -533,27 +623,9 @@ class IngestionPipeline:
                     formula_regions=parsed.formula_regions,
                     page_image_hashes=page_image_hashes,
                 )
-            # Prefer the page-marker-annotated text so chunks/units get real
-            # page_start/page_end provenance; fall back to the plain text for
-            # a `ParsedDocument` built without marker info (e.g. some
-            # fixtures) -- chunk_document handles marker-free text fine,
-            # yielding page_start=page_end=None throughout, exactly as before
-            # this checkpoint.
-            chunking_text = (
-                parsed.text_with_page_markers
-                if parsed.text_with_page_markers is not None
-                else parsed.text
+            records = self._chunk_and_index_version(
+                FAMILY_DOCLING, source_id, evidence_version.id, parsed
             )
-            units, chunks = chunk_document(chunking_text, self._chunk_recipe)
-
-            self._clear_version_chunks(evidence_version.id)
-            records = self._chunk_writer.persist_units_and_chunks(
-                source_id=source_id,
-                evidence_version_id=evidence_version.id,
-                units=units,
-                chunks=chunks,
-            )
-            self._index_manager.upsert_chunks(records)
         except Exception:
             self._evidence_manager.mark_version_status(evidence_version.id, VersionStatus.FAILED)
             raise
@@ -588,15 +660,9 @@ class IngestionPipeline:
 
         try:
             workbook = self._xlsx_parser.parse(source_id, path)
-            units, chunks = chunk_workbook(workbook)
-            self._clear_version_chunks(evidence_version.id)
-            records = self._chunk_writer.persist_units_and_chunks(
-                source_id=source_id,
-                evidence_version_id=evidence_version.id,
-                units=units,
-                chunks=chunks,
+            records = self._chunk_and_index_version(
+                FAMILY_XLSX, source_id, evidence_version.id, workbook
             )
-            self._index_manager.upsert_chunks(records)
         except Exception:
             self._evidence_manager.mark_version_status(evidence_version.id, VersionStatus.FAILED)
             raise
@@ -630,21 +696,121 @@ class IngestionPipeline:
 
         try:
             presentation = self._pptx_parser.parse(source_id, path)
-            units, chunks = chunk_presentation(presentation)
-            self._clear_version_chunks(evidence_version.id)
-            records = self._chunk_writer.persist_units_and_chunks(
-                source_id=source_id,
-                evidence_version_id=evidence_version.id,
-                units=units,
-                chunks=chunks,
+            records = self._chunk_and_index_version(
+                FAMILY_PPTX, source_id, evidence_version.id, presentation
             )
-            self._index_manager.upsert_chunks(records)
         except Exception:
             self._evidence_manager.mark_version_status(evidence_version.id, VersionStatus.FAILED)
             raise
 
         self._evidence_manager.mark_version_status(evidence_version.id, VersionStatus.READY)
         return FileIngestResult(path=path, status="ingested", chunks_written=len(records))
+
+    # -- recipe drift / re-chunk -------------------------------------------
+
+    def _classify_versions(self, source_id: str) -> tuple[list[RechunkCandidate], int]:
+        """Re-chunkable versions of `source_id` plus the count of READY
+        versions already on the current recipe.
+
+        Stale = READY version with at least one chunk whose stamped recipe
+        ids are not exactly {current recipe id for its parser family} (a
+        version whose chunks disagree among themselves is stale; a version
+        with zero chunks never is). Re-chunkable = READY-and-stale, or FAILED.
+        SUPERSEDED/PENDING versions are never listed. Raises for sources that
+        are not ACTIVE/MISSING (revoked etc.).
+        """
+        self._load_active_source(source_id)
+        recipe_ids = self._chunk_writer.chunk_recipe_ids_by_version(source_id)
+        with self._session_factory() as session:
+            versions = list(
+                session.execute(
+                    select(EvidenceVersion)
+                    .where(
+                        EvidenceVersion.source_id == source_id,
+                        EvidenceVersion.status.in_([VersionStatus.READY, VersionStatus.FAILED]),
+                    )
+                    .order_by(EvidenceVersion.file_path, EvidenceVersion.observed_at)
+                ).scalars()
+            )
+        candidates: list[RechunkCandidate] = []
+        up_to_date = 0
+        for version in versions:
+            path = Path(version.file_path or version.content_hash)
+            if version.status == VersionStatus.FAILED:
+                candidates.append(RechunkCandidate(version.id, path, "failed"))
+                continue
+            current_id = self._recipes[recipe_family(version.file_path)].id
+            stamped = recipe_ids.get(version.id, set())
+            if stamped and stamped != {current_id}:
+                candidates.append(RechunkCandidate(version.id, path, "stale"))
+            else:
+                up_to_date += 1
+        return candidates, up_to_date
+
+    def find_stale_versions(self, source_id: str) -> list[RechunkCandidate]:
+        """READY versions whose chunks were made with an out-of-date recipe."""
+        candidates, _ = self._classify_versions(source_id)
+        return [c for c in candidates if c.reason == "stale"]
+
+    def find_rechunk_candidates(self, source_id: str) -> tuple[list[RechunkCandidate], int]:
+        return self._classify_versions(source_id)
+
+    def rechunk_version(self, source_id: str, candidate: RechunkCandidate) -> FileIngestResult:
+        """Re-chunk one version from its STORED original bytes (never the
+        live file): PENDING -> parse + chunk with the current recipe ->
+        replace chunks/index entries -> READY; any failure leaves FAILED.
+        Visual/formula side passes and page images are not touched."""
+        with self._session_factory() as session:
+            version = session.get(EvidenceVersion, candidate.version_id)
+            content_hash = version.content_hash
+            file_path = version.file_path
+        family = recipe_family(file_path)
+        store = self._evidence_manager.store
+        if not store.exists(content_hash):
+            # Nothing has been changed yet: leave the version as it was.
+            return FileIngestResult(
+                path=candidate.path,
+                status="failed",
+                error=f"stored original is missing from the evidence store (content hash {content_hash[:12]})",
+            )
+        self._evidence_manager.mark_version_status(candidate.version_id, VersionStatus.PENDING)
+        try:
+            with tempfile.TemporaryDirectory(prefix="docket-rechunk-") as tmp:
+                # Keep the original basename: the xlsx context derives the
+                # fiscal-year label from the file name stem.
+                tmp_path = Path(tmp) / candidate.path.name
+                tmp_path.write_bytes(store.get(content_hash))
+                parsed = self._parse_for_family(family, source_id, tmp_path)
+            records = self._chunk_and_index_version(family, source_id, candidate.version_id, parsed)
+        except Exception as exc:  # noqa: BLE001
+            self._evidence_manager.mark_version_status(candidate.version_id, VersionStatus.FAILED)
+            return FileIngestResult(path=candidate.path, status="failed", error=str(exc))
+        self._evidence_manager.mark_version_status(candidate.version_id, VersionStatus.READY)
+        return FileIngestResult(path=candidate.path, status="ingested", chunks_written=len(records))
+
+    def rechunk_source(
+        self,
+        source_id: str,
+        *,
+        dry_run: bool = False,
+        progress: Callable[[int, int, RechunkCandidate], None] | None = None,
+    ) -> RechunkReport:
+        candidates, up_to_date = self._classify_versions(source_id)
+        report = RechunkReport(source_id=source_id, candidates=candidates, up_to_date=up_to_date)
+        if dry_run or not candidates:
+            return report
+        for index, candidate in enumerate(candidates, start=1):
+            if progress is not None:
+                progress(index, len(candidates), candidate)
+            report.results.append(self.rechunk_version(source_id, candidate))
+        # Same repair pass a normal run ends with: index entries of versions
+        # that are no longer READY (a failed re-chunk) must not stay servable.
+        self._index_manager.reconcile_source(
+            source_id,
+            current_chunk_ids=self._chunk_writer.current_chunk_ids_for_source(source_id),
+            current_version_ids=self._chunk_writer.ready_version_ids_for_source(source_id),
+        )
+        return report
 
     def _finalize_job(
         self, job_id: str, status: IngestionJobStatus, error: str | None, stats: dict

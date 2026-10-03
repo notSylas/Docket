@@ -47,7 +47,7 @@ from docket.infra.inference.gateway import OllamaGateway
 from docket.services.ingestion.pipeline import IngestionPipeline
 from docket.infra.parsing.docling_wrapper import DoclingParser
 from docket.infra.parsing.tokens import get_token_counter
-from docket.infra.parsing.recipes import DEFAULT_SPLITTER, ChunkRecipe
+from docket.infra.parsing.recipes import ChunkRecipe, docling_recipe
 from docket.infra.retrieval.resolver import EvidenceResolver
 from docket.services.sources.manager import SourceManager
 from docket.services.sources.purge import SourcePurgeService
@@ -247,13 +247,10 @@ class AppContext:
 
     @cached_property
     def chunk_recipe(self) -> ChunkRecipe:
-        return ChunkRecipe(
-            chunk_size=self.settings.chunk_size_words,
-            overlap=self.settings.chunk_overlap_words,
-            # The cap moves chunk boundaries, so it is part of the recipe identity.
-            splitter=f"{DEFAULT_SPLITTER}:max_tokens={self.settings.chunk_max_tokens}",
-            parser_name=self.parser.parser_name,
-            parser_version=self.parser.parser_version,
+        """The Docling text-path recipe (xlsx/pptx get their own: the
+        pipeline derives them from the settings and parser versions)."""
+        return docling_recipe(
+            self.settings, self.parser.parser_name, self.parser.parser_version
         )
 
     @cached_property
