@@ -14,6 +14,13 @@ their positions to derive ``page_start``/``page_end`` for each unit and chunk.
 If a unit/chunk's text contains no marker and none has appeared anywhere
 earlier in the document either, both fields are ``None`` -- an honest
 "unknown" rather than a guessed page number.
+
+Table padding: Docling pads pipe-table cells with runs of spaces and emits very
+long ``|-----|`` separator rows. Table rows are normalized before chunking and
+embedding (``_normalize_table_row``): cells are stripped of leading/trailing
+whitespace and separator cells shortened to ``---`` (alignment colons kept).
+Cell content is untouched, so extracted content is unchanged apart from layout
+whitespace.
 """
 
 from __future__ import annotations
@@ -327,6 +334,32 @@ def _cells(row: str) -> list[str]:
     return [c.strip() for c in row.split("|")]
 
 
+_UNESCAPED_PIPE_RE = re.compile(r"(?<!\\)\|")
+_SEPARATOR_CELL_RE = re.compile(r"^(:?)-{3,}(:?)$")
+
+# Layout-whitespace normalization of table rows (see module docstring).
+NORMALIZE_TABLE_PADDING = True
+
+
+def _normalize_table_row(row: str) -> str:
+    """Strip padding spaces inside cells and shorten separator cells, without
+    changing any cell's text. Non-table lines are returned unchanged."""
+    if not NORMALIZE_TABLE_PADDING or not _TABLE_ROW_RE.match(row):
+        return row
+    body = row.strip()
+    body = body[1:]
+    if body.endswith("|") and not body.endswith("\\|"):
+        body = body[:-1]
+    cells = [c.strip() for c in _UNESCAPED_PIPE_RE.split(body)]
+    if _TABLE_SEPARATOR_RE.match(row):
+        cells = [
+            f"{m.group(1)}---{m.group(2)}" if (m := _SEPARATOR_CELL_RE.match(c)) else c
+            for c in cells
+        ]
+        return "|" + "|".join(cells) + "|"
+    return _render_row(cells)
+
+
 def _render_row(cells: list[str]) -> str:
     return "| " + " | ".join(cells) + " |"
 
@@ -363,6 +396,37 @@ def _split_row_by_cells(
     return out
 
 
+def _line_rows(
+    lines: list[str], page: int | None
+) -> tuple[list[tuple[str, int | None]], int | None]:
+    """``(text, page)`` per non-empty line: page markers stripped, table rows
+    padding-normalized, ``page`` being the page in effect at the line's first
+    word (or the running page for a marker-only/wordless line). Also returns
+    the page in effect after the last line."""
+    rows: list[tuple[str, int | None]] = []
+    for line in lines:
+        words, pages, page = _words_with_pages(line, page)
+        text = _normalize_table_row(_strip_page_markers(line).strip())
+        if text:
+            rows.append((text, pages[0] if words else page))
+    return rows, page
+
+
+def _merged_section_chunk(
+    lines: list[str], page: int | None, counter: TokenCounter, cap: int
+) -> tuple[tuple[str, int | None, int | None] | None, int | None]:
+    """One newline-preserving chunk for a whole mixed prose+table section, or
+    ``None`` if it does not fit ``cap`` (the caller then splits per segment).
+    No header repetition happens here: the chunk is the section as written."""
+    rows, end_page = _line_rows(lines, page)
+    if not rows:
+        return None, end_page
+    text = "\n".join(t for t, _ in rows)
+    if counter.count(text) > cap:
+        return None, end_page
+    return (text, rows[0][1], rows[-1][1]), end_page
+
+
 def _table_chunks(
     lines: list[str], page: int | None, counter: TokenCounter, cap: int
 ) -> tuple[list[tuple[str, int | None, int | None]], int | None]:
@@ -373,12 +437,7 @@ def _table_chunks(
     repetition duplicates extracted content on purpose: ``Chunk.text`` of a
     later part is not a verbatim slice of the document. A row too big for
     ``cap`` on its own is split by cells."""
-    rows: list[tuple[str, int | None]] = []
-    for line in lines:
-        words, pages, page = _words_with_pages(line, page)
-        text = _strip_page_markers(line).strip()
-        if text:
-            rows.append((text, pages[0] if words else page))
+    rows, page = _line_rows(lines, page)
     texts = [t for t, _ in rows]
 
     if counter.count("\n".join(texts)) <= cap:
@@ -421,7 +480,10 @@ def chunk_document(
     overlap, never exceeding ``max_tokens`` (default
     ``settings.chunk_max_tokens``) as measured by ``counter`` (default
     ``get_token_counter()``). Pipe tables inside a unit are chunked
-    separately, on row boundaries (see ``_table_chunks``). ``ordinal`` runs
+    separately, on row boundaries (see ``_table_chunks``), unless the section mixes
+    prose and tables and fits the cap whole, in which case it is one chunk
+    (merge-fit; over-cap mixed sections still split per segment, and the
+    lead-in prose is not kept with the first table part). ``ordinal`` runs
     across the whole document's chunk sequence, starting at 0, not reset
     per-unit.
 
@@ -463,7 +525,17 @@ def chunk_document(
 
         drafts: list[tuple[str, int | None, int | None]] = []
         page = section_start_page
-        for kind, seg_lines in _segment_section(raw_section):
+        segments = _segment_section(raw_section)
+        if len(segments) > 1:
+            # Prose and table(s) mixed: when the whole section fits the cap,
+            # keep it as ONE newline-preserving chunk so a table is not
+            # detached from the heading/lead-in that identifies it.
+            merged, merged_page = _merged_section_chunk(
+                [line for _, seg in segments for line in seg], page, counter, cap
+            )
+            if merged is not None:
+                drafts, page, segments = [merged], merged_page, []
+        for kind, seg_lines in segments:
             if kind == "table":
                 table_drafts, page = _table_chunks(seg_lines, page, counter, cap)
                 drafts.extend(table_drafts)

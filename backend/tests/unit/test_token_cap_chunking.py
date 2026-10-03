@@ -173,3 +173,52 @@ def test_recipe_id_changes_with_splitter_and_cap() -> None:
 
     assert rid(DEFAULT_SPLITTER) != rid("heading_then_sliding_window")
     assert rid(f"{DEFAULT_SPLITTER}:max_tokens=512") != rid(f"{DEFAULT_SPLITTER}:max_tokens=256")
+
+
+# -- merge-fit, padding normalization ---------------------------------------
+
+
+def test_mixed_section_under_cap_is_one_chunk_with_newlines() -> None:
+    md = "# Title\n\nSome intro prose here.\n\n" + _table(3)
+    _, chunks = chunk_document(md, _recipe(), COUNTER, max_tokens=200)
+    assert len(chunks) == 1
+    lines = chunks[0].text.split("\n")
+    assert lines[0] == "# Title"
+    assert lines[1] == "Some intro prose here."
+    assert lines[2:] == _table(3).split("\n")
+
+
+def test_mixed_section_over_cap_still_splits_on_rows() -> None:
+    md = "# Title\n\nIntro prose.\n\n" + _table(40)
+    _, chunks = chunk_document(md, _recipe(), COUNTER, max_tokens=40)
+    assert len(chunks) > 2
+    assert all(COUNTER.count(c.text) <= 40 for c in chunks)
+    parts = [c.text for c in chunks if c.text.startswith("| H0")]
+    assert len(parts) > 1
+    assert all(p.split("\n")[:2] == _table(1).split("\n")[:2] for p in parts)
+
+
+def test_merged_section_page_span() -> None:
+    md = "<!--PAGE:1-->\n# Title\n\nIntro.\n\n<!--PAGE:2-->\n" + _table(2)
+    _, chunks = chunk_document(md, _recipe(), COUNTER, max_tokens=200)
+    assert len(chunks) == 1
+    assert (chunks[0].page_start, chunks[0].page_end) == (1, 2)
+    assert "PAGE" not in chunks[0].text
+
+
+def test_table_padding_normalized_without_changing_cells() -> None:
+    md = (
+        "| **Project status**        | Architecture defined; a \\| b   |\n"
+        "|---------------------------|:-----------------:|\n"
+        "| x                         |    y z       |"
+    )
+    _, chunks = chunk_document(md, _recipe(), COUNTER, max_tokens=200)
+    assert chunks[0].text.split("\n") == [
+        "| **Project status** | Architecture defined; a \\| b |",
+        "|---|:---:|",
+        "| x | y z |",
+    ]
+
+
+def test_recipe_splitter_id_bumped() -> None:
+    assert DEFAULT_SPLITTER == "heading_then_sliding_window_tokcap2"

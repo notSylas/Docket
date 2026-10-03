@@ -16,7 +16,9 @@ from docket.core.db.identity import compute_recipe_id
 
 # `_tokcap` marks the checkpoint that added token-bounded chunks and table-aware
 # splitting: chunk boundaries changed, so new chunks get a new recipe id.
-DEFAULT_SPLITTER = "heading_then_sliding_window_tokcap"
+# `_tokcap2`: mixed prose+table sections that fit the cap stay one chunk, and
+# table padding is normalized.
+DEFAULT_SPLITTER = "heading_then_sliding_window_tokcap2"
 
 
 @dataclass(frozen=True)
