@@ -4,8 +4,19 @@ A small JSON file (`Settings.index_manifest_path`, next to the LanceDB
 directory) holding `schema_version`, `embed_model`, `embed_dimension`,
 `embed_instruction` (null for now), `tokenizer` (the chunk-size token counter's
 name, informational only: it decides chunk cuts, not the vector space, so a
-difference is never a mismatch) and `created_at`/`updated_at`. It is written atomically (temp file +
+difference is never a mismatch), `index_text_version` (the chunk-context prefix
+format, see `docket.infra.index.context`; 1 = file name + heading breadcrumb
+prefixed to embedded/FTS text, 0 = none, which is also how a legacy manifest
+without the field reads; informational only, since the prefix does not change
+the vector space, so a difference is never a mismatch and nothing enforces it)
+and `created_at`/`updated_at`. It is written atomically (temp file +
 `os.replace`).
+
+An index built before the prefix existed keeps its unprefixed rows until
+`docket reindex` (or re-ingesting the source) rewrites them; nothing reindexes
+automatically. `index_text_version` is written as 1 on creation and by reindex.
+An existing manifest is never bumped by ordinary ingestion (the old rows would
+still be unprefixed), and a legacy adoption records 0 for the same reason.
 
 Policy, enforced by `IndexManifestGuard`:
 
@@ -35,6 +46,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable
 
+from docket.infra.index.context import INDEX_TEXT_VERSION
+
 SCHEMA_VERSION = 1
 
 
@@ -52,6 +65,8 @@ class IndexManifest:
     tokenizer: str | None
     created_at: str
     updated_at: str
+    # Absent in manifests written before the context prefix: reads as 0.
+    index_text_version: int = 0
 
 
 def _now() -> str:
@@ -64,6 +79,7 @@ def new_manifest(
     *,
     created_at: str | None = None,
     tokenizer: str | None = None,
+    index_text_version: int = INDEX_TEXT_VERSION,
 ) -> IndexManifest:
     now = _now()
     return IndexManifest(
@@ -74,6 +90,7 @@ def new_manifest(
         tokenizer=tokenizer,
         created_at=created_at or now,
         updated_at=now,
+        index_text_version=index_text_version,
     )
 
 
@@ -154,6 +171,7 @@ class IndexManifestGuard:
                     self._path, replace(manifest, tokenizer=tokenizer, updated_at=_now())
                 )
             return
+        legacy = False
         for existing in self._table_dimensions():
             if existing is not None and existing != dimension:
                 raise IndexManifestMismatchError(
@@ -161,8 +179,16 @@ class IndexManifestGuard:
                     f"index manifest) but the embedding model produced {dimension}. "
                     "Run `docket reindex` to rebuild it."
                 )
+            legacy = legacy or existing is not None
         write_manifest(
-            self._path, new_manifest(self._embed_model, dimension, tokenizer=tokenizer)
+            self._path,
+            new_manifest(
+                self._embed_model,
+                dimension,
+                tokenizer=tokenizer,
+                # Adopted tables predate the prefix: their rows stay unprefixed.
+                index_text_version=0 if legacy else INDEX_TEXT_VERSION,
+            ),
         )
 
     def check_query(self, dimension: int) -> None:

@@ -38,6 +38,11 @@ class ChunkRecord:
     # image back to the chunk_ids on that page without a DB round trip.
     page_start: int | None = None
     page_end: int | None = None
+    # `text` prefixed with the file name and heading breadcrumb (see
+    # `docket.infra.index.context`): what is embedded and FTS-indexed. `None`
+    # means "same as `text`". `text` itself stays verbatim for the LanceDB
+    # `text` column.
+    index_text: str | None = None
 
 
 @dataclass

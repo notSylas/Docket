@@ -23,6 +23,7 @@ from docket.core.db.models import (
     VersionStatus,
 )
 from docket.infra.index.base import ChunkRecord
+from docket.infra.index.context import index_text_for_chunk
 from docket.infra.parsing.recipes import ChunkRecipe
 
 
@@ -107,6 +108,8 @@ class ChunkWriter:
             ]
             session.add_all(unit_objs)
             session.flush()
+            file_path = session.get(EvidenceVersion, evidence_version_id).file_path
+            locator_by_unit_id = {obj.id: obj.locator_json for obj in unit_objs}
             unit_id_by_index = {
                 u.unit_index: obj.id for u, obj in zip(units, unit_objs)
             }
@@ -148,6 +151,9 @@ class ChunkWriter:
                     content_hash=c.content_hash,
                     page_start=c.page_start,
                     page_end=c.page_end,
+                    index_text=index_text_for_chunk(
+                        file_path, locator_by_unit_id[c.evidence_unit_id], c.heading, c.text
+                    ),
                 )
                 for c in chunk_objs
             ]

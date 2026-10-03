@@ -1,6 +1,8 @@
 """`reindex` -- rebuild FTS5 and the LanceDB `chunks`/`pages` tables from
 SQLite under the currently configured embedding model, then write the index
-manifest (see `docket.infra.index.manifest`).
+manifest (see `docket.infra.index.manifest`). Embedded and FTS-indexed chunk
+text gets the file-name/heading context prefix (`docket.infra.index.context`);
+this is how an index built before the prefix existed is upgraded.
 
 What is indexed: the chunks of READY evidence versions whose source is ACTIVE
 or MISSING -- what ingestion indexes (chunks are indexed before a version is
@@ -35,6 +37,7 @@ import pyarrow as pa
 from sqlalchemy import Engine, bindparam, text
 
 from docket.core.db.models import SourceStatus, VersionStatus
+from docket.infra.index.context import INDEX_TEXT_VERSION, index_text_for_chunk
 from docket.infra.index.manifest import new_manifest, read_manifest, write_manifest
 from docket.infra.inference.gateway import InferenceGateway, embed_texts
 
@@ -43,9 +46,11 @@ _PAGES = "pages"
 _STAGING_SUFFIX = "__reindex"
 
 _ELIGIBLE_CHUNKS_SQL = text(
-    "SELECT chunks.id, chunks.source_id, chunks.evidence_version_id, chunks.text "
+    "SELECT chunks.id, chunks.source_id, chunks.evidence_version_id, chunks.text, "
+    "evidence_versions.file_path, evidence_units.locator_json, chunks.heading "
     "FROM chunks "
     "JOIN evidence_versions ON evidence_versions.id = chunks.evidence_version_id "
+    "LEFT JOIN evidence_units ON evidence_units.id = chunks.evidence_unit_id "
     "JOIN sources ON sources.id = chunks.source_id "
     "WHERE evidence_versions.status = :ready AND sources.status IN :source_statuses "
     "ORDER BY chunks.id"
@@ -163,8 +168,11 @@ def reindex(
             }
             for r in chunk_rows
         ]
+        # What is embedded and FTS-indexed carries the context prefix (same
+        # function as ingestion); the stored `text` columns stay verbatim.
+        index_texts = [index_text_for_chunk(r[4], r[5], r[6], r[3]) for r in chunk_rows]
         dimension = _build_staging(
-            db, chunks_staging, chunk_dicts, [r[3] for r in chunk_rows], gateway, batch_size, sleep
+            db, chunks_staging, chunk_dicts, index_texts, gateway, batch_size, sleep
         )
         page_dimension = _build_staging(
             db,
@@ -220,7 +228,7 @@ def reindex(
                 always=live_pages is not None,
                 undo=undo,
             )
-            _rewrite_fts(engine, chunk_dicts)
+            _rewrite_fts(engine, chunk_dicts, index_texts)
             previous = read_manifest(manifest_path)
             write_manifest(
                 manifest_path,
@@ -276,15 +284,16 @@ def _swap(
         undo.append(lambda: db.open_table(name).restore(old_version))
 
 
-def _rewrite_fts(engine: Engine, chunk_dicts: list[dict]) -> None:
-    """Replace the whole FTS5 table contents in one SQLite transaction."""
+def _rewrite_fts(engine: Engine, chunk_dicts: list[dict], index_texts: list[str]) -> None:
+    """Replace the whole FTS5 table contents in one SQLite transaction, indexing
+    the prefixed `index_texts` rather than the verbatim chunk text."""
     with engine.begin() as conn:
         conn.execute(text("DELETE FROM fts_chunks"))
-        for row in chunk_dicts:
+        for row, index_text in zip(chunk_dicts, index_texts):
             conn.execute(
                 text(
                     "INSERT INTO fts_chunks (chunk_id, text, evidence_version_id, source_id) "
                     "VALUES (:chunk_id, :text, :evidence_version_id, :source_id)"
                 ),
-                row,
+                {**row, "text": index_text},
             )

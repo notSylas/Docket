@@ -64,7 +64,7 @@ class IndexManager:
 
         embeddings = embed_texts(
             self._gateway,
-            [r.text for r in to_write],
+            [r.index_text or r.text for r in to_write],
             batch_size=self._embed_batch_size,
             sleep=self._sleep,
         )

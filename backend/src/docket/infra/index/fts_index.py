@@ -58,7 +58,7 @@ class FtsIndexWriter:
                     ),
                     {
                         "chunk_id": record.chunk_id,
-                        "text": record.text,
+                        "text": record.index_text or record.text,
                         "evidence_version_id": record.evidence_version_id,
                         "source_id": record.source_id,
                     },
