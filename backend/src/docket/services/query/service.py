@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from dataclasses import replace as dataclass_replace
 from typing import Any, Callable
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
@@ -43,7 +44,7 @@ from docket.services.query.citations import (
     validate_citations,
 )
 from docket.services.query.latex import normalize_latex
-from docket.prompts.query import rewrite_prompt
+from docket.prompts.query import period_ambiguity_note, rewrite_prompt
 from docket.services.query.prompts import (
     ABSTENTION_PHRASE,
     AGENT_SYSTEM_PROMPT,
@@ -51,6 +52,14 @@ from docket.services.query.prompts import (
     REWRITE_SYSTEM_PROMPT,
     SYSTEM_PROMPT,
     SYSTEM_PROMPT_WITH_HISTORY,
+)
+from docket.services.query.signals import (
+    PeriodAmbiguity,
+    QuerySignals,
+    detect_period_ambiguity,
+    extract_signals,
+    has_period,
+    load_eligible_files,
 )
 from docket.infra.parsing.tokens import get_token_counter
 from docket.infra.retrieval.hybrid import hybrid_search
@@ -83,6 +92,12 @@ class QueryResult(BaseModel):
     # Follow-up rewrite used as a second retrieval query (None if no rewrite
     # ran or it was unusable). Never evidence, never cited.
     standalone_query: str | None = None
+    # File names the retrieval was restricted to because the question explicitly
+    # named them (None = not scoped). See `docket.services.query.signals`.
+    scoped_to: list[str] | None = None
+    # Set (reason "period") when the answer was asked to cover each fiscal year
+    # and end with a clarifying question; None otherwise.
+    ambiguity: dict[str, Any] | None = None
 
 
 # Tools whose successful results make chunks citable on the agent path.
@@ -239,6 +254,33 @@ class QueryService:
         # Follow-up rewrite of the CURRENT agent run, read by the agent's
         # `search_knowledge` tool for every call (see `_ask_agent`).
         self._run_extra_queries: list[str] = []
+        # Evidence versions the CURRENT agent run is scoped to (explicit file
+        # name), read by the agent's `search_knowledge` tool for every call.
+        self._run_scope_ids: list[str] = []
+
+    def _query_signals(
+        self, question: str, standalone: str | None, history: list[ConversationTurn] | None
+    ) -> QuerySignals | None:
+        """Deterministic signals for this turn (None when both signal features
+        are off). The scope comes from the literal question, else from the
+        follow-up rewrite (which carries a file named earlier in the
+        conversation); `has_period` is true when the question, the rewrite or
+        the conversation so far states a period, so a follow-up never re-asks."""
+        if not (self._settings.query_scope_enabled or self._settings.query_ambiguity_enabled):
+            return None
+        files = load_eligible_files(self._engine)
+        signals = extract_signals(question, files)
+        if not signals.scoped and standalone:
+            alt = extract_signals(standalone, files)
+            if alt.scoped:
+                signals = dataclass_replace(
+                    signals, scope_version_ids=alt.scope_version_ids, scope_files=alt.scope_files
+                )
+        period = signals.has_period or any(
+            has_period(text)
+            for text in [standalone or "", *[f"{t.question} {t.answer}" for t in history or []]]
+        )
+        return dataclass_replace(signals, has_period=period)
 
     def _get_agent(self) -> Any:
         if self._agent is None:
@@ -253,6 +295,7 @@ class QueryService:
                 manifest_guard=self._manifest_guard,
                 page_table=self._page_table,
                 extra_queries_provider=lambda: self._run_extra_queries,
+                scope_provider=lambda: self._run_scope_ids,
             )
         return self._agent
 
@@ -299,6 +342,13 @@ class QueryService:
         # Follow-up rewrite: never on the first turn. The agent path computes
         # the same rewrite once per run (see `_ask_agent`).
         standalone = self._rewrite_followup(question, history)
+        signals = self._query_signals(question, standalone, history)
+        scope_ids = (
+            list(signals.scope_version_ids)
+            if signals is not None and self._settings.query_scope_enabled
+            else []
+        )
+        scoped_to = list(signals.scope_files) if scope_ids and signals is not None else None
         ranked_chunks = hybrid_search(
             engine=self._engine,
             table=self._table,
@@ -308,7 +358,24 @@ class QueryService:
             page_table=self._page_table,
             manifest_guard=self._manifest_guard,
             **({"extra_queries": [standalone]} if standalone else {}),
+            **({"scope_version_ids": scope_ids} if scope_ids else {}),
         )
+
+        if not ranked_chunks and scope_ids:
+            # The named file yields nothing retrievable: say so; never widen the
+            # search to other files behind the user's back.
+            names = ", ".join(scoped_to or [])
+            return QueryResult(
+                question=question,
+                answer=f"Nothing was found in {names}: it has no searchable content, "
+                "so no other file was searched.",
+                citations=[],
+                abstained=True,
+                validation_warnings=[f"no retrievable chunks in the named file {names}"],
+                mode=QueryMode.FAST.value,
+                standalone_query=standalone,
+                scoped_to=scoped_to,
+            )
 
         if not ranked_chunks:
             # Nothing retrieved at all -- skip generation entirely. There is
@@ -323,6 +390,7 @@ class QueryService:
                 validation_warnings=[],
                 mode=QueryMode.FAST.value,
                 standalone_query=standalone,
+                scoped_to=scoped_to,
             )
 
         try:
@@ -332,6 +400,7 @@ class QueryService:
                 question=question, answer=ABSTENTION_PHRASE, citations=[],
                 abstained=True, validation_warnings=["retrieved evidence is no longer available"],
                 mode=QueryMode.FAST.value, standalone_query=standalone,
+                scoped_to=scoped_to,
             )
         # Token-budget fitting is FAST-PATH ONLY: `resolved` is in rank order
         # (best first), so dropping the tail drops the weakest chunks. Agent
@@ -339,13 +408,33 @@ class QueryService:
         # equivalent and relies on the agent's own bounded tool budget.
         system, prompt, resolved, dropped = self._fit_prompt(question, history, resolved)
 
+        # Ambiguous period (doc 05 section 6): no file scope, no stated period,
+        # and the chunks that will be shown come from same-sheet workbooks of
+        # different fiscal years. The model is told to answer for each and ask.
+        ambiguity: PeriodAmbiguity | None = None
+        if (
+            self._settings.query_ambiguity_enabled
+            and signals is not None
+            and not scope_ids
+            and not signals.has_period
+        ):
+            ambiguity = detect_period_ambiguity(resolved)
+            if ambiguity is not None:
+                system += period_ambiguity_note(
+                    [(o.file, o.fiscal_year, o.context_lines) for o in ambiguity.options]
+                )
+
         answer = self._gateway.generate(system=system, prompt=prompt, **self._answer_opts())
 
         return self._finalize_answer(
             question=question, answer=answer, resolved=resolved,
             mode=QueryMode.FAST, retry_system=system, retry_prompt=prompt,
             dropped_chunk_ids=dropped,
-        ).model_copy(update={"standalone_query": standalone})
+        ).model_copy(update={
+            "standalone_query": standalone,
+            "scoped_to": scoped_to,
+            "ambiguity": ambiguity.to_dict() if ambiguity is not None else None,
+        })
 
     def _rewrite_followup(
         self, question: str, history: list[ConversationTurn] | None
@@ -521,6 +610,15 @@ class QueryService:
         # every `search_knowledge` call of this run (cleared afterwards).
         standalone = self._rewrite_followup(question, history)
         self._run_extra_queries = [standalone] if standalone else []
+        # Scope parity with the fast path: an explicitly named file restricts
+        # every search_knowledge call of this run (no ambiguity note here).
+        signals = self._query_signals(question, standalone, history)
+        self._run_scope_ids = (
+            list(signals.scope_version_ids)
+            if signals is not None and self._settings.query_scope_enabled
+            else []
+        )
+        scoped_to = list(signals.scope_files) if self._run_scope_ids and signals is not None else None
 
         system_prompt = AGENT_SYSTEM_PROMPT_WITH_HISTORY if history else AGENT_SYSTEM_PROMPT
         messages_in: list = [SystemMessage(content=system_prompt)]
@@ -541,6 +639,7 @@ class QueryService:
             result_state = agent.invoke(initial_state, config={"recursion_limit": 50})
         finally:
             self._run_extra_queries = []
+            self._run_scope_ids = []
         messages = result_state["messages"]
 
         final_ai_message = next(
@@ -567,4 +666,4 @@ class QueryService:
             mode=QueryMode.AGENT,
             retry_system=SYSTEM_PROMPT,
             retry_prompt=f"Context:\n{build_context_block(resolved)}\n\nQuestion: {question}\n\nAnswer:",
-        ).model_copy(update={"standalone_query": standalone})
+        ).model_copy(update={"standalone_query": standalone, "scoped_to": scoped_to})

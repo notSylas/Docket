@@ -73,6 +73,13 @@ class Settings(BaseSettings):
     rewrite_temperature: float = 0.0
     rewrite_think: bool = False
     rewrite_num_predict: int = 128
+    # Query signals (Upgrade doc 05 section 6), each ablatable. Scope: a question
+    # that EXPLICITLY names exactly one indexed file searches inside that file
+    # only. Ambiguity: a question with no stated period whose evidence spans
+    # same-sheet workbooks of different fiscal years is answered per fiscal year
+    # and ends by asking which one was meant. Off = previous behaviour exactly.
+    query_scope_enabled: bool = True
+    query_ambiguity_enabled: bool = True
     # Tokens kept free for the answer when fitting the prompt into `num_ctx`
     # (`QueryService` drops lowest-ranked chunks past `num_ctx - reserve`).
     answer_token_reserve: int = 1024

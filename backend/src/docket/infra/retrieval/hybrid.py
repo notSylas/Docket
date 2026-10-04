@@ -63,6 +63,34 @@ _FTS_STOPWORDS = frozenset(
 
 _WORD_RE = re.compile(r"\w+")
 
+# A number written with thousands separators: digit groups of exactly three
+# after each comma (`1,234.56`, `6,545,000`, `-1,234`). Lists such as "1,2,3"
+# or "1,234,5" do not match (a group of 3 must follow every comma, and the
+# number must not continue with `,<digit>`).
+_GROUPED_NUMBER_RE = re.compile(r"(?<![\w.,])-?\d{1,3}(?:,\d{3})+(?:\.\d+)?(?![\w])(?!,\d)(?!\.\d)")
+
+
+def number_forms(text: str) -> list[str]:
+    """Raw-stored forms of the grouped numbers in `text` (`1,234.56` ->
+    `1234.56`, `6,545,000` -> `6545000`), in order, deduplicated. Workbook
+    cells are stored without separators, so a query written with them would
+    otherwise tokenise into pieces ("1", "234", "56") that match nothing.
+    Empty when `text` has no grouped number (non-numeric text is never
+    touched)."""
+    forms: list[str] = []
+    for match in _GROUPED_NUMBER_RE.finditer(text):
+        form = match.group(0).replace(",", "")
+        if form not in forms:
+            forms.append(form)
+    return forms
+
+
+def with_number_forms(text: str) -> str:
+    """`text` followed by the raw forms of its grouped numbers (unchanged when
+    it has none). Used as the vector query text so the embedding sees both."""
+    forms = number_forms(text)
+    return f"{text} {' '.join(forms)}" if forms else text
+
 
 @dataclass(frozen=True)
 class RankedChunk:
@@ -120,6 +148,11 @@ def _sanitize_fts_query(query: str) -> str:
     return nothing.
     """
     words = _WORD_RE.findall(query.lower())
+    forms = number_forms(query)
+    if forms:
+        # Keep the original pieces and add the raw-stored form's tokens.
+        extra = _WORD_RE.findall(" ".join(forms).lower())
+        words = words + [w for w in extra if w not in words]
     terms = [w for w in words if w not in _FTS_STOPWORDS]
     if not terms:
         terms = words
@@ -157,7 +190,22 @@ _FTS_SEARCH_SQL = text(
 )
 
 
-def fts_search(engine: Engine, query: str, top_k: int) -> list[str]:
+_FTS_SEARCH_SCOPED_SQL = text(
+    "SELECT fts_chunks.chunk_id FROM fts_chunks "
+    "JOIN chunks ON chunks.id = fts_chunks.chunk_id "
+    "JOIN sources ON sources.id = chunks.source_id "
+    "JOIN evidence_versions ON evidence_versions.id = chunks.evidence_version_id "
+    "WHERE fts_chunks MATCH :query "
+    "AND sources.status = :active_status "
+    "AND evidence_versions.status = :ready_status "
+    "AND evidence_versions.id IN :scope_version_ids "
+    "ORDER BY bm25(fts_chunks) LIMIT :limit"
+).bindparams(bindparam("scope_version_ids", expanding=True))
+
+
+def fts_search(
+    engine: Engine, query: str, top_k: int, scope_version_ids: list[str] | None = None
+) -> list[str]:
     """Run an FTS5 MATCH query against `fts_chunks`, returning chunk_ids
     ranked by `bm25()` (best/lowest-scoring match first).
 
@@ -166,20 +214,29 @@ def fts_search(engine: Engine, query: str, top_k: int) -> list[str]:
     *before* `ORDER BY .. LIMIT ..` runs -- they never occupy one of the
     `top_k` slots that an active, current chunk could otherwise take (see
     the module-level comment above `_FTS_SEARCH_SQL`).
+
+    `scope_version_ids` (explicit file scoping, doc 05 section 6) adds
+    `evidence_versions.id IN (...)` to the same SQL, so the restriction applies
+    before `ORDER BY .. LIMIT ..`. `None` runs the unscoped statement above
+    unchanged; an empty list matches nothing.
     """
     sanitized = _sanitize_fts_query(query).strip()
     if not sanitized:
         return []
+    params: dict[str, Any] = {
+        "query": sanitized,
+        "limit": top_k,
+        "active_status": SourceStatus.ACTIVE.name,
+        "ready_status": VersionStatus.READY.name,
+    }
+    statement = _FTS_SEARCH_SQL
+    if scope_version_ids is not None:
+        if not scope_version_ids:
+            return []
+        statement = _FTS_SEARCH_SCOPED_SQL
+        params["scope_version_ids"] = list(scope_version_ids)
     with engine.connect() as conn:
-        rows = conn.execute(
-            _FTS_SEARCH_SQL,
-            {
-                "query": sanitized,
-                "limit": top_k,
-                "active_status": SourceStatus.ACTIVE.name,
-                "ready_status": VersionStatus.READY.name,
-            },
-        )
+        rows = conn.execute(statement, params)
         return [row[0] for row in rows]
 
 
@@ -241,10 +298,21 @@ def _eligible_version_ids(engine: Engine) -> list[str]:
         return [row[0] for row in rows]
 
 
-def _search_eligible(table: Any, engine: Engine, query_vector: list[float], top_k: int) -> list:
+def _search_eligible(
+    table: Any,
+    engine: Engine,
+    query_vector: list[float],
+    top_k: int,
+    scope_version_ids: list[str] | None = None,
+) -> list:
     """Nearest-neighbor search over `table` restricted (pre-filter, before
-    top-k) to rows whose `evidence_version_id` is currently eligible."""
+    top-k) to rows whose `evidence_version_id` is currently eligible -- and,
+    with `scope_version_ids`, also inside that scope (an intersection, so a
+    scope can never widen eligibility)."""
     version_ids = _eligible_version_ids(engine)
+    if scope_version_ids is not None:
+        allowed = set(scope_version_ids)
+        version_ids = [v for v in version_ids if v in allowed]
     if not version_ids:
         return []
     return (
@@ -262,6 +330,7 @@ def vector_search(
     query: str,
     top_k: int,
     manifest_guard: IndexManifestGuard | None = None,
+    scope_version_ids: list[str] | None = None,
 ) -> list[str]:
     """Embed `query` via `gateway` and run a nearest-neighbor search against
     `table` (a LanceDB `chunks` table), returning chunk_ids ranked by vector
@@ -274,10 +343,10 @@ def vector_search(
 
     With a `manifest_guard`, raises `IndexManifestMismatchError` when the
     index manifest disagrees with the configured embedding model."""
-    query_vector = gateway.embed(query)
+    query_vector = gateway.embed(with_number_forms(query))
     if manifest_guard is not None:
         manifest_guard.check_query(len(query_vector))
-    results = _search_eligible(table, engine, query_vector, top_k)
+    results = _search_eligible(table, engine, query_vector, top_k, scope_version_ids)
     chunk_ids = [row["chunk_id"] for row in results]
     return _filter_active_and_current(engine, chunk_ids)
 
@@ -346,6 +415,7 @@ def visual_search(
     query: str,
     top_k: int,
     manifest_guard: IndexManifestGuard | None = None,
+    scope_version_ids: list[str] | None = None,
 ) -> list[str]:
     """Embed `query` via `gateway` and run a nearest-neighbor search against
     `page_table` (a LanceDB `pages` table -- see `docket.infra.index.visual_index`),
@@ -377,10 +447,10 @@ def visual_search(
     if page_table is None:
         return []
 
-    query_vector = gateway.embed(query)
+    query_vector = gateway.embed(with_number_forms(query))
     if manifest_guard is not None:
         manifest_guard.check_query(len(query_vector))
-    results = _search_eligible(page_table, engine, query_vector, top_k)
+    results = _search_eligible(page_table, engine, query_vector, top_k, scope_version_ids)
     pairs = [(row["evidence_version_id"], row["page_no"]) for row in results]
     if not pairs:
         return []
@@ -421,6 +491,7 @@ def hybrid_search(
     page_table: Any | None = None,
     manifest_guard: IndexManifestGuard | None = None,
     extra_queries: list[str] | None = None,
+    scope_version_ids: list[str] | None = None,
 ) -> list[RankedChunk]:
     """Run lexical and semantic search (each requesting `top_k` results) and
     fuse them via Reciprocal Rank Fusion, returning the top `top_k` fused
@@ -446,16 +517,27 @@ def hybrid_search(
     returning `top_k`. A chunk found by several lists is scored once per list
     by RRF (output ids are unique). Queries equal to an earlier one (after
     stripping) or empty are skipped; with none left this is exactly the
-    single-query behaviour."""
+    single-query behaviour.
+
+    `scope_version_ids` (explicit file scoping, doc 05 section 6) restricts
+    EVERY leg to those evidence versions BEFORE its top-k (FTS SQL `IN`,
+    vector/visual prefilter intersected with the eligible set), so the top-k is
+    drawn from inside the scope. `None` (the default) leaves every leg's call
+    exactly as it was without scoping; an empty list returns nothing."""
+    scope_kw: dict[str, Any] = (
+        {"scope_version_ids": list(scope_version_ids)} if scope_version_ids is not None else {}
+    )
     queries = [query]
     for extra in extra_queries or []:
         if extra.strip() and extra.strip() not in {q.strip() for q in queries}:
             queries.append(extra)
     ranked_lists: list[list[str]] = []
     for q in queries:
-        ranked_lists.append(fts_search(engine, q, top_k))
-        ranked_lists.append(vector_search(table, engine, gateway, q, top_k, manifest_guard))
+        ranked_lists.append(fts_search(engine, q, top_k, **scope_kw))
+        ranked_lists.append(vector_search(table, engine, gateway, q, top_k, manifest_guard, **scope_kw))
         if page_table is not None:
-            ranked_lists.append(visual_search(page_table, engine, gateway, q, top_k, manifest_guard))
+            ranked_lists.append(
+                visual_search(page_table, engine, gateway, q, top_k, manifest_guard, **scope_kw)
+            )
     fused = reciprocal_rank_fusion(ranked_lists)
     return fused[:top_k]

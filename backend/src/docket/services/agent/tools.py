@@ -50,6 +50,7 @@ def make_search_knowledge_tool(
     manifest_guard: Any | None = None,
     page_table: Any | None = None,
     extra_queries_provider: Callable[[], list[str] | None] | None = None,
+    scope_provider: Callable[[], list[str] | None] | None = None,
 ) -> BaseTool:
     """Build a `search_knowledge` tool bound to a specific engine/table/gateway.
 
@@ -67,12 +68,17 @@ def make_search_knowledge_tool(
     once for this run, or nothing) supplies `extra_queries` for EVERY search
     call. It is a provider, not a list, because the agent graph is built once
     and reused across questions.
+
+    `scope_provider` works the same way for explicit file scoping (doc 05 section
+    6): it returns the evidence-version ids the current question names, or
+    nothing; when it returns ids every search runs inside them (before top-k).
     """
 
     @tool(description=SEARCH_KNOWLEDGE_DESCRIPTION)
     def search_knowledge(query: str) -> str:
         """Model-facing description lives in `docket.prompts.agent.SEARCH_KNOWLEDGE_DESCRIPTION`."""
         extra = (extra_queries_provider() if extra_queries_provider else None) or []
+        scope = (scope_provider() if scope_provider else None) or []
         ranked = hybrid_search(
             engine=engine,
             table=table,
@@ -82,6 +88,7 @@ def make_search_knowledge_tool(
             page_table=page_table,
             manifest_guard=manifest_guard,
             **({"extra_queries": list(extra)} if extra else {}),
+            **({"scope_version_ids": list(scope)} if scope else {}),
         )
         return json.dumps({"results": [{"chunk_id": rc.chunk_id, "score": rc.score} for rc in ranked]})
 

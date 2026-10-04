@@ -231,6 +231,7 @@ def build_investigation_agent(
     manifest_guard: Any | None = None,
     page_table: Any | None = None,
     extra_queries_provider: Callable[[], list[str] | None] | None = None,
+    scope_provider: Callable[[], list[str] | None] | None = None,
     store: ContentAddressedStore | None = None,
 ):
     """Real-use convenience wrapper: builds the real `search_knowledge`/
@@ -240,12 +241,15 @@ def build_investigation_agent(
     using `settings.gen_model`/`max_agent_iterations`/`max_agent_tool_calls`.
 
     `page_table`/`manifest_guard`/`extra_queries_provider` give `search_knowledge`
-    the same retrieval stack as the fast path (doc 05 section 8). `store`
+    the same retrieval stack as the fast path (doc 05 section 8); `scope_provider`
+    supplies the evidence versions an explicitly named file scopes searches to
+    (doc 05 section 6). `store`
     defaults to the store under `settings.evidence_store_path`.
     """
     search_knowledge = make_search_knowledge_tool(
         engine=engine, table=table, gateway=gateway, top_k=top_k, manifest_guard=manifest_guard,
         page_table=page_table, extra_queries_provider=extra_queries_provider,
+        scope_provider=scope_provider,
     )
     read_evidence = make_read_evidence_tool(resolver=resolver)
     reader = WorkbookReader(

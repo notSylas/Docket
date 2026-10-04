@@ -264,6 +264,11 @@ class RunRecord(BaseModel):
     dropped_chunk_ids: list[str] = Field(default_factory=list)
     # Follow-up rewrite used as a second retrieval query, if any.
     standalone_query: str | None = None
+    # File names the retrieval was scoped to (explicit file reference), if any.
+    scoped_to: list[str] | None = None
+    # Period ambiguity the answer was asked to resolve, if any (see
+    # `docket.services.query.signals`): {"reason": "period", "options": [...]}.
+    ambiguity: dict[str, Any] | None = None
     agent_trace: list[dict[str, Any]] = Field(default_factory=list)
     model_calls: list[dict[str, Any]] = Field(default_factory=list)
     gold_fingerprint: str | None = None

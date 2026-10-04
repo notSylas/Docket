@@ -163,3 +163,35 @@ def rewrite_prompt(history_block: str, question: str) -> str:
         f"Latest question: {question}\n\n"
         "Standalone search query:"
     )
+
+
+# Added to the FAST-path system prompt only when the question states no period
+# and the evidence spans same-named sheets of different fiscal years (doc 05
+# section 6, `docket.services.query.signals.detect_period_ambiguity`). The option
+# lines are metadata derived from the workbooks' stored context, like the
+# Location line: never evidence, never cited.
+PERIOD_AMBIGUITY_NOTE_HEAD = """
+PERIOD AMBIGUITY NOTE (instructions and metadata about the sources; not evidence, \
+never cite it): the question does not say which fiscal year it means, and the \
+context holds same-named sheets from workbooks of different fiscal years:
+"""
+
+PERIOD_AMBIGUITY_NOTE_TAIL = """
+Answer for EACH of these fiscal years separately (one line or bullet each). For \
+every value state the fiscal year, the units and the source workbook, and cite the \
+chunk it came from. Write each value exactly as the cell shows it, with the \
+units the workbook itself states next to it; never rescale or convert a value to \
+other units. Never pick one fiscal year silently, never merge, add or average values across fiscal years, and \
+never convert a fiscal year into calendar dates. If a fiscal year's value is not in \
+the context, say so for that year. End your answer with one short question asking \
+which fiscal year the user meant.
+"""
+
+
+def period_ambiguity_note(options: list[tuple[str, str, list[str]]]) -> str:
+    """`options`: (file name, fiscal-year label, verbatim workbook context lines)."""
+    lines = []
+    for file_name, fiscal_year, context_lines in options:
+        detail = f" -- workbook context: {'; '.join(context_lines)}" if context_lines else ""
+        lines.append(f"- {fiscal_year}: {file_name}{detail}")
+    return PERIOD_AMBIGUITY_NOTE_HEAD + "\n".join(lines) + "\n" + PERIOD_AMBIGUITY_NOTE_TAIL

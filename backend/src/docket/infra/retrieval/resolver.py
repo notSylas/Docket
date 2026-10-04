@@ -37,6 +37,11 @@ class ResolvedEvidence:
     # `format_location`); `None` when the chunk has none. Shown in the context
     # block and never part of `text`.
     location: str | None = None
+    # Spreadsheet chunks only: the sheet name and the unit's stored context
+    # lines (`locator_json["context"]`: fiscal-year labels, units/scope lines).
+    # Metadata for query-time signals (ambiguity detection); never evidence.
+    sheet: str | None = None
+    context: list[str] = field(default_factory=list)
 
 
 class ChunkNotFoundError(Exception):
@@ -133,6 +138,21 @@ def format_location(
     return f"Location: {pages}" if pages else None
 
 
+def _locator_sheet_and_context(locator_json: str | None) -> tuple[str | None, list[str]]:
+    try:
+        locator = json.loads(locator_json) if locator_json else {}
+    except ValueError:
+        return None, []
+    if not isinstance(locator, dict):
+        return None, []
+    sheet = locator.get("sheet")
+    context = locator.get("context")
+    return (
+        sheet if isinstance(sheet, str) else None,
+        [c for c in context if isinstance(c, str)] if isinstance(context, list) else [],
+    )
+
+
 class EvidenceResolver:
     """Resolves chunk_ids into citation-ready `ResolvedEvidence`.
 
@@ -188,6 +208,7 @@ class EvidenceResolver:
             # file_path was never recorded.
             display_path = evidence_version.file_path or source.path
             source_display_name = Path(display_path).name
+            sheet, context = _locator_sheet_and_context(unit.locator_json)
             resolved.append(
                 ResolvedEvidence(
                     chunk_id=chunk.id,
@@ -197,6 +218,8 @@ class EvidenceResolver:
                     heading=chunk.heading,
                     citation_label=_citation_label(source_display_name, chunk.id),
                     source_id=source.id,
+                    sheet=sheet,
+                    context=context,
                     formula_regions=json.loads(evidence_version.formula_regions_json or "[]"),
                     location=format_location(
                         file_name=source_display_name,
