@@ -232,6 +232,39 @@ def test_agent_system_prompt_guards_against_context_as_instructions() -> None:
     assert "ignore previous instructions" in AGENT_SYSTEM_PROMPT
 
 
+def test_agent_system_prompt_has_the_spreadsheet_tool_rules() -> None:
+    """Doc 05 section 8: short rules for the deterministic spreadsheet tools."""
+    assert "call read_range" in AGENT_SYSTEM_PROMPT
+    assert "instead of quoting a search snippet" in AGENT_SYSTEM_PROMPT
+    assert "call calculate" in AGENT_SYSTEM_PROMPT
+    assert "never compute numbers yourself" in AGENT_SYSTEM_PROMPT
+    assert "State the units" in AGENT_SYSTEM_PROMPT and "fiscal year" in AGENT_SYSTEM_PROMPT
+    assert "truncated" in AGENT_SYSTEM_PROMPT and "hidden rows" in AGENT_SYSTEM_PROMPT
+    assert "Cite the citation_label values the tools return" in AGENT_SYSTEM_PROMPT
+    assert "answer for each or say which are possible" in AGENT_SYSTEM_PROMPT
+    # the fast-path prompt has no tools and must not mention them
+    assert "read_range" not in SYSTEM_PROMPT and "calculate" not in SYSTEM_PROMPT
+
+
+def test_spreadsheet_tool_descriptions_are_model_facing_and_complete() -> None:
+    from docket.prompts.agent import CALCULATE_DESCRIPTION, READ_RANGE_DESCRIPTION
+
+    for word in ("chunk_id", "range", "sheet", "cached_value_missing", "blank", "truncated", "citation_labels"):
+        assert word in READ_RANGE_DESCRIPTION
+    for word in ("pct_change", "ratio", "difference", "refs", "round_to", "derived", "never compute"):
+        assert word.lower() in CALCULATE_DESCRIPTION.lower()
+
+
+def test_missing_required_tool_message_accepts_a_set_of_tools() -> None:
+    from docket.prompts.agent import missing_required_tool_message
+
+    single = missing_required_tool_message("read_evidence")
+    assert "successful read_evidence call" in single  # unchanged for one tool
+    multi = missing_required_tool_message(("read_evidence", "read_range"))
+    assert "read_evidence or read_range" in multi
+    assert missing_required_tool_message(("read_evidence",)) == single
+
+
 # ---------------------------------------------------------------------------
 # location lines
 # ---------------------------------------------------------------------------

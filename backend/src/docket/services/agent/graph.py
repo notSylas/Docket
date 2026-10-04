@@ -65,16 +65,24 @@ from langchain_ollama import ChatOllama
 from langgraph.graph import END, StateGraph
 
 from docket.services.agent.policy_gateway import AgentState, make_policy_gateway
-from docket.services.agent.tools import make_read_evidence_tool, make_search_knowledge_tool
+from docket.core.db.engine import get_session_factory
+from docket.infra.evidence.store import ContentAddressedStore
+from docket.infra.evidence.workbook_reader import WorkbookReader
+from docket.services.agent.tools import (
+    make_calculate_tool,
+    make_read_evidence_tool,
+    make_read_range_tool,
+    make_search_knowledge_tool,
+)
 from docket.core.config import Settings, settings as default_settings
 from docket.infra.inference.gateway import InferenceGateway
 from docket.prompts.agent import missing_any_tool_message, missing_required_tool_message
 from docket.infra.retrieval.resolver import EvidenceResolver
 
 
-def _has_successful_call(messages: list, tool_name: str) -> bool:
+def _has_successful_call(messages: list, tool_name: str | tuple[str, ...]) -> bool:
     """True iff `messages` contains a `ToolMessage` produced by a
-    SUCCESSFUL call to `tool_name` -- i.e. one whose corresponding
+    SUCCESSFUL call to `tool_name` (or to any of them when a tuple) -- i.e. one whose corresponding
     `AIMessage` tool_call was actually named `tool_name` (matched via
     `tool_call_id`, not `ToolMessage.name` -- `make_policy_gateway` never
     sets `name` on the `ToolMessage`s it builds, only `tool_call_id`, so
@@ -90,6 +98,7 @@ def _has_successful_call(messages: list, tool_name: str) -> bool:
     any call to this tool actually succeed" -- used by `should_continue`
     below to gate on a SPECIFIC tool (e.g. `read_evidence`) rather than just
     "any tool call happened at all"."""
+    names = {tool_name} if isinstance(tool_name, str) else set(tool_name)
     call_name_by_id: dict[str, str] = {}
     for message in messages:
         if isinstance(message, AIMessage):
@@ -99,7 +108,7 @@ def _has_successful_call(messages: list, tool_name: str) -> bool:
     for message in messages:
         if not isinstance(message, ToolMessage):
             continue
-        if call_name_by_id.get(message.tool_call_id) != tool_name:
+        if call_name_by_id.get(message.tool_call_id) not in names:
             continue
         content = str(message.content)
         if content.startswith("POLICY DENIED"):
@@ -122,7 +131,7 @@ def build_agent(
     max_tool_calls: int,
     num_ctx: int,
     num_predict: int,
-    require_tool_call: str | None = None,
+    require_tool_call: str | tuple[str, ...] | None = None,
     trace_callback: Callable[[dict[str, Any]], None] | None = None,
 ):
     """Compile the bounded agent graph for a given tool allow-list and model/
@@ -220,17 +229,35 @@ def build_investigation_agent(
     trace_callback: Callable[[dict[str, Any]], None] | None = None,
     top_k: int = default_settings.default_top_k,
     manifest_guard: Any | None = None,
+    page_table: Any | None = None,
+    extra_queries_provider: Callable[[], list[str] | None] | None = None,
+    store: ContentAddressedStore | None = None,
 ):
     """Real-use convenience wrapper: builds the real `search_knowledge`/
-    `read_evidence` tools bound to `engine`/`table`/`gateway`/`resolver`,
-    then compiles a bounded agent graph over them via `build_agent()`,
+    `read_evidence`/`read_range`/`calculate` tools bound to `engine`/`table`/
+    `gateway`/`resolver` (and the evidence blob store, for the two spreadsheet
+    tools), then compiles a bounded agent graph over them via `build_agent()`,
     using `settings.gen_model`/`max_agent_iterations`/`max_agent_tool_calls`.
+
+    `page_table`/`manifest_guard`/`extra_queries_provider` give `search_knowledge`
+    the same retrieval stack as the fast path (doc 05 section 8). `store`
+    defaults to the store under `settings.evidence_store_path`.
     """
     search_knowledge = make_search_knowledge_tool(
-        engine=engine, table=table, gateway=gateway, top_k=top_k, manifest_guard=manifest_guard
+        engine=engine, table=table, gateway=gateway, top_k=top_k, manifest_guard=manifest_guard,
+        page_table=page_table, extra_queries_provider=extra_queries_provider,
     )
     read_evidence = make_read_evidence_tool(resolver=resolver)
-    allowed_tools = {"search_knowledge": search_knowledge, "read_evidence": read_evidence}
+    reader = WorkbookReader(
+        session_factory=get_session_factory(engine),
+        store=store or ContentAddressedStore(settings.evidence_store_path),
+    )
+    allowed_tools = {
+        "search_knowledge": search_knowledge,
+        "read_evidence": read_evidence,
+        "read_range": make_read_range_tool(reader=reader),
+        "calculate": make_calculate_tool(reader=reader),
+    }
 
     return build_agent(
         allowed_tools=allowed_tools,
@@ -239,6 +266,8 @@ def build_investigation_agent(
         max_tool_calls=settings.max_agent_tool_calls,
         num_ctx=settings.num_ctx,
         num_predict=settings.num_predict,
-        require_tool_call="read_evidence",
+        # read_range also returns citation labels, so it satisfies the rule too
+        # (calculate alone does not: it reads nothing the model has seen).
+        require_tool_call=("read_evidence", "read_range"),
         trace_callback=trace_callback,
     )

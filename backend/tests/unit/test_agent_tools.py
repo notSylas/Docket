@@ -186,6 +186,26 @@ def test_search_knowledge_no_match_returns_empty_results(
     assert "results" in payload
 
 
+def test_search_knowledge_passes_the_fast_path_retrieval_stack(monkeypatch) -> None:
+    import docket.services.agent.tools as tools_module
+
+    calls: list[dict] = []
+    monkeypatch.setattr(tools_module, "hybrid_search", lambda **kw: calls.append(kw) or [])
+    page_table, guard = object(), object()
+    queries = {"now": ["standalone rewrite"]}
+    tool = make_search_knowledge_tool(
+        engine=None, table=None, gateway=None, page_table=page_table, manifest_guard=guard,
+        extra_queries_provider=lambda: queries["now"],
+    )
+    tool.invoke({"query": "a"})
+    tool.invoke({"query": "b"})
+    assert [c["extra_queries"] for c in calls] == [["standalone rewrite"]] * 2
+    assert all(c["page_table"] is page_table and c["manifest_guard"] is guard for c in calls)
+    queries["now"] = []  # a later run without a rewrite adds nothing
+    tool.invoke({"query": "c"})
+    assert "extra_queries" not in calls[-1]
+
+
 # ---------------------------------------------------------------------------
 # read_evidence -- real EvidenceResolver, not the spike's canned stub.
 # ---------------------------------------------------------------------------

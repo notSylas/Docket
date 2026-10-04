@@ -69,6 +69,11 @@ class QueryClassifier(Protocol):
 # to FAST) still gets an answer, just a possibly-incomplete one -- a false
 # positive (routing an ordinary lookup to AGENT) costs latency but not
 # correctness. That asymmetry is why the list below leans conservative.
+# NOTE (doc 05 section 8): numeric/aggregate questions (sums, averages,
+# percentage changes over spreadsheet cells) are deliberately NOT routed here
+# yet. The agent now has the deterministic `read_range` / `calculate` tools,
+# but whether such questions should go to the agent is decided after the
+# forced-agent measurement on the extended gold set, not by guessing patterns.
 _AGENT_PATTERNS = [
     r"\bcompare\b",
     r"\bcomparison\b",

@@ -85,6 +85,10 @@ class QueryResult(BaseModel):
     standalone_query: str | None = None
 
 
+# Tools whose successful results make chunks citable on the agent path.
+_CITABLE_TOOLS = ("read_evidence", "read_range", "calculate")
+
+
 def _citations_from_agent_messages(
     messages: list, resolver: EvidenceResolver
 ) -> list[ResolvedEvidence]:
@@ -93,7 +97,9 @@ def _citations_from_agent_messages(
     one on the agent path -- the agent decides what to look at).
 
     Walks `messages` for `ToolMessage`s produced by a *successful*
-    `read_evidence` call: one whose corresponding `AIMessage` tool_call was
+    `read_evidence`, `read_range` or `calculate` call (the latter two carry
+    the row chunks they read in `chunk_ids`; see `_CITABLE_TOOLS`) --
+    below, "`read_evidence`" is the original, fully-described case: one whose corresponding `AIMessage` tool_call was
     named "read_evidence" (correlated via `tool_call_id`, not
     `ToolMessage.name` -- `docket.services.agent.policy_gateway.make_policy_gateway`
     never sets `name` on the `ToolMessage`s it builds, only `tool_call_id`,
@@ -128,7 +134,8 @@ def _citations_from_agent_messages(
     for message in messages:
         if not isinstance(message, ToolMessage):
             continue
-        if call_name_by_id.get(message.tool_call_id) != "read_evidence":
+        tool_name = call_name_by_id.get(message.tool_call_id)
+        if tool_name not in _CITABLE_TOOLS:
             continue
         try:
             payload = json.loads(message.content)
@@ -136,11 +143,14 @@ def _citations_from_agent_messages(
             continue
         if not isinstance(payload, dict) or "error" in payload:
             continue
-        chunk_id = payload.get("chunk_id")
-        if not chunk_id or chunk_id in seen:
-            continue
-        seen.add(chunk_id)
-        chunk_ids.append(chunk_id)
+        # read_evidence returns one `chunk_id`; read_range/calculate return the
+        # row chunks (`chunk_ids`) that hold the cells they read.
+        found = [payload.get("chunk_id")] if tool_name == "read_evidence" else payload.get("chunk_ids")
+        for chunk_id in found if isinstance(found, list) else []:
+            if not chunk_id or not isinstance(chunk_id, str) or chunk_id in seen:
+                continue
+            seen.add(chunk_id)
+            chunk_ids.append(chunk_id)
 
     try:
         return resolver.resolve_many(chunk_ids)
@@ -226,6 +236,9 @@ class QueryService:
         # Refuses queries when the index manifest names a different embedding
         # model (see `docket.infra.index.manifest`); `None` skips the check.
         self._manifest_guard = manifest_guard
+        # Follow-up rewrite of the CURRENT agent run, read by the agent's
+        # `search_knowledge` tool for every call (see `_ask_agent`).
+        self._run_extra_queries: list[str] = []
 
     def _get_agent(self) -> Any:
         if self._agent is None:
@@ -238,6 +251,8 @@ class QueryService:
                 trace_callback=self._trace_callback,
                 top_k=self._top_k,
                 manifest_guard=self._manifest_guard,
+                page_table=self._page_table,
+                extra_queries_provider=lambda: self._run_extra_queries,
             )
         return self._agent
 
@@ -281,8 +296,8 @@ class QueryService:
     def _ask_fast(
         self, question: str, history: list[ConversationTurn] | None = None
     ) -> QueryResult:
-        # Follow-up rewrite: fast path only, never on the first turn. (The
-        # agent path is unchanged -- the agent writes its own search queries.)
+        # Follow-up rewrite: never on the first turn. The agent path computes
+        # the same rewrite once per run (see `_ask_agent`).
         standalone = self._rewrite_followup(question, history)
         ranked_chunks = hybrid_search(
             engine=self._engine,
@@ -318,6 +333,10 @@ class QueryService:
                 abstained=True, validation_warnings=["retrieved evidence is no longer available"],
                 mode=QueryMode.FAST.value, standalone_query=standalone,
             )
+        # Token-budget fitting is FAST-PATH ONLY: `resolved` is in rank order
+        # (best first), so dropping the tail drops the weakest chunks. Agent
+        # chunks are in read order, not rank order, so the agent path has no
+        # equivalent and relies on the agent's own bounded tool budget.
         system, prompt, resolved, dropped = self._fit_prompt(question, history, resolved)
 
         answer = self._gateway.generate(system=system, prompt=prompt, **self._answer_opts())
@@ -497,6 +516,11 @@ class QueryService:
         self, question: str, history: list[ConversationTurn] | None = None
     ) -> QueryResult:
         agent = self._get_agent()
+        # Same retrieval stack as the fast path (doc 05 section 8): the
+        # follow-up rewrite is computed once and added as an extra query to
+        # every `search_knowledge` call of this run (cleared afterwards).
+        standalone = self._rewrite_followup(question, history)
+        self._run_extra_queries = [standalone] if standalone else []
 
         system_prompt = AGENT_SYSTEM_PROMPT_WITH_HISTORY if history else AGENT_SYSTEM_PROMPT
         messages_in: list = [SystemMessage(content=system_prompt)]
@@ -511,7 +535,12 @@ class QueryService:
             "tool_calls_made": 0,
             "blocked_calls": [],
         }
-        result_state = agent.invoke(initial_state, config={"recursion_limit": 50})
+        try:
+            # Each iteration is an agent + gateway (or force_tool_use) node
+            # pair: 8 iterations need at most ~24 steps, under the limit of 50.
+            result_state = agent.invoke(initial_state, config={"recursion_limit": 50})
+        finally:
+            self._run_extra_queries = []
         messages = result_state["messages"]
 
         final_ai_message = next(
@@ -538,4 +567,4 @@ class QueryService:
             mode=QueryMode.AGENT,
             retry_system=SYSTEM_PROMPT,
             retry_prompt=f"Context:\n{build_context_block(resolved)}\n\nQuestion: {question}\n\nAnswer:",
-        )
+        ).model_copy(update={"standalone_query": standalone})

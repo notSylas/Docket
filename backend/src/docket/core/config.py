@@ -118,8 +118,17 @@ class Settings(BaseSettings):
     # answer) once that retry was added, and passes again at 4. Only
     # matters when a retry actually happens -- the common case (tools called
     # correctly from turn 1) is unaffected either way.
-    max_agent_iterations: int = 4
-    max_agent_tool_calls: int = 8
+    #
+    # Raised to 8 / 14 for the deterministic spreadsheet tools (doc 05 section
+    # 8): the chain search_knowledge -> read_evidence -> read_range (several
+    # ranges for a multi-workbook question) -> calculate (possibly several) ->
+    # cited answer needs 6+ model turns and ~8 tool calls on its own, and a
+    # `force_tool_use` retry (one extra turn) or one rejected tool call must
+    # still fit. Each iteration is an `agent` + `gateway` node pair, so 8
+    # iterations stay well inside the recursion_limit of 50 set in
+    # `QueryService._ask_agent`.
+    max_agent_iterations: int = 8
+    max_agent_tool_calls: int = 14
 
     # Upgrade doc 03 section 6: how long a TOMBSTONED source's retention
     # countdown runs before it's eligible to advance to HARD_DELETE_PENDING

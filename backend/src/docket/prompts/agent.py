@@ -27,11 +27,57 @@ READ_EVIDENCE_DESCRIPTION = (
     "text, citation_label, source_display_name, and heading."
 )
 
+READ_RANGE_DESCRIPTION = (
+    "Read exact cells from the spreadsheet (.xlsx workbook) that a chunk came "
+    "from, straight from the stored workbook -- use it instead of quoting a "
+    "search snippet when you need exact values, or all rows/cells of a "
+    "total. Arguments: chunk_id (any chunk_id returned by search_knowledge; "
+    "it selects the workbook), range (A1 notation, e.g. 'A1:F12' or 'C7'; at "
+    "most 200 cells / 60 rows per call), sheet (optional; defaults to the "
+    "chunk's own sheet). Returns JSON with the sheet, header labels, rows of "
+    "cells (value, header, number_format, formula and formula_text, blank, "
+    "cached_value_missing, hidden rows), the units / fiscal-year / scope "
+    "lines for the sheet, the source file, a coverage object (truncated "
+    "true/false), and chunk_ids / citation_labels to cite. A blank cell is "
+    "null with blank true -- it is NOT zero. A formula cell with "
+    "cached_value_missing has no known value."
+)
 
-def missing_required_tool_message(require_tool_call: str) -> str:
+CALCULATE_DESCRIPTION = (
+    "Do arithmetic on spreadsheet cells exactly. Never compute numbers "
+    "yourself; use this for every sum, average, difference, ratio, "
+    "percentage change, minimum, maximum or count. Arguments: operation "
+    "(sum, average, difference, ratio, pct_change, min, max, count), refs "
+    "(a list of {chunk_id, sheet (optional), cell OR range}; the tool reads "
+    "the cells itself, you never type the numbers; difference = a - b, ratio "
+    "= a / b and pct_change = (b - a) / a * 100 take exactly two single-cell "
+    "refs), round_to (decimal places, default 2). Returns JSON with result, "
+    "result_text, the exact inputs (value, cell, header, units), the "
+    "expression, units, citation_labels and provenance 'derived'. It refuses "
+    "inputs with different or ambiguous units, and reports blank, text or "
+    "missing-value cells as errors instead of treating them as zero."
+)
+
+
+def missing_required_tool_message(require_tool_call: str | tuple[str, ...]) -> str:
     """Corrective `HumanMessage` text when the model tries to stop before a
     successful call to `require_tool_call` (see
-    `agent.graph.build_agent`'s `force_tool_use` node)."""
+    `agent.graph.build_agent`'s `force_tool_use` node). A tuple means any one
+    of those tools satisfies the requirement."""
+    if not isinstance(require_tool_call, str):
+        names = list(require_tool_call)
+        if len(names) == 1:
+            require_tool_call = names[0]
+        else:
+            joined = " or ".join(names)
+            return (
+                f"You answered without a successful {joined} call. "
+                "Every claim in your final answer must be grounded in "
+                "evidence you actually retrieved -- call search_knowledge, "
+                f"then call {joined} on one of its chunk_ids, and "
+                "copy its citation_label (read_range returns citation_labels) "
+                "into your answer, before answering."
+            )
     return (
         f"You answered without a successful {require_tool_call} call. "
         "Every claim in your final answer must be grounded in "

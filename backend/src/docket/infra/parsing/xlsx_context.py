@@ -186,3 +186,38 @@ def row_month_items(sheet: SheetData, row: RowData) -> list[str]:
 def row_context(sheet_items: list[str], sheet: SheetData, row: RowData) -> list[str]:
     """Sheet-level items followed by the row's own month expansions."""
     return _dedupe([*row_month_items(sheet, row), *sheet_items])
+
+
+def sheet_scope_lines(workbook: ParsedWorkbook, sheet_name: str) -> dict[str, list[str]]:
+    """Context for a read-time spreadsheet tool (doc 05 section 8): the same
+    sources `build_sheet_contexts` uses, but NOT truncated, capped or
+    deduplicated against each other, so a Notes-sheet unit line is returned
+    verbatim. Read-only helper: it does not affect the stored chunk recipe
+    (`XLSX_CONTEXT_VERSION`).
+
+    Returns ``{"fiscal_year": [...], "period": [...], "units_and_scope": [...]}``:
+    fiscal-year labels exactly as written in the file name, sheet name and title
+    rows (never converted to calendar years); `Q2`/`H1` style labels from the
+    file/sheet name; and the keyword-filtered lines from a notes-like sheet of
+    the same workbook (unless `sheet_name` is itself that sheet) plus the sheet's
+    own title rows."""
+    sheet = next((s for s in workbook.sheets if s.name == sheet_name), None)
+    if sheet is None:
+        return {"fiscal_year": [], "period": [], "units_and_scope": []}
+    stem = _stem(workbook.source_path)
+    is_notes = bool(_NOTES_SHEET.search(sheet.name))
+    notes: list[str] = []
+    for other in workbook.sheets:
+        if _NOTES_SHEET.search(other.name):
+            notes += _notes_lines(other)
+    titles = [] if is_notes else _title_lines(sheet)
+    fiscal: list[str] = []
+    for src in (stem, sheet.name, *titles):
+        fiscal += fiscal_year_items(src)[::2]  # as written; skip the spaced twin
+    periods = [m.group(1) for src in (stem, sheet.name) for m in _PERIOD.finditer(src)]
+    scope = [] if is_notes else notes
+    return {
+        "fiscal_year": _dedupe(fiscal),
+        "period": _dedupe(periods),
+        "units_and_scope": _dedupe([*scope, *titles]),
+    }

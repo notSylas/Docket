@@ -1189,7 +1189,9 @@ def test_rewrite_sampling_and_model_override(migrated_sqlite_engine, tmp_path, b
     assert all("model" not in c for c in _answer_calls(gateway))
 
 
-def test_agent_mode_does_not_rewrite(migrated_sqlite_engine, tmp_path, built) -> None:
+def test_agent_mode_computes_the_rewrite_once_and_records_it(
+    migrated_sqlite_engine, tmp_path, built
+) -> None:
     gateway, table = _rewrite_setup(migrated_sqlite_engine, tmp_path, built, rewrite="Who wrote RRF?")
     agent = _FakeAgent([AIMessage(content=ABSTENTION_PHRASE)])
     service = QueryService(
@@ -1197,8 +1199,119 @@ def test_agent_mode_does_not_rewrite(migrated_sqlite_engine, tmp_path, built) ->
         resolver=EvidenceResolver(built["session_factory"]), agent=agent,
     )
     result = service.ask(_FOLLOWUP, mode=QueryMode.AGENT, history=_HISTORY)
-    assert _rewrite_calls(gateway) == []
-    assert result.standalone_query is None
+    assert len(_rewrite_calls(gateway)) == 1
+    assert result.standalone_query == "Who wrote RRF?"
+    # cleared once the run is over, so the next question never inherits it
+    assert service._run_extra_queries == []
+
+
+def test_agent_mode_without_history_does_not_rewrite(migrated_sqlite_engine, tmp_path, built) -> None:
+    gateway, table = _rewrite_setup(migrated_sqlite_engine, tmp_path, built, rewrite="Who wrote RRF?")
+    service = QueryService(
+        engine=migrated_sqlite_engine, table=table, gateway=gateway,
+        resolver=EvidenceResolver(built["session_factory"]),
+        agent=_FakeAgent([AIMessage(content=ABSTENTION_PHRASE)]),
+    )
+    result = service.ask(_FOLLOWUP, mode=QueryMode.AGENT)
+    assert _rewrite_calls(gateway) == [] and result.standalone_query is None
+
+
+def test_agent_search_gets_the_rewrite_page_table_and_manifest_guard(
+    migrated_sqlite_engine, tmp_path, built, monkeypatch
+) -> None:
+    """Agent-path parity: the lazily built agent's `search_knowledge` receives
+    the same retrieval stack as the fast path (rewrite as an extra query,
+    visual leg, manifest guard)."""
+    import docket.services.agent.tools as tools_module
+    import docket.services.query.service as service_module
+
+    gateway, table = _rewrite_setup(migrated_sqlite_engine, tmp_path, built, rewrite="Who wrote RRF?")
+    captured: list[dict] = []
+    monkeypatch.setattr(tools_module, "hybrid_search", lambda **kw: captured.append(kw) or [])
+
+    class _SearchingAgent:
+        def __init__(self, provider_holder):
+            self.holder = provider_holder
+
+        def invoke(self, state, config=None):
+            tool = tools_module.make_search_knowledge_tool(
+                engine=None, table=None, gateway=None, page_table=self.holder["page_table"],
+                manifest_guard=self.holder["guard"],
+                extra_queries_provider=self.holder["provider"],
+            )
+            tool.invoke({"query": "first"})
+            tool.invoke({"query": "second"})
+            return {"messages": [AIMessage(content=ABSTENTION_PHRASE)], "iterations": 1,
+                    "tool_calls_made": 2, "blocked_calls": []}
+
+    holder: dict = {}
+
+    def _fake_build(**kwargs):
+        holder.update(page_table=kwargs["page_table"], guard=kwargs["manifest_guard"],
+                      provider=kwargs["extra_queries_provider"])
+        return _SearchingAgent(holder)
+
+    monkeypatch.setattr(service_module, "build_investigation_agent", _fake_build)
+    page_table, guard = object(), object()
+    service = QueryService(
+        engine=migrated_sqlite_engine, table=table, gateway=gateway,
+        resolver=EvidenceResolver(built["session_factory"]),
+        page_table=page_table, manifest_guard=guard,
+    )
+    result = service.ask(_FOLLOWUP, mode=QueryMode.AGENT, history=_HISTORY)
+
+    assert [c["query"] for c in captured] == ["first", "second"]
+    assert all(c["extra_queries"] == ["Who wrote RRF?"] for c in captured)  # every call
+    assert all(c["page_table"] is page_table and c["manifest_guard"] is guard for c in captured)
+    assert result.standalone_query == "Who wrote RRF?"
+
+    # a following question without history must not inherit the old rewrite
+    captured.clear()
+    service.ask("Plain question", mode=QueryMode.AGENT)
+    assert all("extra_queries" not in c for c in captured)
+
+
+def test_citations_from_agent_messages_include_read_range_and_calculate_chunks() -> None:
+    resolver = _FakeResolver()
+    messages = [
+        AIMessage(content="", tool_calls=[
+            {"name": "read_range", "args": {}, "id": "rr_ok"},
+            {"name": "read_range", "args": {}, "id": "rr_err"},
+            {"name": "calculate", "args": {}, "id": "calc_ok"},
+            {"name": "calculate", "args": {}, "id": "calc_err"},
+            {"name": "search_knowledge", "args": {}, "id": "search"},
+        ]),
+        ToolMessage(content=json.dumps({"rows": [], "chunk_ids": ["chk_r1", "chk_r2"],
+                                        "citation_labels": ["[a.xlsx #chk_r1]", "[a.xlsx #chk_r2]"]}),
+                    tool_call_id="rr_ok"),
+        ToolMessage(content=json.dumps({"error": "bad range", "chunk_ids": ["chk_bad"]}), tool_call_id="rr_err"),
+        ToolMessage(content=json.dumps({"result": 3, "chunk_ids": ["chk_r2", "chk_c1"]}), tool_call_id="calc_ok"),
+        ToolMessage(content=json.dumps({"error": "refused", "chunk_ids": ["chk_bad2"]}), tool_call_id="calc_err"),
+        ToolMessage(content=json.dumps({"chunk_ids": ["chk_search_only"]}), tool_call_id="search"),
+        AIMessage(content="done"),
+    ]
+    _citations_from_agent_messages(messages, resolver)
+    assert resolver.resolve_many_calls == [["chk_r1", "chk_r2", "chk_c1"]]  # first-seen order, deduped
+
+
+def test_agent_answer_cites_a_read_range_chunk(migrated_sqlite_engine, tmp_path, built) -> None:
+    gateway = FakeInferenceGateway()
+    table = _index_chunk(migrated_sqlite_engine, tmp_path, gateway, built)
+    resolver = EvidenceResolver(built["session_factory"])
+    label = f"[report.pdf #{built['chunk_id'][:12]}]"
+    messages = [
+        AIMessage(content="", tool_calls=[{"name": "read_range", "args": {}, "id": "c1"}]),
+        ToolMessage(content=json.dumps({"chunk_ids": [built["chunk_id"]], "citation_labels": [label]}),
+                    tool_call_id="c1"),
+        AIMessage(content=f"The total is 7. {label}"),
+    ]
+    service = QueryService(
+        engine=migrated_sqlite_engine, table=table, gateway=gateway, resolver=resolver,
+        agent=_FakeAgent(messages),
+    )
+    result = service.ask("total?", mode=QueryMode.AGENT)
+    assert not result.abstained and result.validation_warnings == []
+    assert [c.chunk_id for c in result.citations] == [built["chunk_id"]]
 
 
 def test_rewrite_recorded_when_nothing_is_retrieved(

@@ -63,13 +63,27 @@ def read_evidence(chunk_id: str) -> str:
 ALLOWED_TOOLS = {"search_knowledge": search_knowledge, "read_evidence": read_evidence}
 
 
-def _build(mocker, *, max_iterations: int = 3, require_tool_call: str | None = None):
+@tool
+def read_range(chunk_id: str, range: str) -> str:  # noqa: A002
+    """Fake spreadsheet tool for graph tests."""
+    if chunk_id == "bad_id":
+        return json.dumps({"error": f"chunk not found: {chunk_id}"})
+    return json.dumps({"chunk_ids": [chunk_id], "citation_labels": ["[a.xlsx #chk_1]"], "rows": []})
+
+
+@tool
+def calculate(operation: str) -> str:
+    """Fake calculate tool for graph tests."""
+    return json.dumps({"result": 3, "chunk_ids": ["chk_1"], "provenance": "derived"})
+
+
+def _build(mocker, *, max_iterations: int = 3, require_tool_call=None, tools=None, max_tool_calls: int = 8):
     mock_chat_ollama = mocker.patch.object(graph_mod, "ChatOllama")
     agent = build_agent(
-        allowed_tools=ALLOWED_TOOLS,
+        allowed_tools=tools or ALLOWED_TOOLS,
         gateway_llm_model="qwen3:14b",
         max_iterations=max_iterations,
-        max_tool_calls=8,
+        max_tool_calls=max_tool_calls,
         num_ctx=8192,
         num_predict=4096,
         require_tool_call=require_tool_call,
@@ -272,3 +286,67 @@ def test_model_trace_captures_input_tools_output_and_usage(mocker):
     assert call["messages"][0].content == _initial_state()["messages"][0].content
     assert call["response"].response_metadata["eval_count"] == 8
     assert {tool["name"] for tool in call["tools"]} == set(ALLOWED_TOOLS)
+
+
+# ---------------------------------------------------------------------------
+# Spreadsheet tools (doc 05 section 8): read_range satisfies the rule, calculate
+# alone does not, and both are counted against the tool-call budget.
+# ---------------------------------------------------------------------------
+
+_SHEET_TOOLS = {**ALLOWED_TOOLS, "read_range": read_range, "calculate": calculate}
+_REQUIRED = ("read_evidence", "read_range")
+
+
+def test_read_range_satisfies_the_required_read_rule(mocker) -> None:
+    agent, llm = _build(mocker, max_iterations=6, require_tool_call=_REQUIRED, tools=_SHEET_TOOLS)
+    llm.invoke.side_effect = [
+        _tool_call("read_range", {"chunk_id": "chk_1", "range": "B2:B3"}, "c1"),
+        _tool_call("calculate", {"operation": "sum"}, "c2"),
+        AIMessage(content="Total 3 [a.xlsx #chk_1]", tool_calls=[]),
+    ]
+    result = agent.invoke(_initial_state(), config={"recursion_limit": 50})
+    assert result["tool_calls_made"] == 2 and _nudges(result["messages"]) == []
+    assert llm.invoke.call_count == 3
+
+
+def test_calculate_alone_does_not_satisfy_the_required_read_rule(mocker) -> None:
+    agent, llm = _build(mocker, max_iterations=6, require_tool_call=_REQUIRED, tools=_SHEET_TOOLS)
+    llm.invoke.side_effect = [
+        _tool_call("calculate", {"operation": "sum"}, "c1"),
+        AIMessage(content="It is 3.", tool_calls=[]),
+        _tool_call("read_range", {"chunk_id": "chk_1", "range": "B2"}, "c2"),
+        AIMessage(content="3 [a.xlsx #chk_1]", tool_calls=[]),
+    ]
+    result = agent.invoke(_initial_state(), config={"recursion_limit": 50})
+    nudges = _nudges(result["messages"])
+    assert len(nudges) == 1
+    assert "read_evidence or read_range" in nudges[0].content
+    assert result["messages"][-1].content == "3 [a.xlsx #chk_1]"
+
+
+def test_failed_read_range_does_not_satisfy_the_required_read_rule(mocker) -> None:
+    agent, llm = _build(mocker, max_iterations=6, require_tool_call=_REQUIRED, tools=_SHEET_TOOLS)
+    llm.invoke.side_effect = [
+        _tool_call("read_range", {"chunk_id": "bad_id", "range": "B2"}, "c1"),
+        AIMessage(content="answering anyway", tool_calls=[]),
+        _tool_call("read_evidence", {"chunk_id": "chk_1"}, "c2"),
+        AIMessage(content="ok [doc.pdf #chk_1]", tool_calls=[]),
+    ]
+    result = agent.invoke(_initial_state(), config={"recursion_limit": 50})
+    assert len(_nudges(result["messages"])) == 1
+
+
+def test_new_tools_count_against_the_tool_call_budget(mocker) -> None:
+    agent, llm = _build(
+        mocker, max_iterations=6, require_tool_call=_REQUIRED, tools=_SHEET_TOOLS, max_tool_calls=2
+    )
+    llm.invoke.side_effect = [
+        _tool_call("read_range", {"chunk_id": "chk_1", "range": "B2"}, "c1"),
+        _tool_call("calculate", {"operation": "sum"}, "c2"),
+        _tool_call("calculate", {"operation": "sum"}, "c3"),  # over budget
+        AIMessage(content="done [a.xlsx #chk_1]", tool_calls=[]),
+    ]
+    result = agent.invoke(_initial_state(), config={"recursion_limit": 50})
+    assert result["tool_calls_made"] == 2
+    denied = [m for m in result["messages"] if str(getattr(m, "content", "")).startswith("POLICY DENIED")]
+    assert len(denied) == 1 and "budget" in denied[0].content
