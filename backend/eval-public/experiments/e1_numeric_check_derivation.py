@@ -1,7 +1,7 @@
 import re, sys, itertools
 from docket.eval.schema import load_gold_set, load_records
 from docket.eval.scoring import score_run, strip_citations
-gold=load_gold_set("eval-public/gold-extended.yaml"); qs=gold.by_id()
+gold=load_gold_set(sys.argv[2] if len(sys.argv)>2 else "eval-public/gold-extended.yaml"); qs=gold.by_id()
 recs=load_records(sys.argv[1])
 NUM=re.compile(r"(?<![\w.])\d[\d,]*(?:\.\d+)?%?")
 def nums(t):
