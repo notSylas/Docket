@@ -565,6 +565,8 @@ Report route accuracy, task completion, citation validity, fact support, complet
 
 ## 11. Implementation sequence
 
+**Decided (part 08 §4, spike first).** No infrastructure step below starts until experiment E3 in part 08 §8 has met its threshold: a retrieval-seeded typed plan must beat deterministic fan-out (one retrieval per file or fiscal year from the signals), a seeded agent (the fast path's chunks in the first turn) and forced Fast on the multi-step set, within the latency budget. E3 is an offline script over recorded runs and touches no schema. If it fails, this sequence is revised before code is written. Step 3 below is independent of E3 and may ship first.
+
 1. Define user-mode, execution-path, route, plan, step, result, and run-state types.
 2. Add migrations and repositories for runs, plan versions, steps, approvals, and evidence references.
 3. Remove per-run mutable state from the shared `QueryService` instance.

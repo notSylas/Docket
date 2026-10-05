@@ -625,6 +625,10 @@ Measure supported-claim precision, unsupported-claim recall, wrongful rejection,
 
 ## 15. Implementation sequence
 
+**Decided (part 08 §4, spike first).** Before step 1, run experiment E1 in part 08 §8: a deterministic numeric check over recorded extended-set runs, which must catch at least 3 of the 4 known generation errors and falsely reject at most 1 correct answer. Experiment E2 (structured atomic claims against sentence-by-sentence verification of the free-text answer) must meet its threshold before steps 1-3 build the structured-draft path. If E2 fails, the verification layer is built over free-text answers instead. Step 4's numeric check is the first production step regardless.
+
+**Prerequisite for step 8.** Eval scoring currently detects abstention by the exact fixed phrase (`scoring.is_abstention`). It must read a structured abstention or answer-status field first, with the phrase as fallback, and `RunRecord` must record answer status, claim records and per-phase latency. Otherwise reason-coded abstentions score as wrongful answers.
+
 1. Add structured claim, evidence-reference, derivation, verification, answer-status, abstention-reason, and trust-summary types.
 2. Extend `QueryResult` compatibly with answer status, coverage, conflict, confidence, and structured citation details.
 3. Add a structured-draft generation path and atomic-claim validator.
