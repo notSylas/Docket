@@ -250,6 +250,7 @@ def build_investigation_agent(
         engine=engine, table=table, gateway=gateway, top_k=top_k, manifest_guard=manifest_guard,
         page_table=page_table, extra_queries_provider=extra_queries_provider,
         scope_provider=scope_provider,
+        pool_k=settings.retrieval_pool_k,
     )
     read_evidence = make_read_evidence_tool(resolver=resolver)
     reader = WorkbookReader(

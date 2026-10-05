@@ -862,6 +862,27 @@ def test_ask_fast_default_page_table_is_none_threaded_into_hybrid_search(
     assert captured["page_table"] is None
 
 
+def test_ask_fast_pool_k_setting_threaded_only_when_set(
+    migrated_sqlite_engine: Engine, tmp_path: Path, built: dict, monkeypatch
+) -> None:
+    import docket.services.query.service as service_module
+    from docket.core.config import Settings
+
+    gateway = FakeInferenceGateway()
+    table = _index_chunk(migrated_sqlite_engine, tmp_path, gateway, built)
+    resolver = EvidenceResolver(built["session_factory"])
+    calls: list[dict] = []
+    monkeypatch.setattr(service_module, "hybrid_search", lambda **kw: calls.append(kw) or [])
+
+    for pool in (None, 30):
+        QueryService(
+            engine=migrated_sqlite_engine, table=table, gateway=gateway, resolver=resolver,
+            settings=Settings(retrieval_pool_k=pool),
+        ).ask(CHUNK_TEXT)
+    assert "pool_k" not in calls[0]
+    assert calls[1]["pool_k"] == 30
+
+
 def test_ask_fast_threads_supplied_page_table_into_hybrid_search(
     migrated_sqlite_engine: Engine, tmp_path: Path, built: dict, monkeypatch
 ) -> None:

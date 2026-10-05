@@ -43,3 +43,10 @@ def test_rewrite_env_overrides(monkeypatch) -> None:
     assert settings.rewrite_temperature == 0.6
     assert settings.rewrite_think is True
     assert settings.rewrite_num_predict == 512
+
+
+def test_retrieval_pool_k_default_none_and_env_override(monkeypatch) -> None:
+    monkeypatch.delenv("DOCKET_RETRIEVAL_POOL_K", raising=False)
+    assert Settings().retrieval_pool_k is None
+    monkeypatch.setenv("DOCKET_RETRIEVAL_POOL_K", "30")
+    assert Settings().retrieval_pool_k == 30

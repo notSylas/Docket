@@ -206,6 +206,17 @@ def test_search_knowledge_passes_the_fast_path_retrieval_stack(monkeypatch) -> N
     assert "extra_queries" not in calls[-1]
 
 
+def test_search_knowledge_pool_k_only_passed_when_set(monkeypatch) -> None:
+    import docket.services.agent.tools as tools_module
+
+    calls: list[dict] = []
+    monkeypatch.setattr(tools_module, "hybrid_search", lambda **kw: calls.append(kw) or [])
+    make_search_knowledge_tool(engine=None, table=None, gateway=None).invoke({"query": "a"})
+    make_search_knowledge_tool(engine=None, table=None, gateway=None, pool_k=30).invoke({"query": "a"})
+    assert "pool_k" not in calls[0]
+    assert calls[1]["pool_k"] == 30
+
+
 # ---------------------------------------------------------------------------
 # read_evidence -- real EvidenceResolver, not the spike's canned stub.
 # ---------------------------------------------------------------------------

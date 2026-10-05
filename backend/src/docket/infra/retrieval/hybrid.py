@@ -492,6 +492,7 @@ def hybrid_search(
     manifest_guard: IndexManifestGuard | None = None,
     extra_queries: list[str] | None = None,
     scope_version_ids: list[str] | None = None,
+    pool_k: int | None = None,
 ) -> list[RankedChunk]:
     """Run lexical and semantic search (each requesting `top_k` results) and
     fuse them via Reciprocal Rank Fusion, returning the top `top_k` fused
@@ -523,7 +524,12 @@ def hybrid_search(
     EVERY leg to those evidence versions BEFORE its top-k (FTS SQL `IN`,
     vector/visual prefilter intersected with the eligible set), so the top-k is
     drawn from inside the scope. `None` (the default) leaves every leg's call
-    exactly as it was without scoping; an empty list returns nothing."""
+    exactly as it was without scoping; an empty list returns nothing.
+
+    `pool_k` (default `None`) decouples the per-leg request size from the fused
+    cut: when given, every leg requests `pool_k` results and the RRF-fused list
+    is still cut to `top_k`. `None` keeps every leg at `top_k` (unchanged)."""
+    leg_k = pool_k if pool_k is not None else top_k
     scope_kw: dict[str, Any] = (
         {"scope_version_ids": list(scope_version_ids)} if scope_version_ids is not None else {}
     )
@@ -533,11 +539,11 @@ def hybrid_search(
             queries.append(extra)
     ranked_lists: list[list[str]] = []
     for q in queries:
-        ranked_lists.append(fts_search(engine, q, top_k, **scope_kw))
-        ranked_lists.append(vector_search(table, engine, gateway, q, top_k, manifest_guard, **scope_kw))
+        ranked_lists.append(fts_search(engine, q, leg_k, **scope_kw))
+        ranked_lists.append(vector_search(table, engine, gateway, q, leg_k, manifest_guard, **scope_kw))
         if page_table is not None:
             ranked_lists.append(
-                visual_search(page_table, engine, gateway, q, top_k, manifest_guard, **scope_kw)
+                visual_search(page_table, engine, gateway, q, leg_k, manifest_guard, **scope_kw)
             )
     fused = reciprocal_rank_fusion(ranked_lists)
     return fused[:top_k]

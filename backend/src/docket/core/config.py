@@ -113,6 +113,12 @@ class Settings(BaseSettings):
     # silently apply to only some of them.
     default_top_k: int = 8
 
+    # Per-leg candidate pool for hybrid retrieval (env DOCKET_RETRIEVAL_POOL_K).
+    # `None` (default): each leg requests `top_k`, as always. When set, each
+    # leg requests this many and the fused list is still cut to `top_k`
+    # (experiment E4: pool 30 / send 12 raises all-spans recall).
+    retrieval_pool_k: int | None = None
+
     # 4, not 3: the minimum a well-behaved investigation needs is 3 agent
     # turns (search_knowledge -> read_evidence -> cited final answer). 3
     # left no headroom at all for `docket.services.agent.graph.build_agent`'s

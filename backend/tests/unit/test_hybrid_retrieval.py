@@ -343,6 +343,45 @@ def test_hybrid_search_respects_top_k(migrated_sqlite_engine: Engine, tmp_path: 
     assert len(fused) <= 2
 
 
+def _spy_legs(monkeypatch) -> dict[str, list[int]]:
+    import docket.infra.retrieval.hybrid as hybrid_module
+
+    seen: dict[str, list[int]] = {"fts": [], "vec": [], "vis": []}
+
+    def _fts(engine, q, k, **kw):
+        seen["fts"].append(k)
+        return [f"f{i}" for i in range(k)]
+
+    def _vec(table, engine, gateway, q, k, guard=None, **kw):
+        seen["vec"].append(k)
+        return [f"v{i}" for i in range(k)]
+
+    def _vis(page_table, engine, gateway, q, k, guard=None, **kw):
+        seen["vis"].append(k)
+        return [f"p{i}" for i in range(k)]
+
+    monkeypatch.setattr(hybrid_module, "fts_search", _fts)
+    monkeypatch.setattr(hybrid_module, "vector_search", _vec)
+    monkeypatch.setattr(hybrid_module, "visual_search", _vis)
+    return seen
+
+
+def test_hybrid_search_pool_k_sets_leg_size_and_cuts_to_top_k(monkeypatch) -> None:
+    seen = _spy_legs(monkeypatch)
+    fused = hybrid_search(
+        engine=None, table=None, gateway=None, query="q", top_k=3, pool_k=10, page_table=object()
+    )
+    assert seen == {"fts": [10], "vec": [10], "vis": [10]}
+    assert len(fused) == 3
+
+
+def test_hybrid_search_default_pool_k_keeps_legs_at_top_k(monkeypatch) -> None:
+    seen = _spy_legs(monkeypatch)
+    fused = hybrid_search(engine=None, table=None, gateway=None, query="q", top_k=3)
+    assert seen == {"fts": [3], "vec": [3], "vis": []}
+    assert len(fused) == 3
+
+
 # ---------------------------------------------------------------------------
 # _sanitize_fts_query -- pure function, no I/O, no fixtures needed.
 # ---------------------------------------------------------------------------

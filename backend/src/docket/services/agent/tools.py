@@ -51,6 +51,7 @@ def make_search_knowledge_tool(
     page_table: Any | None = None,
     extra_queries_provider: Callable[[], list[str] | None] | None = None,
     scope_provider: Callable[[], list[str] | None] | None = None,
+    pool_k: int | None = None,
 ) -> BaseTool:
     """Build a `search_knowledge` tool bound to a specific engine/table/gateway.
 
@@ -89,6 +90,7 @@ def make_search_knowledge_tool(
             manifest_guard=manifest_guard,
             **({"extra_queries": list(extra)} if extra else {}),
             **({"scope_version_ids": list(scope)} if scope else {}),
+            **({"pool_k": pool_k} if pool_k is not None else {}),
         )
         return json.dumps({"results": [{"chunk_id": rc.chunk_id, "score": rc.score} for rc in ranked]})
 

@@ -359,6 +359,11 @@ class QueryService:
             manifest_guard=self._manifest_guard,
             **({"extra_queries": [standalone]} if standalone else {}),
             **({"scope_version_ids": scope_ids} if scope_ids else {}),
+            **(
+                {"pool_k": self._settings.retrieval_pool_k}
+                if self._settings.retrieval_pool_k is not None
+                else {}
+            ),
         )
 
         if not ranked_chunks and scope_ids:
