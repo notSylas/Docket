@@ -154,3 +154,20 @@ planned `read_range`/`calculate` tools. The gain comes almost entirely from
 step 3; steps 1 and 2 were roughly neutral on this set (see Upgrade/05).
 Run-to-run noise is about one or two questions. The original 33-question set
 stays at retrieval recall@8 100%.
+
+### Extended results after doc 05 steps 4-5 (1 repeat, no judge)
+
+Adds the `read_range`/`calculate` agent tools (not routed), explicit file
+scoping, ambiguous-period answers and number normalization. Auto mode: strict
+regex accuracy 83.6% (46/55), retrieval recall@8 88.6%, wrongful abstention
+about 9-14% run to run, multi_doc 8/9. Forced-mode comparison from the same
+work: forced agent 47.3% (26/55) against forced fast 81.8% (45/55), because the
+local model almost never called the numeric tools, so numeric routing stayed
+off. `sx-fu-actual-vs-budget` (an agent-path question) flips between runs. The
+original 33-question set stays at recall@8 33/33 with no wrongful abstention.
+
+### Spike scripts (`experiments/`)
+
+`e8_ece_noise.py` (calibration sampling noise) and
+`e1_numeric_check_*.py` (deterministic numeric check over recorded runs); see
+Upgrade/08 section 8 for results.

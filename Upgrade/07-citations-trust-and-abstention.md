@@ -211,6 +211,8 @@ flowchart TD
 
 ### 5.2 Deterministic verification
 
+**Measured (part 08 E1, 2026-10-05).** On the recorded extended-set runs, a check that every number in the answer appears in the cited chunks flagged 26% of correct answers (derived values, unit scaling, fiscal-year fragments), and a tolerant one-step-arithmetic variant still passed the wrong answers. Literal cell values can therefore be verified by matching, but a derived value is verifiable only through a recorded derivation from the `calculate` tool. Treat "derived claim without a derivation record" as unverifiable rather than guessing by arithmetic search, and expect the deterministic compute stage of part 05 §8 to be a prerequisite for verified derived numbers.
+
 Deterministic checks run before a semantic judge. They cover facts for which Docket has structured evidence:
 
 - cited IDs exist, belong to the allowed evidence set, and still resolve;
@@ -475,7 +477,7 @@ Support confidence applies only to displayed material claims. Coverage explains 
 
 The calibration artifact is versioned by answer model, verifier configuration, retrieval/index configuration, answer category, and evaluation set. Until representative held-out data exists, the interface displays `Confidence not calibrated` alongside deterministic verification status.
 
-**Recommended provisional display gate:** at least 100 held-out observations in the relevant reporting bucket, reported Brier score and reliability curve, and expected calibration error no greater than 0.05. These values are starting hypotheses for part 08, not claims that they are universally optimal.
+**Recommended provisional display gate:** at least 400 held-out observations in the relevant reporting bucket, reported Brier score and reliability curve, and expected calibration error no greater than 0.05 with its interval. Part 08 experiment E8 measured that at 100 observations a perfectly calibrated verifier and one miscalibrated by 0.05 give overlapping ECE ranges (0.009-0.052 against 0.020-0.109), so the earlier figure of 100 could not distinguish them; at 400 they begin to separate. Below the gate the interface shows `Confidence not calibrated`. These values remain starting hypotheses.
 
 ### 10.3 Precision-first release bias
 
