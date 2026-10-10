@@ -385,6 +385,10 @@ class EvalRunner:
         record.scoped_to = result.scoped_to
         record.ambiguity = result.ambiguity
         record.compute = result.compute
+        record.scope_label = getattr(result, "scope_label", None)
+        record.scope_file_count = getattr(result, "scope_file_count", None)
+        if getattr(result, "abstention_reason", None) is not None:
+            record.abstention_reason = result.abstention_reason
         record.citations = [RecordedCitation(**c.model_dump()) for c in result.citations]
         unique = {c.chunk_id: c for c in self._resolver.resolved}  # first-seen order, deduped
         record.retrieved = _to_record_chunks(list(unique.values()))

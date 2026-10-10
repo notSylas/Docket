@@ -437,6 +437,68 @@ def test_ask_passes_history_and_mode_and_reports_abstention(ctx, folder):
     assert out.answer.compute == "Deterministic computation was not used."
 
 
+class ScopedService:
+    def __init__(self) -> None:
+        self.scopes: list = []
+
+    def ask(self, question, mode=None, history=None, scope=None):
+        self.scopes.append(scope)
+        return _result(
+            question, "ok", [],
+            scope_label=getattr(scope, "label", None),
+            scope_file_count=3 if scope is not None else None,
+        )
+
+
+def test_scope_choice_reaches_the_query_service_and_shows_in_details(ctx, folder):
+    from docket.interfaces.cli.tui.model import Scope
+    from docket.services.query.scope import QueryScope, ScopeKind
+
+    src = ctx.source_manager.register_source(folder)
+    add_file(ctx, src, "a.md")
+    svc = ScopedService()
+    be = backend_for(ctx, svc)
+    assert be.scope_enforced
+
+    out = be.ask(AskRequest("q", "auto", scope=Scope()), lambda s: None, "All ready sources", "Auto")
+    assert svc.scopes[-1] is None  # "all" is exactly the unscoped call
+    assert out.answer.scope_label == "All ready sources"
+
+    be.ask(AskRequest("q", "auto", scope=Scope("source", src.id)), lambda s: None, "docs", "Auto")
+    assert svc.scopes[-1] == QueryScope.for_source(src.id, label="docs")
+
+    out = be.ask(
+        AskRequest("q", "auto", scope=Scope("folder", src.id, "sub")), lambda s: None, "docs / sub/", "Auto"
+    )
+    q = svc.scopes[-1]
+    assert q.kind == ScopeKind.FOLDER and q.folder == str(folder / "sub") and q.label == "docs / sub/"
+    assert out.answer.scope_label == "docs / sub/ (3 documents)"
+
+    be.ask(AskRequest("q", "auto", scope=Scope("file", src.id, "sub/a.md")), lambda s: None, "docs / sub/a.md", "Auto")
+    assert svc.scopes[-1].folder == str(folder / "sub" / "a.md")
+
+
+def test_empty_scope_abstention_explains_itself(ctx, folder):
+    src = ctx.source_manager.register_source(folder)
+    add_file(ctx, src, "a.md")
+
+    class Empty:
+        def ask(self, question, mode=None, history=None, scope=None):
+            return _result(
+                question, "Nothing is indexed in docs / new/ yet.", [], abstained=True,
+                scope_label="docs / new/", scope_file_count=0, abstention_reason="NO_EVIDENCE",
+            )
+
+    from docket.interfaces.cli.tui.model import Scope
+
+    out = backend_for(ctx, Empty()).ask(
+        AskRequest("q", "auto", scope=Scope("folder", src.id, "new")), lambda s: None, "docs / new/", "Auto"
+    )
+    assert out.answer.abstained
+    assert out.answer.abstain_reason == "Nothing is indexed in docs / new/ yet."
+    assert out.answer.scope_label == "docs / new/ (0 documents)"
+
+
 def test_ask_errors_are_user_presentable(ctx, folder):
     src = ctx.source_manager.register_source(folder)
     add_file(ctx, src, "a.md")

@@ -36,13 +36,15 @@ from docket.services.agent.graph import build_investigation_agent
 from docket.services.agent.run_context import (
     RunContext,
     bind_run_context,
+    current_boundary_ids,
     current_extra_queries,
-    current_scope_ids,
+    current_search_scope,
 )
 from docket.core.config import Settings
 from docket.core.config import settings as default_settings
 from docket.infra.inference.gateway import InferenceGateway
 from docket.services.query.classifier import HeuristicQueryClassifier, QueryClassifier, QueryMode
+from docket.services.query.trust import AbstentionReason
 from docket.services.query.conversation import ConversationTurn, format_history_block, trim_history
 from docket.services.query.citations import (
     CITATION_TAG_PATTERN,
@@ -73,6 +75,12 @@ from docket.services.query.prompts import (
     REWRITE_SYSTEM_PROMPT,
     SYSTEM_PROMPT,
     SYSTEM_PROMPT_WITH_HISTORY,
+)
+from docket.services.query.scope import (
+    QueryScope,
+    ResolvedScope,
+    empty_scope_message,
+    resolve as resolve_scope,
 )
 from docket.services.query.signals import (
     PeriodAmbiguity,
@@ -126,6 +134,13 @@ class QueryResult(BaseModel):
     # {"status": "used"|"fallback", "plan"/"plan_raw", "derivation",
     # "fallback_reason"}. See `docket.services.query.compute`.
     compute: dict[str, Any] | None = None
+    # Query scope the question ran inside (None = no scope was given): its human
+    # label and how many eligible documents it held when resolved.
+    scope_label: str | None = None
+    scope_file_count: int | None = None
+    # AbstentionReason value when the abstention has a specific code (an empty
+    # or out-of-scope boundary); None otherwise.
+    abstention_reason: str | None = None
 
 
 # Tools whose successful results make chunks citable on the agent path.
@@ -322,7 +337,8 @@ class QueryService:
                 manifest_guard=self._manifest_guard,
                 page_table=self._page_table,
                 extra_queries_provider=current_extra_queries,
-                scope_provider=current_scope_ids,
+                scope_provider=current_search_scope,
+                boundary_provider=current_boundary_ids,
             )
         return self._agent
 
@@ -331,6 +347,7 @@ class QueryService:
         question: str,
         mode: QueryMode | None = None,
         history: list[ConversationTurn] | None = None,
+        scope: QueryScope | None = None,
     ) -> QueryResult:
         """Answer `question`, routing to FAST or AGENT.
 
@@ -346,15 +363,31 @@ class QueryService:
         resolve references in `question`. Retrieval still uses the literal
         latest question, and citations are validated against this turn's
         evidence only. None/empty behaves exactly as without history.
+
+        `scope` (default None = search everything, exactly as before) is an
+        outer boundary resolved once per question: searches and evidence reads
+        stay inside it, a file named in the question can only narrow it, and a
+        scope that holds nothing returns an explicit "nothing indexed" result
+        without searching or calling the model.
         """
         if mode is None:
             mode = self._classifier.classify(question)
+        boundary: ResolvedScope | None = (
+            resolve_scope(self._engine, scope) if scope is not None else None
+        )
+        if boundary is not None and boundary.empty:
+            return self._abstain_for_scope(
+                question, mode, boundary,
+                empty_scope_message(boundary),
+                boundary.reason or AbstentionReason.NO_EVIDENCE.value,
+            )
         trimmed = trim_history(history)
         run = RunContext()
+        kwargs: dict[str, Any] = {"boundary": boundary} if boundary is not None else {}
         result = (
-            self._ask_agent(question, trimmed, run)
+            self._ask_agent(question, trimmed, run, **kwargs)
             if mode == QueryMode.AGENT
-            else self._ask_fast(question, trimmed)
+            else self._ask_fast(question, trimmed, **kwargs)
         )
         # Deterministic belt-and-suspenders for the system prompt's "no
         # LaTeX" instruction (see `docket.services.query.latex`'s docstring for why):
@@ -362,21 +395,86 @@ class QueryService:
         # answer without it. Citation tags are never a `normalize_latex`
         # target (see that module), so this can't disturb `result.citations`
         # or the validation already done inside `_ask_fast`/`_ask_agent`.
-        return result.model_copy(update={"answer": normalize_latex(result.answer)})
+        update: dict[str, Any] = {"answer": normalize_latex(result.answer)}
+        if boundary is not None:
+            update["scope_label"] = boundary.label
+            update["scope_file_count"] = boundary.file_count
+        return result.model_copy(update=update)
+
+    @staticmethod
+    def _combine_scope(
+        named_ids: list[str], boundary: ResolvedScope | None
+    ) -> tuple[list[str] | None, bool]:
+        """`(effective, outside)`: the version ids searches run inside (None =
+        unrestricted), and whether a file the question named lies wholly outside
+        the boundary. A named file narrows the boundary (intersection); it never
+        widens it."""
+        if boundary is None or boundary.version_ids is None:
+            return (list(named_ids) if named_ids else None), False
+        allowed = set(boundary.version_ids)
+        if named_ids:
+            inside = [v for v in named_ids if v in allowed]
+            return inside, not inside
+        return list(boundary.version_ids), False
+
+    def _abstain_for_scope(
+        self,
+        question: str,
+        mode: QueryMode,
+        boundary: ResolvedScope,
+        message: str,
+        reason: str,
+        *,
+        standalone: str | None = None,
+        scoped_to: list[str] | None = None,
+        warning: str | None = None,
+    ) -> QueryResult:
+        return QueryResult(
+            question=question,
+            answer=message,
+            citations=[],
+            abstained=True,
+            validation_warnings=[warning] if warning else [],
+            mode=mode.value,
+            standalone_query=standalone,
+            scoped_to=scoped_to,
+            scope_label=boundary.label,
+            scope_file_count=boundary.file_count,
+            abstention_reason=reason,
+        )
+
+    @staticmethod
+    def _outside_message(boundary: ResolvedScope) -> str:
+        noun = "source" if boundary.kind.value == "source" else "folder"
+        return (
+            f"The file you named is outside the selected {noun} ({boundary.label}), "
+            "so nothing was searched. Choose a wider scope to search it."
+        )
 
     def _ask_fast(
-        self, question: str, history: list[ConversationTurn] | None = None
+        self,
+        question: str,
+        history: list[ConversationTurn] | None = None,
+        boundary: ResolvedScope | None = None,
     ) -> QueryResult:
         # Follow-up rewrite: never on the first turn. The agent path computes
         # the same rewrite once per run (see `_ask_agent`).
         standalone = self._rewrite_followup(question, history)
         signals = self._query_signals(question, standalone, history)
-        scope_ids = (
+        named_ids = (
             list(signals.scope_version_ids)
             if signals is not None and self._settings.query_scope_enabled
             else []
         )
-        scoped_to = list(signals.scope_files) if scope_ids and signals is not None else None
+        scope_ids, outside = self._combine_scope(named_ids, boundary)
+        scoped_to = list(signals.scope_files) if named_ids and signals is not None else None
+        if outside and boundary is not None:
+            return self._abstain_for_scope(
+                question, QueryMode.FAST, boundary, self._outside_message(boundary),
+                AbstentionReason.NO_EVIDENCE.value,
+                standalone=standalone, scoped_to=scoped_to,
+                warning="the named file is outside the selected scope",
+            )
         ranked_chunks = hybrid_search(
             engine=self._engine,
             table=self._table,
@@ -386,7 +484,7 @@ class QueryService:
             page_table=self._page_table,
             manifest_guard=self._manifest_guard,
             **({"extra_queries": [standalone]} if standalone else {}),
-            **({"scope_version_ids": scope_ids} if scope_ids else {}),
+            **({"scope_version_ids": scope_ids} if scope_ids is not None else {}),
             **(
                 {"pool_k": self._settings.retrieval_pool_k}
                 if self._settings.retrieval_pool_k is not None
@@ -394,7 +492,7 @@ class QueryService:
             ),
         )
 
-        if not ranked_chunks and scope_ids:
+        if not ranked_chunks and named_ids:
             # The named file yields nothing retrievable: say so; never widen the
             # search to other files behind the user's back.
             names = ", ".join(scoped_to or [])
@@ -448,7 +546,7 @@ class QueryService:
         if (
             self._settings.query_ambiguity_enabled
             and signals is not None
-            and not scope_ids
+            and not named_ids
             and not signals.has_period
         ):
             ambiguity = detect_period_ambiguity(resolved)
@@ -725,6 +823,7 @@ class QueryService:
         question: str,
         history: list[ConversationTurn] | None = None,
         run: RunContext | None = None,
+        boundary: ResolvedScope | None = None,
     ) -> QueryResult:
         run = run if run is not None else RunContext()
         agent = self._get_agent()
@@ -742,6 +841,22 @@ class QueryService:
             else []
         )
         scoped_to = list(signals.scope_files) if run.scope_ids and signals is not None else None
+        effective, outside = self._combine_scope(run.scope_ids, boundary)
+        if outside and boundary is not None:
+            run.extra_queries = []
+            run.scope_ids = []
+            return self._abstain_for_scope(
+                question, QueryMode.AGENT, boundary, self._outside_message(boundary),
+                AbstentionReason.NO_EVIDENCE.value,
+                standalone=standalone, scoped_to=scoped_to,
+                warning="the named file is outside the selected scope",
+            )
+        run.search_scope_ids = effective
+        run.boundary_ids = (
+            list(boundary.version_ids)
+            if boundary is not None and boundary.version_ids is not None
+            else None
+        )
 
         system_prompt = AGENT_SYSTEM_PROMPT_WITH_HISTORY if history else AGENT_SYSTEM_PROMPT
         messages_in: list = [SystemMessage(content=system_prompt)]
@@ -764,6 +879,8 @@ class QueryService:
         finally:
             run.extra_queries = []
             run.scope_ids = []
+            run.search_scope_ids = None
+            run.boundary_ids = None
         messages = result_state["messages"]
 
         final_ai_message = next(
@@ -776,6 +893,9 @@ class QueryService:
         )
 
         resolved = _citations_from_agent_messages(messages, self._resolver)
+        if boundary is not None and boundary.version_ids is not None:
+            # Belt and braces: the tools already refuse out-of-scope reads.
+            resolved = [c for c in resolved if boundary.contains(c.evidence_version_id)]
         if self._trace_callback is not None:
             self._trace_callback({
                 "event": "agent_end",

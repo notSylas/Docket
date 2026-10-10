@@ -490,8 +490,22 @@ def reindex() -> None:
 
 
 @app.command("query")
-def query(question: str = typer.Argument(..., help="Question to ask over ingested evidence.")) -> None:
+def query(
+    question: str = typer.Argument(..., help="Question to ask over ingested evidence."),
+    here: bool = typer.Option(
+        False, "--here", help="Search only the current folder (and below). Default: all sources."
+    ),
+    folder: Path = typer.Option(
+        None, "--folder", help="Search only this folder (and below). Implies --here."
+    ),
+) -> None:
     """Ask a question, answered (with citations) from ingested evidence."""
+    scope = None
+    if here or folder is not None:
+        from docket.services.query.scope import QueryScope
+
+        target = (folder if folder is not None else Path.cwd()).expanduser().resolve()
+        scope = QueryScope.for_folder(target, label=target.name or str(target))
     context = build_context()
 
     table = context.vector_writer.table
@@ -513,11 +527,15 @@ def query(question: str = typer.Argument(..., help="Question to ask over ingeste
         manifest_guard=context.index_manifest_guard,
     )
     try:
-        result = query_service.ask(question)
+        result = (
+            query_service.ask(question, scope=scope) if scope is not None else query_service.ask(question)
+        )
     except IndexManifestMismatchError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
+    if scope is not None and result.scope_label is not None:
+        typer.echo(f"Scope: {result.scope_label} ({result.scope_file_count} documents)")
     typer.echo(f"[{result.mode}] {result.answer}")
     if result.citations:
         typer.echo("\nCitations:")

@@ -22,6 +22,13 @@ class RunContext:
     extra_queries: list[str] = field(default_factory=list)
     # Evidence versions an explicitly named file scopes every search to.
     scope_ids: list[str] = field(default_factory=list)
+    # The scope searches actually run inside: the outer query scope intersected
+    # with `scope_ids`. `None` = unrestricted; an EMPTY list means "matches
+    # nothing" and must never be treated as unrestricted.
+    search_scope_ids: list[str] | None = None
+    # The outer query-scope boundary alone (reads must stay inside it). `None`
+    # = no boundary.
+    boundary_ids: list[str] | None = None
 
 
 _current_run: ContextVar[RunContext | None] = ContextVar("docket_current_run", default=None)
@@ -45,3 +52,15 @@ def current_extra_queries() -> list[str]:
 def current_scope_ids() -> list[str]:
     run = _current_run.get()
     return run.scope_ids if run is not None else []
+
+
+def current_search_scope() -> list[str] | None:
+    """Versions searches must stay inside; None = unrestricted, [] = nothing."""
+    run = _current_run.get()
+    return run.search_scope_ids if run is not None else None
+
+
+def current_boundary_ids() -> list[str] | None:
+    """The outer scope boundary evidence reads must stay inside; None = none."""
+    run = _current_run.get()
+    return run.boundary_ids if run is not None else None

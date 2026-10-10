@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from typing import Any
 from dataclasses import dataclass, field
 
 from docket.interfaces.cli.tui import fake_data as fd
@@ -10,7 +11,7 @@ from docket.interfaces.cli.tui import fake_data as fd
 
 @dataclass(frozen=True)
 class Scope:
-    kind: str = "all"  # all | source | file
+    kind: str = "all"  # all | source | folder | file
     source_id: str = ""
     file_path: str = ""
 
@@ -21,6 +22,8 @@ class Scope:
         name = src.name if src else "Unknown source"
         if self.kind == "source":
             return name
+        if self.kind == "folder":
+            return f"{name} / {self.file_path}/"
         return f"{name} / {self.file_path}"
 
 
@@ -123,6 +126,7 @@ class QueryOp:
     stage_index: int = 0
     state: str = "running"  # running | stopping | cancelled | done
     scope_label: str = ""
+    scope: Any = None  # the `Scope` chosen when the question was asked
     mode_label: str = ""
     real: bool = False
     stage_name: str = ""

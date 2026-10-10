@@ -488,7 +488,7 @@ class ScopeOverlay(Overlay):
     name = "scope"
     title = "Search scope"
     filterable = True
-    placeholder = "filter sources"
+    placeholder = "filter sources and folders"
 
     def __init__(self, ui: Any) -> None:
         self.files_mode = False
@@ -518,6 +518,7 @@ class ScopeOverlay(Overlay):
                         Scope("source", s.id),
                     )
                 )
+            out.extend(self._folder_entries(q, cur))
         else:
             names: dict[str, int] = {}
             for s in self.ui.world.sources:
@@ -538,8 +539,35 @@ class ScopeOverlay(Overlay):
                     out.append(Entry(f"{s.id}:{f.path}", f.path, sub, "", MUTED, True, "", Scope("file", s.id, f.path)))
         return out
 
+    # Without a filter, list folders only when there are few of them; with a
+    # filter, list every folder that matches.
+    _FOLDERS_UNFILTERED_MAX = 30
+
+    def _folder_entries(self, q: str, cur: Any) -> list[Entry]:
+        found: list[tuple[Any, str]] = []
+        for s in self.ui.world.sources:
+            if s.status != fd.READY:
+                continue
+            seen: set[str] = set()
+            for f in s.files:
+                if f.status != fd.FILE_READY:
+                    continue
+                parts = f.path.split("/")[:-1]
+                for i in range(1, len(parts) + 1):
+                    seen.add("/".join(parts[:i]))
+            found.extend((s, d) for d in sorted(seen))
+        if not q and len(found) > self._FOLDERS_UNFILTERED_MAX:
+            return []
+        out: list[Entry] = []
+        for s, d in found:
+            if q and q not in d.lower() and q not in s.name.lower():
+                continue
+            tag = "current" if cur.kind == "folder" and cur.source_id == s.id and cur.file_path == d else ""
+            out.append(Entry(f"{s.id}:{d}/", f"{s.name} / {d}/", "folder", tag, MUTED, True, "", Scope("folder", s.id, d)))
+        return out
+
     def empty_text(self) -> str:
-        return "No file or source matches that text."
+        return "No file, folder or source matches that text."
 
     def buttons(self) -> list[Btn]:
         if self.files_mode:

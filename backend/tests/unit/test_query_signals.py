@@ -288,10 +288,14 @@ def test_agent_search_knowledge_honours_scope_provider(monkeypatch) -> None:
         engine=None, table=None, gateway=None, scope_provider=lambda: state["ids"]
     )
     tool.invoke({"query": "a"})
-    state["ids"] = []
+    state["ids"] = None
     tool.invoke({"query": "b"})
     assert calls[0]["scope_version_ids"] == ["ev_9"]
     assert "scope_version_ids" not in calls[1]
+    # An explicit empty scope matches nothing: no search, never widened.
+    state["ids"] = []
+    assert tool.invoke({"query": "empty"}) == '{"results": []}'
+    assert len(calls) == 2
     plain = make_search_knowledge_tool(engine=None, table=None, gateway=None)
     plain.invoke({"query": "c"})
     assert "scope_version_ids" not in calls[2]

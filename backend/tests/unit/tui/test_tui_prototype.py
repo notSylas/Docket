@@ -209,6 +209,20 @@ def test_scope_picker_disables_unavailable_sources_and_searches_files():
     scenario(go)
 
 
+def test_scope_picker_offers_folders_of_sources():
+    async def go(h):
+        await h.press("f3")
+        overlay = h.ui.overlays[-1]
+        folders = [e for e in overlay.entries() if getattr(e.data, "kind", "") == "folder"]
+        assert folders and any(e.data.file_path == "board" for e in folders)
+        entry = next(e for e in folders if e.data.file_path == "board")
+        overlay.activate(entry)
+        assert h.ui.scope.kind == "folder" and h.ui.scope.file_path == "board"
+        assert h.ui.scope_label().endswith("/ board/")
+
+    scenario(go)
+
+
 def test_mode_selection_updates_header_and_plan_is_unavailable():
     async def go(h):
         await h.press("f4")

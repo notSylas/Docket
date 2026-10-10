@@ -70,16 +70,20 @@ def make_search_knowledge_tool(
     call. It is a provider, not a list, because the agent graph is built once
     and reused across questions.
 
-    `scope_provider` works the same way for explicit file scoping (doc 05 section
-    6): it returns the evidence-version ids the current question names, or
-    nothing; when it returns ids every search runs inside them (before top-k).
+    `scope_provider` works the same way for scoping (doc 05 section 6, doc 17
+    section 5.4): `None` means unrestricted; a list restricts every search to
+    those evidence-version ids (before top-k), and an EMPTY list matches
+    nothing rather than widening.
     """
 
     @tool(description=SEARCH_KNOWLEDGE_DESCRIPTION)
     def search_knowledge(query: str) -> str:
         """Model-facing description lives in `docket.prompts.agent.SEARCH_KNOWLEDGE_DESCRIPTION`."""
         extra = (extra_queries_provider() if extra_queries_provider else None) or []
-        scope = (scope_provider() if scope_provider else None) or []
+        scope = scope_provider() if scope_provider else None
+        if scope is not None and not scope:
+            # An explicit empty scope matches nothing; it must not widen.
+            return json.dumps({"results": []})
         ranked = hybrid_search(
             engine=engine,
             table=table,
@@ -89,7 +93,7 @@ def make_search_knowledge_tool(
             page_table=page_table,
             manifest_guard=manifest_guard,
             **({"extra_queries": list(extra)} if extra else {}),
-            **({"scope_version_ids": list(scope)} if scope else {}),
+            **({"scope_version_ids": list(scope)} if scope is not None else {}),
             **({"pool_k": pool_k} if pool_k is not None else {}),
         )
         return json.dumps({"results": [{"chunk_id": rc.chunk_id, "score": rc.score} for rc in ranked]})
@@ -97,7 +101,11 @@ def make_search_knowledge_tool(
     return search_knowledge
 
 
-def make_read_evidence_tool(*, resolver: EvidenceResolver) -> BaseTool:
+def make_read_evidence_tool(
+    *,
+    resolver: EvidenceResolver,
+    boundary_provider: Callable[[], list[str] | None] | None = None,
+) -> BaseTool:
     """Build a `read_evidence` tool bound to a specific `EvidenceResolver`.
 
     Replaces the spike's hardcoded fake string with a real
@@ -116,6 +124,10 @@ def make_read_evidence_tool(*, resolver: EvidenceResolver) -> BaseTool:
     is to hand the model clean feedback it can react to (e.g. try a
     different chunk_id, or re-search); an uncaught exception would instead
     crash the whole agent loop over a single bad tool argument.
+
+    `boundary_provider` returns the outer query-scope boundary (evidence-version
+    ids) or None; a chunk outside it is refused with an error object, so the
+    model cannot read (and therefore cannot cite) outside the selected scope.
     """
 
     @tool(description=READ_EVIDENCE_DESCRIPTION)
@@ -125,6 +137,11 @@ def make_read_evidence_tool(*, resolver: EvidenceResolver) -> BaseTool:
             resolved = resolver.resolve(chunk_id)
         except ChunkNotFoundError:
             return json.dumps({"error": f"chunk not found: {chunk_id}"})
+        boundary = boundary_provider() if boundary_provider else None
+        if boundary is not None and resolved.evidence_version_id not in set(boundary):
+            return json.dumps(
+                {"error": f"chunk is outside the selected search scope: {chunk_id}"}
+            )
         return json.dumps(
             {
                 "chunk_id": resolved.chunk_id,

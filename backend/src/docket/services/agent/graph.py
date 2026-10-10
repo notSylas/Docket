@@ -232,6 +232,7 @@ def build_investigation_agent(
     page_table: Any | None = None,
     extra_queries_provider: Callable[[], list[str] | None] | None = None,
     scope_provider: Callable[[], list[str] | None] | None = None,
+    boundary_provider: Callable[[], list[str] | None] | None = None,
     store: ContentAddressedStore | None = None,
 ):
     """Real-use convenience wrapper: builds the real `search_knowledge`/
@@ -243,7 +244,9 @@ def build_investigation_agent(
     `page_table`/`manifest_guard`/`extra_queries_provider` give `search_knowledge`
     the same retrieval stack as the fast path (doc 05 section 8); `scope_provider`
     supplies the evidence versions an explicitly named file scopes searches to
-    (doc 05 section 6). `store`
+    (doc 05 section 6); `boundary_provider` supplies the outer query-scope
+    boundary that `read_evidence`, `read_range` and `calculate` must stay inside
+    (None = no boundary). `store`
     defaults to the store under `settings.evidence_store_path`.
     """
     search_knowledge = make_search_knowledge_tool(
@@ -252,10 +255,11 @@ def build_investigation_agent(
         scope_provider=scope_provider,
         pool_k=settings.retrieval_pool_k,
     )
-    read_evidence = make_read_evidence_tool(resolver=resolver)
+    read_evidence = make_read_evidence_tool(resolver=resolver, boundary_provider=boundary_provider)
     reader = WorkbookReader(
         session_factory=get_session_factory(engine),
         store=store or ContentAddressedStore(settings.evidence_store_path),
+        boundary_provider=boundary_provider,
     )
     allowed_tools = {
         "search_knowledge": search_knowledge,
