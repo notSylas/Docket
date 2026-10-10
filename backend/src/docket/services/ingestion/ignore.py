@@ -214,6 +214,10 @@ class DiscoveryReport:
     # (bounded scans only; ingestion never passes a budget).
     incomplete: bool = False
     entries_scanned: int = 0
+    # When a bound stopped the walk: the directory (as path parts relative to
+    # the root) it stopped in. Passing it back as `start_after` continues the
+    # walk there (the walk is in sorted order, so this is deterministic).
+    resume_from: tuple[str, ...] | None = None
 
 
 def discover(
@@ -225,6 +229,7 @@ def discover(
     max_entries: int | None = None,
     time_budget_s: float | None = None,
     count_ignored: bool = True,
+    start_after: tuple[str, ...] | None = None,
 ) -> DiscoveryReport:
     """Walk `root`, pruning ignored directories. With `enabled=False` nothing
     is ignored (escape hatch: DOCKET_INGEST_IGNORE_ENABLED=false).
@@ -234,7 +239,10 @@ def discover(
     and default to the unbounded behaviour ingestion relies on: stop after
     `max_entries` directory entries or `time_budget_s` seconds (reported as
     `incomplete`), and `count_ignored=False` skips counting the documents
-    inside ignored folders (which would walk e.g. a whole `node_modules`)."""
+    inside ignored folders (which would walk e.g. a whole `node_modules`).
+    `start_after` resumes a bounded walk: files of directories that sort
+    before that directory (by path parts, the walk's own order) were already
+    covered by an earlier pass and are not listed again."""
     root = Path(root)
     rules = IgnoreRules.for_root(root, extra_rules) if enabled else IgnoreRules()
     report = DiscoveryReport(files=[])
@@ -246,12 +254,17 @@ def discover(
         return deadline is not None and time.monotonic() > deadline
 
     for dirpath, dirnames, filenames in os.walk(root):
-        report.entries_scanned += len(dirnames) + len(filenames)
-        if over_budget():
-            report.incomplete = True
-            break
+        dirnames.sort()
         here = Path(dirpath)
         rel_dir = here.relative_to(root)
+        rel_parts = () if str(rel_dir) == "." else rel_dir.parts
+        resumed_over = start_after is not None and rel_parts < start_after
+        if not resumed_over:
+            report.entries_scanned += len(dirnames) + len(filenames)
+        if over_budget():
+            report.incomplete = True
+            report.resume_from = rel_parts
+            break
         rel_prefix = "" if str(rel_dir) == "." else rel_dir.as_posix() + "/"
 
         kept: list[str] = []
@@ -264,11 +277,16 @@ def discover(
                 kept.append(d)
         dirnames[:] = kept
 
-        for f in filenames:
+        if resumed_over:
+            continue  # covered by an earlier pass (its subdirectories are still walked)
+        stopped = False
+        for f in sorted(filenames):
             if Path(f).suffix.lower() not in extensions:
                 continue
             if deadline is not None and time.monotonic() > deadline:
                 report.incomplete = True
+                report.resume_from = rel_parts
+                stopped = True
                 break
             if enabled and rules.entry_ignored(rel_prefix + f, f, False):
                 report.files_skipped += 1
@@ -283,6 +301,8 @@ def discover(
                 except OSError:
                     pass  # unreadable: the parser reports it per file
                 report.files.append(p)
+        if stopped:
+            break
 
     report.files.sort()
     return report

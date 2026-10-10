@@ -121,9 +121,11 @@ class RealBackend:
     supported_formats = _FORMATS
     thinking_levels = ("Fast", "Balanced", "Thorough")
     settings_note = (
-        "Appearance and answering mode apply to this session only; nothing is saved. "
+        "Appearance and answering mode apply to this session only; nothing else is saved "
+        "except the automatic update setting. "
         "The answer model and thinking level are not connected yet."
     )
+    freshness_supported = True
     jobs_hint = "files that need attention are listed under each job"
     jobs_note = ""
     stage_search = "Searching and writing answer"
@@ -156,6 +158,9 @@ class RealBackend:
         # health check on one worker and an indexing job on another must not
         # each construct their own.
         self._build_lock = threading.Lock()
+        self._fresh: Any = None  # FreshnessMonitor, built when watching starts
+        self._fresh_lock = threading.Lock()
+        self._on_batch: Callable[[Any], None] = lambda _batch: None
         self.data_dir_label = str(settings.data_dir)
         self.embed_model = str(settings.embed_model)
         self.default_model = str(settings.gen_model)
@@ -262,6 +267,7 @@ class RealBackend:
                     files,
                     last_indexed=_local_time(finished) if finished else "Never indexed",
                     note=note,
+                    updates_paused=s.sync_paused_at is not None,
                 )
             )
         return World(sources=views)
@@ -629,6 +635,143 @@ class RealBackend:
                 notices.append(stale_recipe_notice(stale))
         except Exception:  # noqa: BLE001
             pass
+        return IndexOutcome("done", final, notices=tuple(notices))
+
+    # -- automatic freshness ---------------------------------------------------
+    def auto_refresh_enabled(self) -> bool:
+        from docket.services.sources.freshness import auto_refresh_enabled
+
+        return auto_refresh_enabled(Path(self._ctx.settings.data_dir))
+
+    def set_auto_refresh(self, enabled: bool) -> None:
+        from docket.services.sources.freshness import set_auto_refresh
+
+        set_auto_refresh(Path(self._ctx.settings.data_dir), enabled)
+
+    def catch_up(self, source_id: str) -> Any:
+        from docket.services.sources.freshness import catch_up
+
+        return catch_up(
+            source_id,
+            session_factory=self._ctx.session_factory,
+            settings=self._ctx.settings,
+        )
+
+    def _monitor(self) -> Any:
+        from docket.services.sources.freshness import FreshnessMonitor
+
+        with self._fresh_lock:
+            if self._fresh is None:
+                self._fresh = FreshnessMonitor(
+                    self._ctx.source_manager,
+                    self._pipeline,
+                    session_factory=self._ctx.session_factory,
+                    on_batch=lambda batch: self._on_batch(batch),
+                    settings=self._ctx.settings,
+                )
+            return self._fresh
+
+    def watch_sources(self, on_batch, source_ids=None, hints=None) -> None:
+        self._on_batch = on_batch
+        monitor = self._monitor()
+        for sid in source_ids if source_ids is not None else [s.id for s in self._ctx.source_manager.list_sources()]:
+            hint = (hints or {}).get(sid)
+            monitor.start_source(sid, tree_hint=hint)
+
+    def stop_watching(self) -> None:
+        with self._fresh_lock:
+            monitor, self._fresh = self._fresh, None
+        if monitor is not None:
+            monitor.close()
+
+    def pause_updates(self, source_id: str) -> None:
+        try:
+            if self._fresh is not None:
+                self._fresh.pause(source_id)
+            else:
+                self._ctx.source_manager.pause_sync(source_id)
+        except SourceNotFoundError as exc:
+            raise BackendError(f"Error: {exc}") from exc
+
+    def resume_updates(self, source_id: str) -> None:
+        try:
+            if self._fresh is not None:
+                self._fresh.resume(source_id)  # watches again, catching up first
+            else:
+                self._ctx.source_manager.resume_sync(source_id)
+        except SourceNotFoundError as exc:
+            raise BackendError(f"Error: {exc}") from exc
+
+    def refresh_paths(
+        self,
+        source_id: str,
+        paths: list[Any],
+        on_progress: IndexCallback,
+        should_stop: Callable[[], bool],
+    ) -> IndexOutcome:
+        ctx = self._ctx
+        try:
+            root: Path | None = Path(ctx.source_manager.get_source(source_id).path)
+        except Exception:  # noqa: BLE001
+            root = None
+        indexed = unchanged = failed = 0
+        failures: list[tuple[str, str]] = []
+        index = total = 0
+        current = ""
+
+        def snapshot() -> IndexProgress:
+            return IndexProgress(index, total, current, indexed, unchanged, failed, tuple(failures))
+
+        def on_event(event: Any) -> None:
+            nonlocal indexed, unchanged, failed, index, total, current
+            total = event.total
+            current = display_path(event.path, root)
+            if event.kind == "start":
+                index = event.index - 1
+                on_progress(snapshot())
+                if should_stop():
+                    raise _StopRequested()
+                return
+            index = event.index
+            result = event.result
+            if result is not None:
+                if result.status == "failed":
+                    failed += 1
+                    failures.append((current, plain_failure_reason(condense_error(result.error), current)))
+                elif result.status in ("unchanged", "skipped"):
+                    unchanged += 1
+                else:
+                    indexed += 1  # ingested, or removed because the file is gone
+            on_progress(snapshot())
+            if should_stop() and event.index < event.total:
+                raise _StopRequested()
+
+        try:
+            with quiet_ingest():
+                pipeline = self._pipeline()
+                result = pipeline.run_ingestion_for_paths(
+                    source_id, list(paths), on_event, missing="skip"
+                )
+        except _StopRequested:
+            return IndexOutcome("stopped", snapshot())
+        except (SourceNotFoundError, SourceNotActiveError) as exc:
+            return IndexOutcome("failed", snapshot(), reason=f"Error: {_first_line(exc)}")
+        results = list(result.file_results)
+        updated = sum(1 for r in results if r.status == "ingested")
+        removed = sum(1 for r in results if r.status == "deleted")
+        failed = sum(1 for r in results if r.status == "failed")
+        n = len(results)
+        final = IndexProgress(n, n, "", updated + removed, n - updated - removed - failed, failed, tuple(failures))
+        if result.status == "failed" and result.files_processed == 0:
+            return IndexOutcome("failed", final, reason="The folder is not available right now.")
+        notices: list[str] = []
+        if updated or removed:
+            bits = []
+            if updated:
+                bits.append(f"{updated} document{'s' if updated != 1 else ''} updated")
+            if removed:
+                bits.append(f"{removed} removed")
+            notices.append(", ".join(bits).capitalize() + ".")
         return IndexOutcome("done", final, notices=tuple(notices))
 
     def _pipeline(self) -> Any:

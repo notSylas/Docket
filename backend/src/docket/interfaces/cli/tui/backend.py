@@ -192,6 +192,24 @@ class TuiBackend(Protocol):
     def narrow_plan(self, source_id: str) -> NarrowPlan | None: ...  # blocks (scan): worker
     def narrow_source(self, source_id: str, keep: tuple[str, ...], universe: tuple[str, ...]) -> None: ...
     def open_original_note(self, citation: CitationView) -> str: ...
+    # -- automatic freshness (services/sources/freshness.py) ---------------------
+    freshness_supported: bool  # False: no automatic updates (demo, or a stub)
+    def auto_refresh_enabled(self) -> bool: ...
+    def set_auto_refresh(self, enabled: bool) -> None: ...  # persists; may raise OSError
+    def catch_up(self, source_id: str) -> Any: ...  # -> freshness.ChangeSet; blocks (walk): worker
+    def watch_sources(
+        self, on_batch: Callable[[Any], None], source_ids: list[str] | None = None, hints: dict | None = None
+    ) -> None: ...  # `on_batch(freshness.Batch)` runs on a watcher thread
+    def stop_watching(self) -> None: ...
+    def pause_updates(self, source_id: str) -> None: ...
+    def resume_updates(self, source_id: str) -> None: ...
+    def refresh_paths(
+        self,
+        source_id: str,
+        paths: list[Any],
+        on_progress: IndexCallback,
+        should_stop: Callable[[], bool],
+    ) -> IndexOutcome: ...
     def run_index(
         self,
         source_id: str,
@@ -325,6 +343,37 @@ class FakeBackend:
 
     def open_original_note(self, citation: CitationView) -> str:
         return f"Demo: Docket would confirm {citation.rel_path} still matches the stored version, then open it with your system opener."
+
+    # -- automatic freshness: the demo has nothing on disk to watch -------------
+    freshness_supported = False
+
+    def auto_refresh_enabled(self) -> bool:
+        return False
+
+    def set_auto_refresh(self, enabled: bool) -> None:
+        return None
+
+    def catch_up(self, source_id: str) -> Any:
+        raise NotImplementedError("the demo does not watch the file system")
+
+    def watch_sources(self, on_batch, source_ids=None, hints=None) -> None:
+        return None
+
+    def stop_watching(self) -> None:
+        return None
+
+    def pause_updates(self, source_id: str) -> None:
+        src = self.world.find(source_id)
+        if src:
+            src.updates_paused = True
+
+    def resume_updates(self, source_id: str) -> None:
+        src = self.world.find(source_id)
+        if src:
+            src.updates_paused = False
+
+    def refresh_paths(self, source_id, paths, on_progress, should_stop) -> IndexOutcome:
+        raise NotImplementedError("the demo does not watch the file system")
 
     # -- operations (the demo drives these from its own timer) ------------
     def run_index(self, source_id: str, on_progress: IndexCallback, should_stop: Callable[[], bool]) -> IndexOutcome:

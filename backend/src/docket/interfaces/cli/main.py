@@ -693,7 +693,8 @@ def query(
 def watch(
     source_ref: str = typer.Argument(..., help="Source name, list number or id to watch for changes."),
 ) -> None:
-    """Watch a source's folder and re-ingest on any filesystem change.
+    """Watch a source's folder and re-ingest just the files that change
+    (new, edited or deleted); ignored paths never trigger anything.
 
     Long-running foreground command -- blocks until interrupted (Ctrl+C).
     """
@@ -702,7 +703,7 @@ def watch(
     source_id = source.id
 
     typer.echo(f"Watching {source.path} (source_id={source_id})... press Ctrl+C to stop.")
-    watcher = SourceWatcher(context.pipeline)
+    watcher = SourceWatcher(context.pipeline, session_factory=context.session_factory)
     try:
         watcher.watch(source_id, Path(source.path))
     except KeyboardInterrupt:

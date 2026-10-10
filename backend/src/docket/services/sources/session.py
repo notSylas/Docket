@@ -123,7 +123,7 @@ def _preferences_path(data_dir: Path) -> Path:
     return Path(data_dir) / PREFERENCES_NAME
 
 
-def _read_preferences(data_dir: Path) -> dict:
+def read_preferences(data_dir: Path) -> dict:
     try:
         data = json.loads(_preferences_path(data_dir).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -132,15 +132,13 @@ def _read_preferences(data_dir: Path) -> dict:
 
 
 def has_consent(data_dir: Path) -> bool:
-    entry = _read_preferences(data_dir).get(CONSENT_KEY)
+    entry = read_preferences(data_dir).get(CONSENT_KEY)
     return bool(entry) and (entry is True or isinstance(entry, dict))
 
 
-def record_consent(data_dir: Path) -> None:
-    """Remember the one-time folder consent (atomic write, other keys kept)."""
+def write_preferences(data_dir: Path, prefs: dict) -> None:
+    """Atomically replace `<data_dir>/preferences.json` (temp file + rename)."""
     data_dir = Path(data_dir)
-    prefs = _read_preferences(data_dir)
-    prefs[CONSENT_KEY] = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     data_dir.mkdir(parents=True, exist_ok=True)
     target = _preferences_path(data_dir)
     fd, tmp = tempfile.mkstemp(dir=data_dir, prefix=".preferences.", suffix=".tmp")
@@ -155,6 +153,13 @@ def record_consent(data_dir: Path) -> None:
         except OSError:
             pass
         raise
+
+
+def record_consent(data_dir: Path) -> None:
+    """Remember the one-time folder consent (atomic write, other keys kept)."""
+    prefs = read_preferences(Path(data_dir))
+    prefs[CONSENT_KEY] = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    write_preferences(data_dir, prefs)
 
 
 # -- resolution -----------------------------------------------------------------
