@@ -77,17 +77,29 @@ class _Session:
         self.mode: QueryMode | None = None
         self.last_citations: list[Any] = []
         self.last_question: str | None = None
+        self.last_attempted_question: str | None = None
+        self.retry_turn_index: int | None = None
         self._service: Any | None = None
         self.state.model = getattr(getattr(context, "settings", None), "gen_model", "") or ""
         self.sync_state()
 
     def sync_state(self) -> None:
-        """Refresh cheap toolbar fields. Main thread only; may touch vector_writer."""
+        """Refresh eligible counts before checking whether a vector table exists."""
         self.state.turns = len(self.history)
+        self.state.readiness_error = None
         try:
-            self.state.indexed = self.context.vector_writer.table is not None
-        except Exception:
-            pass
+            ready = self.context.readiness.snapshot()
+            self.state.searchable_files = ready.files
+            self.state.searchable_chunks = ready.chunks
+            self.state.indexed = ready.chunks > 0 and self.context.vector_writer.table is not None
+        except Exception as exc:
+            self.state.indexed = False
+            self.state.searchable_files = self.state.searchable_chunks = 0
+            self.state.readiness_error = f"{type(exc).__name__}: {exc}"
+
+    def invalidate_query_service(self) -> None:
+        """Discard table/model handles after an operation changes runtime state."""
+        self._service = None
 
     # -- output helpers ----------------------------------------------------
 
@@ -194,6 +206,9 @@ class _Session:
     def cmd_remove(self, arg: str) -> None:
         return source_commands.cmd_remove(self, arg)
 
+    def cmd_reconnect(self, arg: str) -> None:
+        return source_commands.cmd_reconnect(self, arg)
+
     def cmd_ingest(self, arg: str) -> None:
         return ingestion_ui.cmd_ingest(self, arg)
 
@@ -215,6 +230,8 @@ class _Session:
     # -- status --------------------------------------------------------------
 
     def cmd_status(self, arg: str) -> None:
+        self.state.refresh_sources(self.context.source_manager)
+        self.sync_state()
         settings = self.context.settings
         sources = self.state.sources
         active = sum(1 for s in sources if s.status == "active")
@@ -223,7 +240,11 @@ class _Session:
         table.add_column(overflow="fold")
         table.add_row("Data dir", str(settings.data_dir))
         table.add_row("Sources", f"{active} active / {len(sources)} total")
-        table.add_row("Indexed", "yes" if self.state.indexed else "no")
+        if self.state.readiness_error:
+            table.add_row("Readiness unavailable", self.state.readiness_error)
+        else:
+            table.add_row("Indexed", "yes" if self.state.indexed else "no")
+            table.add_row("Eligible evidence", f"{self.state.searchable_files} files / {self.state.searchable_chunks} chunks")
         table.add_row("Model", str(settings.gen_model))
         table.add_row("Embeddings", str(settings.embed_model))
         table.add_row("Mode", self.mode.value if self.mode else "auto")

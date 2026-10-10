@@ -24,6 +24,9 @@ class SessionState:
     model: str = ""
     turns: int = 0
     indexed: bool = False
+    searchable_files: int = 0
+    searchable_chunks: int = 0
+    readiness_error: str | None = None
     citations: tuple[tuple[int, str], ...] = ()  # (number, source name) of last answer
     extra: dict[str, Any] = field(default_factory=dict)
 

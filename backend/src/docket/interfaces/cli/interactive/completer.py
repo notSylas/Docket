@@ -22,7 +22,7 @@ from .state import SessionState
 
 
 class SourceIdCompleter(Completer):
-    """`all` plus ids of ACTIVE sources (from the snapshot), path as meta."""
+    """`all` plus ingestable ACTIVE/MISSING source ids, path as meta."""
 
     def __init__(self, state: SessionState) -> None:
         self._state = state
@@ -31,25 +31,26 @@ class SourceIdCompleter(Completer):
         self, document: Document, complete_event: CompleteEvent
     ) -> Iterable[Completion]:
         word = document.get_word_before_cursor(WORD=True)
-        candidates: list[tuple[str, str]] = [("all", "every active source")]
-        candidates += [(s.id, s.path) for s in self._state.sources if s.status == "active"]
+        candidates: list[tuple[str, str]] = [("all", "active and missing sources")]
+        candidates += [(s.id, s.path) for s in self._state.sources if s.status in ("active", "missing")]
         for text, meta in candidates:
             if text.startswith(word):
                 yield Completion(text, start_position=-len(word), display_meta=meta)
 
 
 class ActiveSourceCompleter(Completer):
-    """Ids of ACTIVE sources only (no `all`), path as meta."""
+    """Source ids in the requested statuses (no `all`), path as meta."""
 
-    def __init__(self, state: SessionState) -> None:
+    def __init__(self, state: SessionState, statuses: tuple[str, ...] = ("active",)) -> None:
         self._state = state
+        self._statuses = statuses
 
     def get_completions(
         self, document: Document, complete_event: CompleteEvent
     ) -> Iterable[Completion]:
         word = document.get_word_before_cursor(WORD=True)
         for s in self._state.sources:
-            if s.status == "active" and s.id.startswith(word):
+            if s.status in self._statuses and s.id.startswith(word):
                 yield Completion(s.id, start_position=-len(word), display_meta=s.path)
 
 
@@ -82,7 +83,8 @@ def build_arg_completers(state: SessionState) -> dict[str, Completer]:
         ),
         "add": PathCompleter(only_directories=True, expanduser=True),
         "ingest": SourceIdCompleter(state),
-        "remove": ActiveSourceCompleter(state),
+        "remove": ActiveSourceCompleter(state, ("active", "missing")),
+        "reconnect": ActiveSourceCompleter(state, ("revoked",)),
         "show": CitationNumberCompleter(state),
     }
 

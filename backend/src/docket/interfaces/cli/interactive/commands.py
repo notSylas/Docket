@@ -105,7 +105,7 @@ def default_registry() -> CommandRegistry:
     reg.register(
         SlashCommand(
             "ingest",
-            "index a source (default: all active sources)",
+            "index a source (default: active and missing sources)",
             _call("cmd_ingest"),
             arg_hint="[<source-id>|all]",
         )
@@ -124,6 +124,11 @@ def default_registry() -> CommandRegistry:
             "stop searching a source (asks first)",
             _call("cmd_remove"),
             arg_hint="<source-id>",
+        )
+    )
+    reg.register(
+        SlashCommand(
+            "reconnect", "reconnect a disconnected local folder and index it", _call("cmd_reconnect"), arg_hint="<source-id>"
         )
     )
     reg.register(

@@ -50,6 +50,7 @@ from docket.infra.parsing.tokens import get_token_counter
 from docket.infra.parsing.recipes import ChunkRecipe, docling_recipe
 from docket.infra.retrieval.resolver import EvidenceResolver
 from docket.services.sources.manager import SourceManager
+from docket.services.sources.readiness import ReadinessService
 from docket.services.sources.purge import SourcePurgeService
 
 if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
@@ -255,7 +256,11 @@ class AppContext:
 
     @cached_property
     def source_manager(self) -> SourceManager:
-        return SourceManager(self.session_factory)
+        return SourceManager(self.session_factory, settings=self.settings)
+
+    @cached_property
+    def readiness(self) -> ReadinessService:
+        return ReadinessService(self.session_factory)
 
     @cached_property
     def resolver(self) -> EvidenceResolver:

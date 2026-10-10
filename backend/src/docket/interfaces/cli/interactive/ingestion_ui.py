@@ -20,10 +20,10 @@ def cmd_ingest(session: Any, arg: str) -> None:
         target_ids = [
             s.id
             for s in session.context.source_manager.list_sources()
-            if s.status == SourceStatus.ACTIVE
+            if s.status in (SourceStatus.ACTIVE, SourceStatus.MISSING)
         ]
         if not target_ids:
-            session.say("No active sources to ingest. Use /add <folder> first.")
+            session.say("No active or missing sources to ingest. Use /add <folder> first.")
             return
     else:
         target_ids = [arg]
@@ -31,6 +31,7 @@ def cmd_ingest(session: Any, arg: str) -> None:
     try:
         _ingest_targets(session, target_ids)
     finally:
+        session.invalidate_query_service()
         session.state.refresh_sources(session.context.source_manager)
         session.sync_state()
 
@@ -71,18 +72,22 @@ def _ingest_targets(session: Any, target_ids: list[str]) -> None:
         if stale:
             session.say(
                 f"{stale} already-ingested file(s) have chunks from an older recipe; "
-                "run `docket ingest --rechunk` to update.",
+                "run `docket ingest --all --rechunk` to update.",
                 style="dim",
             )
 
 
 def _summarize(session: Any, target_id: str, result: Any) -> None:
     if result.files_processed == 0 and result.status == "failed":
-        folder = next(
-            (str(s.path) for s in session.context.source_manager.list_sources()
+        source = next(
+            (s for s in session.context.source_manager.list_sources()
              if s.id == result.source_id),
-            result.source_id,
+            None,
         )
+        folder = str(source.path) if source is not None else result.source_id
+        if source is not None and getattr(source, "status", None) == SourceStatus.MISSING:
+            session.say(f"Source folder unavailable: {folder}. Restore it, then retry /ingest {target_id}.")
+            return
         exts = ", ".join(sorted(SUPPORTED_EXTENSIONS))
         session.say(f"No supported files found in {folder} (supported: {exts}).")
         return

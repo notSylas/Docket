@@ -20,6 +20,9 @@ from .render import number_citations, render
 
 
 def get_service(session: Any) -> Any | None:
+    session.sync_state()
+    if not session.state.indexed:
+        return None
     if session._service is not None:
         return session._service
     table = session.context.vector_writer.table
@@ -29,19 +32,35 @@ def get_service(session: Any) -> Any | None:
     return session._service
 
 
-def ask(session: Any, question: str) -> None:
+def ask(session: Any, question: str, *, retry: bool = False) -> None:
+    session.last_attempted_question = question
+    if not retry:
+        session.retry_turn_index = None
     service = get_service(session)
     if service is None:
-        session.say("Nothing indexed yet -- /add a folder and /ingest it first.")
+        if session.state.readiness_error:
+            session.error(f"Could not check search readiness: {session.state.readiness_error}")
+            session.say("Use /status to inspect readiness, then /retry after repairing it.")
+        else:
+            session.say("Nothing indexed yet -- /add a folder and /ingest it first.")
         return
     start = time.perf_counter()
+    history = list(session.history)
+    replace_at = session.retry_turn_index if retry else None
+    if replace_at is not None:
+        history = history[:replace_at]
     with session.console.status("Thinking..."):
-        result = service.ask(question, mode=session.mode, history=list(session.history))
+        result = service.ask(question, mode=session.mode, history=history)
     elapsed = time.perf_counter() - start
     text, numbered = number_citations(result.answer, list(result.citations))
     render(session.console, result, elapsed, text, numbered)
     # History keeps the ORIGINAL tagged answer so follow-ups stay consistent.
-    session.history.append(ConversationTurn(question=question, answer=result.answer))
+    turn = ConversationTurn(question=question, answer=result.answer)
+    if replace_at is not None:
+        session.history[replace_at] = turn
+    else:
+        session.retry_turn_index = len(session.history)
+        session.history.append(turn)
     _set_citations(session, numbered, question)
     session.sync_state()
 
@@ -64,6 +83,8 @@ def cmd_mode(session: Any, arg: str) -> None:
 
 def cmd_clear(session: Any, arg: str) -> None:
     session.history.clear()
+    session.last_attempted_question = None
+    session.retry_turn_index = None
     _set_citations(session, [], None)
     session.sync_state()
     session.say("Conversation history cleared.")
@@ -100,6 +121,7 @@ def cmd_show(session: Any, arg: str) -> None:
     if evidence.heading:
         header += f" — {evidence.heading}"
     session.console.print(header, style="bold", markup=False, highlight=False)
+    session.say(evidence.location or "Location unavailable.", style="dim")
     session.say()
     session.say(evidence.text)
     session.say()
@@ -107,10 +129,8 @@ def cmd_show(session: Any, arg: str) -> None:
 
 
 def cmd_retry(session: Any, arg: str) -> None:
-    question = session.last_question
+    question = session.last_attempted_question
     if not question:
         session.say("Nothing to retry yet.")
         return
-    if session.history and session.history[-1].question == question:
-        session.history.pop()
-    ask(session, question)
+    ask(session, question, retry=True)
