@@ -98,7 +98,19 @@ def test_failure_reporter_relative_and_dedupes(tmp_path):
     assert rep.line(outside, "e") == "FAILED /elsewhere/x.pdf: e"
 
 
-def test_quiet_ingest_raises_levels_and_restores(monkeypatch):
+@pytest.fixture
+def no_lingering_ui_workers():
+    """quiet_ingest is reference counted across threads; a UI worker thread
+    left over from an earlier test (parked on a stub's gate for a few
+    seconds) would keep the process-wide scope open, so wait for it."""
+    import threading
+
+    for t in threading.enumerate():
+        if t.name.startswith("docket-ui-"):
+            t.join(10)
+
+
+def test_quiet_ingest_raises_levels_and_restores(monkeypatch, no_lingering_ui_workers):
     monkeypatch.delenv("DOCKET_DEBUG", raising=False)
     monkeypatch.delenv("TQDM_DISABLE", raising=False)
     monkeypatch.setenv("HF_HUB_DISABLE_PROGRESS_BARS", "0")

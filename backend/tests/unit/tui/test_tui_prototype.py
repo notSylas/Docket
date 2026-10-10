@@ -322,7 +322,7 @@ def test_indexing_progress_stop_and_hide():
     scenario(go, state="indexing")
 
 
-def test_hide_keeps_job_running_and_footer_indicator_and_blocks_sending():
+def test_hide_keeps_job_running_and_footer_indicator_and_still_accepts_questions():
     async def go(h):
         await h.press("enter")  # Hide progress
         assert h.ui.overlays == []
@@ -330,8 +330,10 @@ def test_hide_keeps_job_running_and_footer_indicator_and_blocks_sending():
         assert "Indexing Finance" in h.text().splitlines()[-1]
         await h.type("what is revenue")
         await h.press("enter")
-        assert h.ui.composer.text == "what is revenue"  # draft kept, nothing sent
-        assert "Sending is unavailable while indexing" in h.text()
+        assert h.ui.composer.text == ""  # sent: asking while indexing is allowed
+        assert h.ui.job.active
+        assert "Sending is unavailable" not in h.text()
+        assert any(m.role == "user" and m.text == "what is revenue" for m in h.ui.messages)
 
     scenario(go, state="indexing")
 

@@ -672,7 +672,7 @@ def test_ask_runs_off_thread_gates_sending_and_keeps_the_draft():
         await h.type("second one")
         await h.press("enter")
         assert h.ui.composer.text == "second one"
-        assert "Sending is unavailable while answering" in h.text()
+        assert "already being answered" in h.text()
         assert len(b.ask_calls) == 1
         b.ask_gate.set()
         await h.wait_for(lambda: h.ui.query_op is None)
@@ -796,8 +796,10 @@ def test_add_folder_indexes_with_progress_hide_and_completion():
         await h.press("esc")  # Hide returns to chat; work continues
         assert h.focused == "composer" and h.ui.job.active
         await h.type("x")
-        await h.press("enter")  # sending is paused while indexing
-        assert "Sending is unavailable while indexing" in h.text()
+        await h.press("enter")  # a question is accepted while indexing (CP4)
+        await h.wait_for(lambda: len(b.ask_calls) == 1)
+        assert "Sending is unavailable" not in h.text()
+        assert h.ui.job.active  # and indexing carries on
         b.index_gate.set()
         await h.wait_for(lambda: not h.ui.job.active)
         assert h.ui.job.state == "done" and h.ui.job.indexed == 3

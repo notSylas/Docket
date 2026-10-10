@@ -140,8 +140,10 @@ def test_new_small_folder_asks_once_then_indexes_in_the_background():
         assert h.ui.scope.kind == "source"
         assert "Reading 4 documents in ForgeOPs/docs" in h.text()
         await h.type("x")
-        await h.press("enter")  # CP4 will allow this; for now the busy message stands
-        assert "Sending is unavailable while indexing" in h.text()
+        await h.press("enter")  # a question is accepted while indexing (CP4)
+        await h.wait_for(lambda: len(b.ask_calls) == 1)
+        assert "Sending is unavailable" not in h.text()
+        assert b.ask_calls[0].index_coverage == {"indexed": 0, "total": 3, "indexing": True}
         b.index_gate.set()
         await h.wait_for(lambda: not h.ui.job.active)
 

@@ -89,6 +89,10 @@ class Harness:
 
     async def __aexit__(self, *exc: Any) -> None:
         try:
+            if self.ui is not None and self.ui.job is not None and self.ui.job.active:
+                self.ui.stop_job()  # do not leave an indexing worker behind the test
+            if self.ui is not None:
+                self.ui._gate.release_all()
             if self.ui and self.ui.application.is_running:
                 self.ui.application.exit()
             await asyncio.wait_for(self._task, self.timeout)

@@ -276,6 +276,9 @@ class RunRecord(BaseModel):
     # documents it held; absent in run files written before scoping existed.
     scope_label: str | None = None
     scope_file_count: int | None = None
+    # Index coverage when the question was asked during indexing
+    # ({"indexed", "total", "indexing"}); None otherwise and on older runs.
+    index_coverage: dict[str, Any] | None = None
     agent_trace: list[dict[str, Any]] = Field(default_factory=list)
     model_calls: list[dict[str, Any]] = Field(default_factory=list)
     gold_fingerprint: str | None = None

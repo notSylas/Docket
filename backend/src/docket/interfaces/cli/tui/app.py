@@ -45,8 +45,10 @@ from docket.interfaces.cli.interactive.commands import (
     default_registry,
 )
 from docket.interfaces.cli.interactive.query_flow import shell_command_hint
+from docket.interfaces.cli.quiet import quiet_ingest
 from docket.interfaces.cli.tui import fake_data as fd
 from docket.interfaces.cli.tui import overlays as ov
+from docket.interfaces.cli.tui.yield_gate import YieldGate
 from docket.interfaces.cli.tui.backend import (
     AskOutcome,
     AskRequest,
@@ -61,7 +63,7 @@ from docket.interfaces.cli.tui.backend import (
     Turn,
     describe_error,
 )
-from docket.interfaces.cli.tui.model import IndexJob, Message, QueryOp, Scope
+from docket.interfaces.cli.tui.model import INDEXING_NOTE, IndexJob, Message, QueryOp, Scope, coverage_text
 from docket.interfaces.cli.tui.textfmt import (
     Row,
     cw,
@@ -195,6 +197,7 @@ class TuiApp:
         self._closed = False
         self._threads: list[threading.Thread] = []
         self._job_stop = threading.Event()
+        self._gate = YieldGate()  # indexing yields to a question between files
         self._readiness_running = False
         self._announced_blocked = False
 
@@ -356,6 +359,9 @@ class TuiApp:
                 meta.append(f"{m.elapsed:.1f}s")
             if m.scope_label and m.scope_label != "All ready sources":
                 meta.append(f"scope: {m.scope_label}")
+            cov = coverage_text(a.index_coverage) if a else ""
+            if cov:
+                meta.append(cov)
             if a and a.abstained:
                 meta.insert(0, "No answer")
             rows.append([])
@@ -474,12 +480,22 @@ class TuiApp:
         ready, attn = self.world.ready_files(), self.world.attention()
         parts: list[tuple[str, str]] = [("class:text", f" {ready} files ready"), ("class:muted", " · "), ("class:attention" if attn else "class:muted", f"{attn} need attention")]
         j = self.job
+        q = self.query_op
+        right = "F1 / Commands "
+        # Two slots can be taken at once. Segments are dropped, least useful
+        # first, until the row fits: the answer stage, then the folder name.
+        job_seg: list[tuple[str, str]] = []
+        job_short: list[tuple[str, str]] = []
         if j and j.active:
             label = "Stopping" if j.state == "stopping" else j.verb
-            parts += [("class:muted", " · "), ("class:accent", f"{label} {j.source_name} {j.file_index}/{j.total}")]
-        elif self.query_op and self.query_op.active:
-            parts += [("class:muted", " · "), ("class:accent", self.query_op.stage)]
-        right = "F1 / Commands "
+            tail = " - paused while answering" if j.paused and j.state != "stopping" else ""
+            job_seg = [("class:muted", " · "), ("class:accent", f"{label} {j.source_name} {j.file_index}/{j.total}{tail}")]
+            job_short = [("class:muted", " · "), ("class:accent", f"{label} {j.file_index}/{j.total}{tail}")]
+        q_seg = [("class:muted", " · "), ("class:accent", q.stage)] if q and q.active else []
+        for extra in (job_seg + q_seg, job_seg, job_short, []):
+            if row_width(parts + extra) + cw(right) + 1 <= cols:
+                break
+        parts = parts + extra
         if self.hint_text:
             parts += [("class:muted", " · "), ("class:attention", self.hint_text)]
         elif self.answers() and not self.overlays:
@@ -539,10 +555,10 @@ class TuiApp:
         cols = self.size()[0]
         g = self.glyphs
         title = " Ask "
-        if self.job and self.job.active:
-            title = " Ask (sending is paused while indexing) "
-        elif self.query_op and self.query_op.active:
+        if self.query_op and self.query_op.active:
             title = " Ask (answering...) "
+        elif self.job and self.job.active:
+            title = " Ask (indexing continues in the background) "
         title = title if cw(title) < cols - 4 else " Ask "
         fill = max(cols - 2 - cw(title) - 1, 0)
         return self._fix([("class:border", g.tl + g.h), ("class:muted", title), ("class:border", g.h * fill + g.tr)])
@@ -873,8 +889,19 @@ class TuiApp:
     # publish immutable snapshots through ``_post`` (call_soon_threadsafe).
     # ------------------------------------------------------------------
     @property
+    def indexing_active(self) -> bool:
+        """The indexing slot is taken (a job is running, paused or stopping)."""
+        return bool(self.job and self.job.active)
+
+    @property
+    def question_active(self) -> bool:
+        """The question slot is taken (one answer is being written)."""
+        return bool(self.query_op and self.query_op.active)
+
+    @property
     def busy(self) -> bool:
-        return bool((self.job and self.job.active) or (self.query_op and self.query_op.active))
+        """Either slot is taken (exit confirmation, ticker)."""
+        return self.indexing_active or self.question_active
 
     def _post(self, fn: Callable[[], None]) -> None:
         """Run ``fn`` on the UI loop. Safe from any thread; dropped once the UI is gone."""
@@ -948,9 +975,23 @@ class TuiApp:
             self.notice(f"Not ready: {report.help or 'a required service or model is missing.'} Open Settings (F8) for details.", "attention")
 
     # ---- indexing ---------------------------------------------------------
+    def _job_refusal(self) -> str:
+        """Why a new indexing job cannot start right now ("" when it can).
+
+        One job at a time. A job is also refused while a question is being
+        answered (refused, not queued: nothing is silently deferred; the
+        message says to try again when the answer arrives).
+        """
+        if self.indexing_active:
+            return "Another indexing job is running. Wait for it, or press Ctrl+C to stop it."
+        if self.question_active:
+            return "A question is being answered. Wait for the answer, then start indexing again."
+        return ""
+
     def start_job(self, src: SourceView, verb: str, on_done: str, show_overlay: bool = True) -> None:
-        if self.busy:
-            self.notice("Another operation is running. Wait for it, or press Ctrl+C to stop it.", "attention")
+        why = self._job_refusal()
+        if why:
+            self.notice(why, "attention")
             return
         if self.backend.demo:
             self.job = IndexJob(src.id, src.name, verb, total=max(len(src.files), 1), on_done=on_done)
@@ -966,16 +1007,30 @@ class TuiApp:
         self._job_stop = stop
 
         def on_progress(p: IndexProgress) -> None:
+            # Runs on the indexing worker, between files (the pipeline reports
+            # at each file's start and end). While a question holds the gate the
+            # worker waits here; a stop request ends the wait. A file already
+            # being processed is never interrupted.
+            self._gate.wait_clear(
+                stop.is_set,
+                lambda: self._post(lambda: self._set_paused(job, True)),
+                lambda: self._post(lambda: self._set_paused(job, False)),
+            )
             self._post(lambda: self._apply_progress(job, p))
 
         def work() -> None:
             try:
-                outcome = self.backend.run_index(src.id, on_progress, stop.is_set)
+                with quiet_ingest():
+                    outcome = self.backend.run_index(src.id, on_progress, stop.is_set)
             except Exception as exc:  # noqa: BLE001 -- surfaced as a failed job
                 outcome = IndexOutcome("failed", IndexProgress(), reason=describe_error(exc))
             self._post(lambda: self._real_job_done(job, outcome))
 
         self._spawn("index", work)
+
+    def _set_paused(self, job: IndexJob, paused: bool) -> None:
+        if job is self.job and job.active:
+            job.paused = paused
 
     def _apply_progress(self, job: IndexJob, p: IndexProgress) -> None:
         if job is not self.job or not job.active:
@@ -992,10 +1047,14 @@ class TuiApp:
         job.indexed, job.unchanged, job.failed = p.indexed, p.unchanged, p.failed
         job.failures = list(p.failures)
         job.state, job.reason, job.ended = outcome.state, outcome.reason, time.monotonic()
+        job.paused = False
         job.notices = outcome.notices
         self._job_finished(job)
 
     def add_folder(self, path: str) -> None:
+        if self.question_active:  # refuse before registering anything
+            self.notice(self._job_refusal(), "attention")
+            return
         if not self.backend.demo:
             plan = self.backend.plan_for(path)
             if getattr(plan, "kind", "") == "new" and plan.needs_preview:
@@ -1009,12 +1068,16 @@ class TuiApp:
         self.refresh_world()
         src = self.world.find(src.id) or src
         self.overlays = [o for o in self.overlays if o.name != "welcome"]  # it is stale once a folder exists
+        if self.indexing_active:
+            self.notice(f"Added {src.name}. Another folder is being indexed; index {src.name} when that finishes.", "attention")
+            return
         self.notice(f"Added {src.name}. Indexing started.")
         self.start_job(src, "Indexing", "")
 
     def reconnect_source(self, src: SourceView) -> None:
-        if self.busy:
-            self.notice("Another operation is running. Wait for it, or press Ctrl+C to stop it.", "attention")
+        why = self._job_refusal()
+        if why:
+            self.notice(why, "attention")
             return
         try:
             self.backend.reconnect_source(src.id)
@@ -1045,6 +1108,7 @@ class TuiApp:
         if self.job and self.job.active:
             self.job.request_stop()
             self._job_stop.set()
+            self._gate.poke()  # a paused worker wakes up and stops
             self.invalidate()
 
     def tick(self) -> None:
@@ -1081,6 +1145,16 @@ class TuiApp:
             self.notice(f"Indexing {j.source_name} failed: {j.reason} The folder stays registered; retry after repair.", "error")
         for line in j.notices:
             self.notice(line)
+        if j.state == "done" and self._answers_missing_content():
+            self.notice("Indexing finished. Your last answer was given while documents were still being indexed; use /retry to ask that question again.", "attention")
+
+    def _answers_missing_content(self) -> bool:
+        """The latest answer was an abstention given mid-index (so a retry may now succeed)."""
+        answers = self.answers()
+        if not answers:
+            return False
+        a = answers[-1].answer
+        return bool(a and a.abstained and a.index_coverage and a.index_coverage.get("indexing"))
 
     # ---- asking -----------------------------------------------------------
     def _history_for(self, q: QueryOp) -> tuple[Turn, ...]:
@@ -1094,7 +1168,7 @@ class TuiApp:
 
     def _finish_query(self, q: QueryOp, outcome: AskOutcome | None = None) -> None:
         if outcome is None:  # the demo: answer synchronously when its simulated stages end
-            outcome = self.backend.ask(AskRequest(q.question, self.mode, self._history_for(q), q.scope), lambda _s: None, q.scope_label, q.mode_label)
+            outcome = self.backend.ask(AskRequest(q.question, self.mode, self._history_for(q), q.scope, q.coverage), lambda _s: None, q.scope_label, q.mode_label)
         if q is not self.query_op and not self.backend.demo:
             return
         cancelled = q.state == "stopping" and q.real
@@ -1106,6 +1180,8 @@ class TuiApp:
             self.notice(f"{outcome.error or 'No answer was produced.'} Your question is kept; use /retry to ask again.", "error")
             return
         a = outcome.answer
+        if a.index_coverage is None and q.coverage is not None:
+            a = replace(a, index_coverage=q.coverage)  # a backend that did not record it (the demo)
         self.add_message(Message("assistant", a.text, answer=a, mode_label=a.mode_label, elapsed=a.elapsed, scope_label=a.scope_label, history_answer=outcome.history_answer))
         turn = Turn(q.question, outcome.history_answer or a.text)
         idx = self.retry_turn_index
@@ -1122,11 +1198,10 @@ class TuiApp:
         if hint is not None:
             self.notice(hint, "attention")
             return False
-        if self.busy:
-            what = "indexing" if self.job and self.job.active else "answering"
-            self.notice(f"Sending is unavailable while {what}. Your draft is kept; press Ctrl+C to stop, or wait.", "attention")
+        if self.question_active:
+            self.notice("A question is already being answered. Your draft is kept; wait for the answer, or press Ctrl+C to cancel it.", "attention")
             return False
-        if self.world.ready_files() == 0:
+        if self.world.ready_files() == 0 and not self.indexing_active:
             self.notice("Nothing is searchable yet. Add a folder first (F2).", "attention")
             return False
         self.last_question = question
@@ -1143,9 +1218,11 @@ class TuiApp:
             started=time.monotonic() if real else None,
             stage_name=self.backend.stage_search if real else "",
             retry=retry,
+            coverage=self.index_coverage(),
         )
         if real:
             self.query_op = op
+            self._gate.hold()  # indexing yields at its next between-files checkpoint
             self._start_real_ask(op)
         elif self.reduced_motion:
             self._finish_query(op)
@@ -1155,17 +1232,36 @@ class TuiApp:
         self.invalidate()
         return True
 
+    def index_coverage(self) -> dict | None:
+        """How much of what the next question searches is indexed right now.
+
+        Only while a job is running for a source the scope covers (the whole
+        library, or that source or a folder inside it). The counts are the
+        job's own progress (finished, searchable files over discovered files);
+        for a folder inside a larger source they describe the whole source.
+        ``total`` is 0 until discovery has finished.
+        """
+        j = self.job
+        if not (j and j.active):
+            return None
+        if self.scope.kind != "all" and self.scope.source_id != j.source_id:
+            return None
+        return {"indexed": min(j.indexed + j.unchanged, j.total) if j.total else 0, "total": j.total, "indexing": True}
+
     def _start_real_ask(self, op: QueryOp) -> None:
-        request = AskRequest(op.question, self.mode, self._history_for(op), op.scope)
+        request = AskRequest(op.question, self.mode, self._history_for(op), op.scope, op.coverage)
 
         def on_stage(label: str) -> None:
             self._post(lambda: self._set_stage(op, label))
 
         def work() -> None:
             try:
-                outcome = self.backend.ask(request, on_stage, op.scope_label, op.mode_label)
+                with quiet_ingest():
+                    outcome = self.backend.ask(request, on_stage, op.scope_label, op.mode_label)
             except Exception as exc:  # noqa: BLE001 -- surfaced as a failed question
                 outcome = AskOutcome(error=describe_error(exc))
+            finally:
+                self._gate.release()  # indexing resumes, even if the UI is already gone
             self._post(lambda: self._finish_query(op, outcome))
 
         self._spawn("ask", work)
@@ -1181,10 +1277,11 @@ class TuiApp:
         if self.overlays:
             self.close_top()
         elif self.busy:
-            if self.job and self.job.active:
+            q = self.query_op
+            if q and q.state == "running":  # the question is in front; a second Ctrl+C stops indexing
+                q.state = "stopping"
+            elif self.job and self.job.active:
                 self.stop_job()
-            elif self.query_op:
-                self.query_op.state = "stopping"
             self.invalidate()
         elif self.composer.text:
             self.composer.reset()
@@ -1212,6 +1309,7 @@ class TuiApp:
         # waits for that before returning to the shell (see run_ui).
         if self.job and self.job.active:
             self.stop_job()
+        self._gate.release_all()  # never leave an indexing worker waiting on an abandoned answer
         self.application.exit()
 
     def submit(self) -> None:

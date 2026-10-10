@@ -111,6 +111,8 @@ class FakeAnswer:
     status: str = "Not verified (prototype)"
     model: str = "demo-model-14b"
     searched: int = 12  # passages searched; 0 means no search was made
+    # {"indexed": n, "total": m, "indexing": bool} when asked while a job ran
+    index_coverage: dict | None = None
 
 
 # -- sources ------------------------------------------------------------------
