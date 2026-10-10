@@ -39,6 +39,7 @@ from docket.infra.retrieval.resolver import ChunkNotFoundError, ResolvedEvidence
 from docket.interfaces.cli.interactive.render import number_citations
 from docket.interfaces.cli.quiet import condense_error, display_path, ignore_notices, quiet_ingest
 from docket.interfaces.cli.tui import fake_data as fd
+from docket.interfaces.cli.tui.model import INDEXING_NOTE
 from docket.services.sources.resolve import display_names
 from docket.interfaces.cli.tui.backend import (
     AnswerView,
@@ -573,8 +574,15 @@ class RealBackend:
             snap = ctx.readiness.snapshot()
         except Exception as exc:  # noqa: BLE001
             return AskOutcome(error=f"Could not check search readiness: {_first_line(exc)}")
+        coverage = request.index_coverage if request.index_coverage and request.index_coverage.get("indexing") else None
+        # Open the vector table fresh for every question: `LanceIndexWriter.table`
+        # opens the latest committed version, and a handle cached from before a
+        # concurrent indexing write would not see the newly added chunks. The
+        # query service is likewise built per question (no cached service).
         table = ctx.vector_writer.table if snap.chunks > 0 else None
         if table is None:
+            if coverage is not None:
+                return AskOutcome(error="Nothing is searchable yet: the first documents are still being indexed.")
             return AskOutcome(error="Nothing is indexed yet. Add a folder and let indexing finish.")
         mode = {"auto": None, "fast": QueryMode.FAST, "agent": QueryMode.AGENT}.get(request.mode)
         history = [ConversationTurn(question=t.question, answer=t.answer) for t in request.history]
@@ -590,8 +598,19 @@ class RealBackend:
         except Exception as exc:  # noqa: BLE001
             return AskOutcome(error=describe_error(exc, self.default_model))
         elapsed = time.perf_counter() - started
+        if coverage is not None:
+            try:
+                result.index_coverage = dict(coverage)
+            except Exception:  # noqa: BLE001 -- a frozen or foreign result type; the view still carries it
+                pass
         on_stage(self.stage_citations)
         text, numbered = number_citations(result.answer, list(result.citations))
+        abstain_reason = self._abstain_reason(result)
+        if coverage is not None and result.abstained:
+            # Not a new abstention reason: a coverage note. The content may simply not be indexed yet.
+            note = f"{INDEXING_NOTE} (use /retry)."
+            text = f"{text}\n\n{note}"
+            abstain_reason = f"{abstain_reason} {note}".strip()
         citations = self._citation_views(numbered)
         answer = AnswerView(
             text=text,
@@ -604,10 +623,11 @@ class RealBackend:
             warnings=tuple(str(w) for w in (result.validation_warnings or ())),
             compute=self._compute_text(result),
             abstained=bool(result.abstained),
-            abstain_reason=self._abstain_reason(result),
+            abstain_reason=abstain_reason,
             status="No answer" if result.abstained else "Answered; citations are not verified",
             model=self.default_model,
             searched=-1,  # the query service does not report how many passages it searched
+            index_coverage=dict(coverage) if coverage is not None else None,
         )
         return AskOutcome(answer=answer, history_answer=result.answer)
 

@@ -8,9 +8,12 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import sys
+import threading
 import warnings
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 from docket.services.ingestion.failure import condense_error as _condense_error
 
@@ -33,28 +36,47 @@ def debug_enabled() -> bool:
     return bool(os.environ.get("DOCKET_DEBUG"))
 
 
-@contextlib.contextmanager
-def quiet_ingest() -> Iterator[None]:
-    """Raise noisy third-party loggers to WARNING and disable tqdm/HF
-    progress bars for the duration only. No-op when DOCKET_DEBUG is set."""
-    if debug_enabled():
-        yield
-        return
-    saved_levels: dict[str, int] = {}
-    for name in _NOISY_LOGGERS:
-        logger = logging.getLogger(name)
-        saved_levels[name] = logger.level
-        if logger.level < logging.WARNING:  # includes NOTSET (0)
-            logger.setLevel(logging.WARNING)
-    saved_env = {k: os.environ.get(k) for k in _NOISY_ENV}
-    for key, value in _NOISY_ENV.items():
-        os.environ.setdefault(key, value)
-    try:
-        with warnings.catch_warnings():
-            for module in ("torch", "transformers", "huggingface_hub"):
-                warnings.filterwarnings("ignore", module=module)
-            yield
-    finally:
+# quiet_ingest is entered from several threads at once in the full-screen UI
+# (an indexing worker and a question worker overlap), and both
+# `warnings.catch_warnings` and the logger/env tweaks are process-global. A
+# reference count makes the first entrant apply them and the last leave restore
+# them, so overlapping scopes can never leave stale filters or levels behind.
+_ingest_lock = threading.Lock()
+_ingest_depth = 0
+_ingest_undo: list = []
+
+
+def _ingest_enter() -> None:
+    global _ingest_depth
+    with _ingest_lock:
+        _ingest_depth += 1
+        if _ingest_depth > 1:
+            return
+        saved_levels: dict[str, int] = {}
+        for name in _NOISY_LOGGERS:
+            logger = logging.getLogger(name)
+            saved_levels[name] = logger.level
+            if logger.level < logging.WARNING:  # includes NOTSET (0)
+                logger.setLevel(logging.WARNING)
+        saved_env = {k: os.environ.get(k) for k in _NOISY_ENV}
+        for key, value in _NOISY_ENV.items():
+            os.environ.setdefault(key, value)
+        catcher = warnings.catch_warnings()
+        catcher.__enter__()
+        for module in ("torch", "transformers", "huggingface_hub"):
+            warnings.filterwarnings("ignore", module=module)
+        _ingest_undo[:] = [saved_levels, saved_env, catcher]
+
+
+def _ingest_exit() -> None:
+    global _ingest_depth
+    with _ingest_lock:
+        _ingest_depth -= 1
+        if _ingest_depth > 0 or not _ingest_undo:
+            return
+        saved_levels, saved_env, catcher = _ingest_undo
+        _ingest_undo.clear()
+        catcher.__exit__(None, None, None)
         for name, level in saved_levels.items():
             logging.getLogger(name).setLevel(level)
         for key, old in saved_env.items():
@@ -62,6 +84,100 @@ def quiet_ingest() -> Iterator[None]:
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = old
+
+
+@contextlib.contextmanager
+def quiet_ingest() -> Iterator[None]:
+    """Raise noisy third-party loggers to WARNING and disable tqdm/HF
+    progress bars for the duration only. No-op when DOCKET_DEBUG is set.
+    Re-entrant and safe to enter from several threads at once."""
+    if debug_enabled():
+        yield
+        return
+    _ingest_enter()
+    try:
+        yield
+    finally:
+        _ingest_exit()
+
+
+_sink_lock = threading.Lock()
+_sink: Any = None
+
+
+def _null_sink() -> Any:
+    """One process-long, never-closed text sink. A library that captures
+    ``sys.stderr`` while it is redirected (a logging handler created in a
+    worker) keeps working after the redirect ends instead of failing on a
+    closed file."""
+    global _sink
+    with _sink_lock:
+        if _sink is None or _sink.closed:
+            _sink = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
+        return _sink
+
+
+def _stream_handlers() -> list[logging.StreamHandler]:
+    registry = logging.Logger.manager.loggerDict
+    for _ in range(5):  # another thread may register a logger while we copy
+        try:
+            known = list(registry.values())
+            break
+        except RuntimeError:
+            continue
+    else:
+        known = []
+    seen: list[logging.StreamHandler] = []
+    for lg in [logging.root, *[x for x in known if isinstance(x, logging.Logger)]]:
+        for h in list(lg.handlers):
+            if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler) and h not in seen:
+                seen.append(h)
+    return seen
+
+
+@contextlib.contextmanager
+def quiet_streams(log_path: Path | str | None = None) -> Iterator[None]:
+    """Keep library writes off a full-screen terminal UI.
+
+    For the duration, Python-level ``sys.stdout``/``sys.stderr`` (tqdm bars,
+    ``print``, warnings) and logging stream handlers that point at the real
+    terminal streams go to a null sink -- or, with DOCKET_DEBUG set and a
+    ``log_path``, are appended to that file so debugging output survives
+    without corrupting the screen. Everything is restored afterwards.
+
+    Limit: this is Python-level only. A native library writing straight to
+    file descriptor 1 or 2 is not intercepted (the UI's own output shares fd 1).
+    The UI keeps writing through the stream object it captured at start-up.
+    """
+    sink: Any = _null_sink()
+    owned = None
+    if debug_enabled() and log_path is not None:
+        try:
+            owned = open(log_path, "a", encoding="utf-8")  # noqa: SIM115
+            sink = owned
+        except OSError:
+            owned = None
+    real_out, real_err = sys.stdout, sys.stderr
+    swapped: list[tuple[logging.StreamHandler, Any]] = []
+    for h in _stream_handlers():
+        try:
+            if h.stream in (real_out, real_err, sys.__stdout__, sys.__stderr__):
+                swapped.append((h, h.stream))
+                h.setStream(sink)
+        except Exception:  # noqa: BLE001 -- best effort; never block the UI
+            continue
+    sys.stdout = sys.stderr = sink
+    try:
+        yield
+    finally:
+        sys.stdout, sys.stderr = real_out, real_err
+        for h, stream in swapped:
+            try:
+                h.setStream(stream)
+            except Exception:  # noqa: BLE001
+                pass
+        if owned is not None:
+            owned.close()
 
 
 def condense_error(error: object) -> str:

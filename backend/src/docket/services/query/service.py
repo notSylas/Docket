@@ -138,6 +138,10 @@ class QueryResult(BaseModel):
     # label and how many eligible documents it held when resolved.
     scope_label: str | None = None
     scope_file_count: int | None = None
+    # How much of the searched documents was indexed when the question was
+    # asked mid-index: {"indexed": n, "total": m, "indexing": True}. Never set
+    # by retrieval; the interface that knows a job was running fills it in.
+    index_coverage: dict[str, Any] | None = None
     # AbstentionReason value when the abstention has a specific code (an empty
     # or out-of-scope boundary); None otherwise.
     abstention_reason: str | None = None

@@ -387,6 +387,7 @@ class EvalRunner:
         record.compute = result.compute
         record.scope_label = getattr(result, "scope_label", None)
         record.scope_file_count = getattr(result, "scope_file_count", None)
+        record.index_coverage = getattr(result, "index_coverage", None)
         if getattr(result, "abstention_reason", None) is not None:
             record.abstention_reason = result.abstention_reason
         record.citations = [RecordedCitation(**c.model_dump()) for c in result.citations]

@@ -103,6 +103,9 @@ class AskRequest:
     mode: str  # a key from backend.modes
     history: tuple[Turn, ...] = ()
     scope: Any = None  # the chosen `Scope` (all | source | folder | file); None = everything
+    # {"indexed": n, "total": m, "indexing": True} when an indexing job is
+    # running for the scoped documents at ask time; None otherwise.
+    index_coverage: dict | None = None
 
 
 @dataclass(frozen=True)

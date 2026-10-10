@@ -62,6 +62,7 @@ class IndexJob:
     started: float | None = None
     ended: float | None = None
     notices: tuple[str, ...] = ()
+    paused: bool = False  # waiting between files while a question is answered
 
     @property
     def active(self) -> bool:
@@ -132,6 +133,7 @@ class QueryOp:
     stage_name: str = ""
     started: float | None = None
     retry: bool = False
+    coverage: dict | None = None  # {"indexed", "total", "indexing"} when asked during indexing
 
     @property
     def stage(self) -> str:
@@ -154,3 +156,22 @@ class QueryOp:
             self.stage_index += 1
             if self.stage_index >= len(fd.QUERY_STAGES):
                 self.state = "done"
+
+
+INDEXING_NOTE = (
+    "Some documents are still being indexed, so this may be missing content - "
+    "try again when indexing finishes"
+)
+
+
+def coverage_text(coverage: dict | None, *, when_answered: bool = True) -> str:
+    """One plain line for a coverage record, or "" when the answer was not asked mid-index."""
+    if not coverage or not coverage.get("indexing"):
+        return ""
+    total = int(coverage.get("total") or 0)
+    done = int(coverage.get("indexed") or 0)
+    tail = " when answered" if when_answered else ""
+    if total <= 0:
+        return f"documents were still being indexed{tail}"
+    noun = "document" if total == 1 else "documents"
+    return f"{done} of {total} {noun} indexed{tail}"

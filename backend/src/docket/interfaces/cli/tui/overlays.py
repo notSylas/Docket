@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from docket.interfaces.cli.tui import fake_data as fd
-from docket.interfaces.cli.tui.model import Scope
+from docket.interfaces.cli.tui.model import Scope, coverage_text
 from docket.interfaces.cli.tui.textfmt import (
     Row,
     cw,
@@ -953,6 +953,8 @@ class IndexingOverlay(Overlay):
             rows.append([])
             rows.append(bar)
             rows.append([(MUTED, "Files vary in processing time; this is a file count, not a time estimate.")])
+            if j.paused and j.state != "stopping":
+                rows.append([("class:attention", "Paused while a question is answered; it resumes by itself. Stop still works.")])
             if j.state == "stopping":
                 rows.append([])
                 if j.real:
@@ -1204,6 +1206,7 @@ class DetailsOverlay(Overlay):
             passages = "None used" + tail
         else:
             passages = f"{len(avail)} passage{'s' if len(avail) != 1 else ''} from {files} file{'s' if files != 1 else ''}{tail}"
+        cov = coverage_text(a.index_coverage)
         cits = f"{len(a.citations)} · syntax valid; meaning not machine-verified" if a.citations else "None"
         items: list[tuple[str, str, str]] = [
             ("Status", a.status, TEXT),
@@ -1218,6 +1221,8 @@ class DetailsOverlay(Overlay):
             ("Citations", cits, TEXT),
             ("Confidence", "Not calibrated", TEXT),
         ]
+        if cov:
+            items.append(("Index coverage", cov[0].upper() + cov[1:], "class:attention"))
         if a.abstained:
             items.append(("Why no answer", a.abstain_reason, "class:attention"))
         for w in a.warnings:

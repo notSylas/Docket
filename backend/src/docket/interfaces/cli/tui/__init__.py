@@ -6,6 +6,7 @@ runs the same views on the real services (see Upgrade/16).
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from docket.interfaces.cli.tui.app import STATES, DemoUI, TuiApp
@@ -44,15 +45,28 @@ def run_ui(
         ascii_mode=ascii_mode,
         session_plan=session_plan,
     )
-    try:
-        ui.run()
-    finally:
-        if ui.active_workers():
-            print("Finishing the file being indexed before exit (press Ctrl+C to leave immediately)...", flush=True)
-            try:
-                ui.wait_for_workers()
-            except KeyboardInterrupt:
-                pass
+    # Library writes (tqdm bars, warnings, logging handlers) from worker threads
+    # must not land on the full-screen UI, which keeps its own captured output
+    # stream. The redirect also covers the post-exit wait for a running file.
+    import sys
+
+    from docket.interfaces.cli.quiet import quiet_streams
+
+    real_out = sys.stdout
+    log_path = None
+    data_dir = getattr(getattr(context, "settings", None), "data_dir", None)
+    if data_dir is not None:
+        log_path = Path(str(data_dir)) / "ui-debug.log"
+    with quiet_streams(log_path):
+        try:
+            ui.run()
+        finally:
+            if ui.active_workers():
+                print("Finishing the file being indexed before exit (press Ctrl+C to leave immediately)...", file=real_out, flush=True)
+                try:
+                    ui.wait_for_workers()
+                except KeyboardInterrupt:
+                    pass
 
 
 __all__ = ["STATES", "DemoUI", "TuiApp", "run_demo", "run_ui"]
