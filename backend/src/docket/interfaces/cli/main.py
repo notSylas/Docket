@@ -173,6 +173,20 @@ def tui_demo(
     run_demo(state, reduced_motion=reduced_motion, ascii_mode=True if ascii_mode else None)
 
 
+@app.command("ui")
+def ui_command(
+    reduced_motion: bool = typer.Option(False, "--reduced-motion", help="Fewer redraws while working."),
+    ascii_mode: bool = typer.Option(False, "--ascii", help="Force ASCII borders (also DOCKET_ASCII=1)."),
+) -> None:
+    """Full-screen terminal UI on your real sources (preview; `docket` and `docket chat` are unchanged)."""
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        typer.echo("docket ui needs an interactive terminal. Use `docket chat` or `docket query`.", err=True)
+        raise typer.Exit(code=1)
+    from docket.interfaces.cli.tui import run_ui
+
+    run_ui(build_context(), reduced_motion=reduced_motion, ascii_mode=True if ascii_mode else None)
+
+
 @app.command("install-launcher")
 def install_launcher_cmd() -> None:
     """Add Docket to the desktop app menu (user-level, no system files touched)."""

@@ -1498,6 +1498,8 @@ Layout
 
 ## 6. What is intentionally fake
 
+Note: this section describes `docket tui-demo`. `docket ui` runs the same views on the real services; see `16-terminal-ui-wiring.md` for what is real there and what is still deferred.
+
 - Every source, file, answer, citation, passage, model name, job and time. "Ask" picks one of a few canned answers by keyword (`table`/`region`/`target`, `list`/`policy`, an abstention for `nothing`/`weather`, a short no-citation reply for a greeting such as `hey`, otherwise a default).
 - Indexing progress is a timer (or N in reduced motion); failures at files 12 and 18 are scripted. In `welcome-blocked` indexing fails immediately, to show the recovery state.
 - Add folder never reads the path; "suggestions" are a fixed list; `/demo/...` paths are not checked.

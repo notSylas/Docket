@@ -19,8 +19,8 @@ DEMO_TAG = "DEMO DATA"
 
 # -- status vocabulary --------------------------------------------------------
 
-READY, FAILED, DISCONNECTED = "ready", "failed", "disconnected"
-STATUS_LABEL = {READY: "Ready", FAILED: "Failed", DISCONNECTED: "Disconnected"}
+READY, FAILED, DISCONNECTED, UNAVAILABLE = "ready", "failed", "disconnected", "unavailable"
+STATUS_LABEL = {READY: "Ready", FAILED: "Failed", DISCONNECTED: "Disconnected", UNAVAILABLE: "Unavailable"}
 
 FILE_READY, FILE_FAILED, FILE_PENDING, FILE_EMPTY = "ready", "failed", "pending", "empty"
 FILE_LABEL = {
