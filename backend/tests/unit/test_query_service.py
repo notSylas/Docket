@@ -1223,7 +1223,7 @@ def test_agent_mode_computes_the_rewrite_once_and_records_it(
     assert len(_rewrite_calls(gateway)) == 1
     assert result.standalone_query == "Who wrote RRF?"
     # cleared once the run is over, so the next question never inherits it
-    assert service._run_extra_queries == []
+    assert not [a for a in vars(service) if a.startswith("_run_")]
 
 
 def test_agent_mode_without_history_does_not_rewrite(migrated_sqlite_engine, tmp_path, built) -> None:

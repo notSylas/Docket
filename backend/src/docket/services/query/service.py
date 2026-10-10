@@ -33,6 +33,12 @@ from pydantic import BaseModel
 from sqlalchemy import Engine
 
 from docket.services.agent.graph import build_investigation_agent
+from docket.services.agent.run_context import (
+    RunContext,
+    bind_run_context,
+    current_extra_queries,
+    current_scope_ids,
+)
 from docket.core.config import Settings
 from docket.core.config import settings as default_settings
 from docket.infra.inference.gateway import InferenceGateway
@@ -276,12 +282,8 @@ class QueryService:
         self._manifest_guard = manifest_guard
         # Only used by the flagged compute stage; built lazily when not injected.
         self._workbook_reader = workbook_reader
-        # Follow-up rewrite of the CURRENT agent run, read by the agent's
-        # `search_knowledge` tool for every call (see `_ask_agent`).
-        self._run_extra_queries: list[str] = []
-        # Evidence versions the CURRENT agent run is scoped to (explicit file
-        # name), read by the agent's `search_knowledge` tool for every call.
-        self._run_scope_ids: list[str] = []
+        # No per-run state lives on this shared instance: each ask() creates a
+        # `RunContext` (see `docket.services.agent.run_context`).
 
     def _query_signals(
         self, question: str, standalone: str | None, history: list[ConversationTurn] | None
@@ -319,8 +321,8 @@ class QueryService:
                 top_k=self._top_k,
                 manifest_guard=self._manifest_guard,
                 page_table=self._page_table,
-                extra_queries_provider=lambda: self._run_extra_queries,
-                scope_provider=lambda: self._run_scope_ids,
+                extra_queries_provider=current_extra_queries,
+                scope_provider=current_scope_ids,
             )
         return self._agent
 
@@ -348,8 +350,9 @@ class QueryService:
         if mode is None:
             mode = self._classifier.classify(question)
         trimmed = trim_history(history)
+        run = RunContext()
         result = (
-            self._ask_agent(question, trimmed)
+            self._ask_agent(question, trimmed, run)
             if mode == QueryMode.AGENT
             else self._ask_fast(question, trimmed)
         )
@@ -718,23 +721,27 @@ class QueryService:
         )
 
     def _ask_agent(
-        self, question: str, history: list[ConversationTurn] | None = None
+        self,
+        question: str,
+        history: list[ConversationTurn] | None = None,
+        run: RunContext | None = None,
     ) -> QueryResult:
+        run = run if run is not None else RunContext()
         agent = self._get_agent()
         # Same retrieval stack as the fast path (doc 05 section 8): the
         # follow-up rewrite is computed once and added as an extra query to
-        # every `search_knowledge` call of this run (cleared afterwards).
+        # every `search_knowledge` call of this run (bound via the run context).
         standalone = self._rewrite_followup(question, history)
-        self._run_extra_queries = [standalone] if standalone else []
+        run.extra_queries = [standalone] if standalone else []
         # Scope parity with the fast path: an explicitly named file restricts
         # every search_knowledge call of this run (no ambiguity note here).
         signals = self._query_signals(question, standalone, history)
-        self._run_scope_ids = (
+        run.scope_ids = (
             list(signals.scope_version_ids)
             if signals is not None and self._settings.query_scope_enabled
             else []
         )
-        scoped_to = list(signals.scope_files) if self._run_scope_ids and signals is not None else None
+        scoped_to = list(signals.scope_files) if run.scope_ids and signals is not None else None
 
         system_prompt = AGENT_SYSTEM_PROMPT_WITH_HISTORY if history else AGENT_SYSTEM_PROMPT
         messages_in: list = [SystemMessage(content=system_prompt)]
@@ -752,10 +759,11 @@ class QueryService:
         try:
             # Each iteration is an agent + gateway (or force_tool_use) node
             # pair: 8 iterations need at most ~24 steps, under the limit of 50.
-            result_state = agent.invoke(initial_state, config={"recursion_limit": 50})
+            with bind_run_context(run):
+                result_state = agent.invoke(initial_state, config={"recursion_limit": 50})
         finally:
-            self._run_extra_queries = []
-            self._run_scope_ids = []
+            run.extra_queries = []
+            run.scope_ids = []
         messages = result_state["messages"]
 
         final_ai_message = next(
