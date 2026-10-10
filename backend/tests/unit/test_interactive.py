@@ -555,7 +555,7 @@ def test_ingest_shows_failures_and_summary(ctx, tmp_path):
     ctx.__dict__["pipeline"] = P()
     out, _ = drive(ctx, [f"/ingest {src.id}"])
     assert f"{src.id}: 1 ingested, 1 unchanged, 1 failed — 5 chunks written" in out
-    assert "FAILED: b.pdf -- corrupt" in out
+    assert "FAILED b.pdf: corrupt" in out
 
 
 def test_ingest_empty_source_friendly(ctx, tmp_path):
@@ -788,3 +788,68 @@ def test_ingestion_invalidates_cached_service(ctx, tmp_path):
     query_flow.ask(session, "after")
     assert len(created) == 2
     assert created[1].calls[0]["history"][0].question == "before"
+
+
+# -- shell-command hint ------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["pwd", "ls", "ls -la", "cd ..", "cd ~/docs", "cat /etc/hosts", "clear", "whoami",
+     "git", "python3", "PWD", "  pwd  "],
+)
+def test_shell_command_is_hinted_not_queried(ctx, text):
+    out, service = drive(ctx, [text])
+    assert service.calls == []
+    assert "That looks like a shell command" in out
+    assert "/help" in out and "/exit" in out
+
+
+@pytest.mark.parametrize("text", ["exit", "quit"])
+def test_exit_words_say_type_slash_exit(text):
+    # Bare `exit`/`quit` are already handled as session commands before
+    # `ask`; the guard's wording is still pinned for direct callers.
+    from docket.interfaces.cli.interactive.query_flow import shell_command_hint
+
+    assert "type /exit" in shell_command_hint(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["what is the notice period", "ls the revenue for 2024", "cat food policy",
+     "git workflow in the handbook", "history of the company", "cd rom drives policy"],
+)
+def test_real_questions_are_not_hinted(ctx, text):
+    out, service = drive(ctx, [text])
+    assert [c["question"] for c in service.calls] == [text]
+    assert "That looks like a shell command" not in out
+
+
+def test_ingest_failure_lines_are_concise_and_deduped(ctx, tmp_path):
+    folder = tmp_path / "docs"
+    folder.mkdir()
+    src = ctx.source_manager.register_source(folder)
+
+    class P:
+        def find_stale_versions(self, source_id):
+            return []
+
+        def run_ingestion_for_source(self, source_id, progress=None):
+            from docket.services.ingestion.pipeline import ProgressEvent
+
+            err = (
+                f"failed to parse {folder}/sub/bad.pdf for source {source_id}: "
+                "not a valid PDF file\nTraceback (most recent call last):\n  ..."
+            )
+            bad = FileIngestResult(path=folder / "sub" / "bad.pdf", status="failed", error=err)
+            for i in (1, 2):  # same failure reported twice
+                progress(ProgressEvent("done", i, 2, bad.path, bad))
+            return IngestionJobResult(
+                source_id, "j", "failed", 1, 1, [bad], dirs_skipped=2, files_skipped=23
+            )
+
+    ctx.__dict__["pipeline"] = P()
+    out, _ = drive(ctx, [f"/ingest {src.id}"])
+    assert out.count("FAILED sub/bad.pdf: not a valid PDF file") == 1
+    assert "Traceback" not in out
+    assert "Skipped 23 files in ignored folders (virtualenvs, site-packages, hidden)" in out

@@ -41,6 +41,8 @@ from dataclasses import dataclass
 from importlib.metadata import version
 from pathlib import Path
 
+from docket.infra.parsing.filecheck import check_file_signature
+
 
 @dataclass
 class ChartSeriesData:
@@ -333,6 +335,7 @@ class PptxParser:
             raise UnsupportedPresentationFormatError(path)
 
         try:
+            check_file_signature(path)  # cheap "not really a pptx" rejection
             presentation = Presentation(str(path))
         except Exception as exc:  # noqa: BLE001 -- intentionally broad, see ParseError docstring
             raise ParseError(source_id, path, exc) from exc

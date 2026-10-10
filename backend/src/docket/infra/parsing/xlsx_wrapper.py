@@ -30,6 +30,8 @@ from datetime import date, datetime
 from importlib.metadata import version
 from pathlib import Path
 
+from docket.infra.parsing.filecheck import check_file_signature
+
 # Literal cell values Excel itself writes into a cell when a formula's cached
 # result is an error. openpyxl has no distinct "error" value type for this --
 # with `data_only=True` these come back as plain strings indistinguishable
@@ -428,6 +430,7 @@ class XlsxParser:
             raise UnsupportedSpreadsheetFormatError(path)
 
         try:
+            check_file_signature(path)  # cheap "not really an xlsx" rejection
             value_wb = openpyxl.load_workbook(str(path), data_only=True, read_only=False)
             formula_wb = openpyxl.load_workbook(str(path), data_only=False, read_only=False)
         except Exception as exc:  # noqa: BLE001 -- intentionally broad, see ParseError docstring

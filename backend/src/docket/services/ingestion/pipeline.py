@@ -138,6 +138,8 @@ from docket.infra.index.manager import IndexManager
 from docket.infra.index.visual_index import LancePageIndexWriter
 from docket.infra.inference.gateway import InferenceGateway
 from docket.services.ingestion.chunk_writer import ChunkWriter
+from docket.services.ingestion.ignore import DiscoveryReport
+from docket.services.ingestion.ignore import discover as discover_files
 from docket.services.ingestion.formula_transcriber import FormulaTranscriber
 from docket.infra.index.manifest import IndexManifestGuard
 from docket.services.ingestion.visual_indexer import VisualIndexer
@@ -295,6 +297,10 @@ class IngestionJobResult:
     files_processed: int
     files_failed: int
     file_results: list[FileIngestResult] = field(default_factory=list)
+    # Discovery ignore rules (see `services/ingestion/ignore.py`): how much
+    # was skipped. Optional so existing constructors keep working.
+    dirs_skipped: int = 0
+    files_skipped: int = 0
 
 
 class IngestionPipeline:
@@ -509,11 +515,18 @@ class IngestionPipeline:
     def _discover_files(self, root: Path) -> list[Path]:
         """Recursively walk `root` for ingestable files. Recursive (not just
         the top level) because a "local_folder" source is meant to cover the
-        whole tree under that folder, not just its immediate children."""
-        return sorted(
-            p
-            for p in root.rglob("*")
-            if p.is_file() and p.suffix.lower() in DISCOVERABLE_EXTENSIONS
+        whole tree under that folder, not just its immediate children.
+
+        Directories matching the ignore rules (hidden, virtualenvs,
+        site-packages, node_modules, ... plus `.docketignore`) are pruned;
+        see `docket.services.ingestion.ignore`."""
+        return self._discover(root).files
+
+    def _discover(self, root: Path) -> DiscoveryReport:
+        return discover_files(
+            root,
+            extensions=DISCOVERABLE_EXTENSIONS,
+            enabled=bool(getattr(self._settings, "ingest_ignore_enabled", True)),
         )
 
     def _ingest_one_file(self, source_id: str, path: Path) -> FileIngestResult:
@@ -877,7 +890,8 @@ class IngestionPipeline:
                     file_results=[],
                 )
 
-            files = self._discover_files(Path(source.path))
+            discovery = self._discover(Path(source.path))
+            files = discovery.files
             total = len(files)
             for index, path in enumerate(files, start=1):
                 emit(ProgressEvent("start", index, total, path))
@@ -945,4 +959,6 @@ class IngestionPipeline:
             files_processed=files_processed,
             files_failed=files_failed,
             file_results=file_results,
+            dirs_skipped=discovery.dirs_skipped,
+            files_skipped=discovery.files_skipped,
         )

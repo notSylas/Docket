@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from importlib.metadata import version
 
+from docket.infra.parsing.filecheck import check_file_signature
 from docket.infra.parsing.normalize import unescape_markdown
 
 # Inline, invisible page-boundary sentinel inserted into markdown at points
@@ -308,6 +309,9 @@ class DoclingParser:
         single bad file in a batch ingestion run can be caught and skipped.
         """
         try:
+            # Cheap magic-byte check first: a text file named *.pdf is
+            # reported as "not a valid PDF file" without invoking Docling.
+            check_file_signature(path)
             result = self._converter.convert(str(path))
             markdown = result.document.export_to_markdown()
             # Marker insertion runs on the raw (still-escaped) markdown --

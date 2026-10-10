@@ -51,6 +51,7 @@ from docket.infra.parsing.recipes import ChunkRecipe, docling_recipe
 from docket.infra.retrieval.resolver import EvidenceResolver
 from docket.services.sources.manager import SourceManager
 from docket.services.sources.readiness import ReadinessService
+from docket.services.sources.prune import SourcePruneService
 from docket.services.sources.purge import SourcePurgeService
 
 if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
@@ -279,6 +280,15 @@ class AppContext:
             settings=self.settings,
             source_manager=self.source_manager,
             manifest_guard=self.index_manifest_guard,
+        )
+
+    @cached_property
+    def prune_service(self) -> SourcePruneService:
+        return SourcePruneService(
+            self.session_factory,
+            self.evidence_manager,
+            self.index_manager,
+            enabled=self.settings.ingest_ignore_enabled,
         )
 
     @cached_property
