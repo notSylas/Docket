@@ -32,7 +32,46 @@ def get_service(session: Any) -> Any | None:
     return session._service
 
 
+_SHELL_WORDS = frozenset(
+    {
+        "pwd", "ls", "cd", "cat", "clear", "whoami", "exit", "quit", "history",
+        "top", "htop", "vim", "nano", "pip", "git", "python", "python3",
+    }
+)
+_PATH_COMMANDS = frozenset({"cd", "ls", "cat"})
+_SHELL_HINT = (
+    "That looks like a shell command. Docket answers questions about your "
+    "documents; use /help for commands, /exit to leave."
+)
+_EXIT_HINT = (
+    "That looks like a shell command. To leave Docket, type /exit "
+    "(use /help for commands)."
+)
+
+
+def shell_command_hint(text: str) -> str | None:
+    """A hint when `text` is a bare common shell command (or `cd`/`ls`/`cat`
+    plus a path-like argument); None for anything that could be a question."""
+    parts = text.strip().split()
+    if not parts:
+        return None
+    head = parts[0].lower()
+    if head not in _SHELL_WORDS:
+        return None
+    if len(parts) == 1:
+        return _EXIT_HINT if head in ("exit", "quit") else _SHELL_HINT
+    if head in _PATH_COMMANDS and len(parts) == 2:
+        arg = parts[1]
+        if arg.startswith(("-", "/", "~", ".")) or "/" in arg or "\\" in arg:
+            return _SHELL_HINT
+    return None
+
+
 def ask(session: Any, question: str, *, retry: bool = False) -> None:
+    hint = None if retry else shell_command_hint(question)
+    if hint is not None:
+        session.say(hint)
+        return
     session.last_attempted_question = question
     if not retry:
         session.retry_turn_index = None

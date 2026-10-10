@@ -318,7 +318,7 @@ def test_parsed_document_page_images_end_to_end_via_fake_converter(tmp_path):
     parser._parser_version = "test-version"
 
     fake_path = tmp_path / "fake.pdf"
-    fake_path.write_text("irrelevant")
+    fake_path.write_text("%PDF-1.4 irrelevant")
     result = parser.parse("src-fake", fake_path)
 
     assert set(result.page_images.keys()) == {1}
@@ -349,7 +349,7 @@ def test_parsed_document_text_has_no_markers_fake_docling_result(monkeypatch, tm
     parser._parser_version = "test-version"
 
     fake_path = tmp_path / "fake.pdf"
-    fake_path.write_text("irrelevant")
+    fake_path.write_text("%PDF-1.4 irrelevant")
     result = parser.parse("src-fake", fake_path)
 
     assert "<!--PAGE:" not in result.text

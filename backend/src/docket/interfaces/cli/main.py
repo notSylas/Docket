@@ -16,6 +16,7 @@ from docket.infra.inference.gateway import InferenceError
 from docket.infra.parsing.tokens import get_token_counter
 from docket.interfaces.cli.context import build_context
 from docket.interfaces.cli import launcher
+from docket.interfaces.cli.quiet import FailureReporter, condense_error, ignore_notices, quiet_ingest
 from docket.interfaces.cli.interactive import run_session
 from docket.core.db.models import SourceStatus
 from docket.services.ingestion.pipeline import SourceNotActiveError
@@ -202,6 +203,35 @@ def sources_list() -> None:
         typer.echo(f"{source.id:<40}{source.status.value:<12}{source.path}")
 
 
+@sources_app.command("prune")
+def sources_prune(
+    source_id: str = typer.Argument(..., help="Source id to prune."),
+    apply: bool = typer.Option(
+        False, "--apply", help="Actually remove them from the index (default: dry run)."
+    ),
+) -> None:
+    """Remove indexed files that the current ignore rules would skip
+    (virtualenvs, site-packages, hidden folders, .docketignore).
+
+    Dry run by default. Never deletes files on disk."""
+    context = build_context()
+    try:
+        service = context.prune_service
+        candidates = service.apply(source_id) if apply else service.find(source_id)
+    except SourceNotFoundError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    if not candidates:
+        typer.echo("Nothing to prune: no indexed files are in ignored folders.")
+        return
+    verb = "Pruned" if apply else "Would prune"
+    typer.echo(f"{verb} {len(candidates)} file(s):")
+    for candidate in candidates:
+        typer.echo(f"  {candidate.relative_path.as_posix()} ({candidate.status})")
+    if not apply:
+        typer.echo("Dry run: nothing changed. Re-run with --apply to remove them from the index.")
+
+
 # -- ingest --------------------------------------------------------------
 
 
@@ -256,11 +286,17 @@ def ingest(
     stale_total = 0
     for target_id in target_ids:
         try:
-            result = context.pipeline.run_ingestion_for_source(target_id)
+            with quiet_ingest():
+                result = context.pipeline.run_ingestion_for_source(target_id)
         except (SourceNotFoundError, SourceNotActiveError) as exc:
             typer.echo(f"Error ingesting {target_id}: {exc}", err=True)
             exit_code = 1
             continue
+        try:
+            root = Path(context.source_manager.get_source(target_id).path)
+        except Exception:  # noqa: BLE001 -- display nicety only
+            root = None
+        reporter = FailureReporter(root)
 
         chunks_written = sum(r.chunks_written for r in result.file_results)
         typer.echo(
@@ -270,7 +306,11 @@ def ingest(
         )
         for file_result in result.file_results:
             if file_result.status == "failed":
-                typer.echo(f"  FAILED: {file_result.path} -- {file_result.error}")
+                line = reporter.line(file_result.path, file_result.error)
+                if line is not None:
+                    typer.echo(f"  {line}")
+        for notice in ignore_notices(result, getattr(context, "prune_service", None), target_id):
+            typer.echo(typer.style(notice, dim=True))
 
         if result.status != "succeeded":
             exit_code = 1
@@ -301,7 +341,7 @@ def _rechunk_sources(context, target_ids: list[str], dry_run: bool) -> int:
         for result in report.results:
             if result.status == "failed":
                 failed += 1
-                typer.echo(f"  FAILED: {result.path} -- {result.error}")
+                typer.echo(f"  FAILED {result.path}: {condense_error(result.error)}")
             else:
                 rechunked += 1
 

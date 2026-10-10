@@ -8,9 +8,11 @@ and `session.state`, so a wrapping class would hold no state of its own.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from docket.core.db.models import SourceStatus
+from docket.interfaces.cli.quiet import FailureReporter, ignore_notices, quiet_ingest
 from docket.services.ingestion.pipeline import SUPPORTED_EXTENSIONS, ProgressEvent, SourceNotActiveError
 from docket.services.sources.manager import SourceNotFoundError
 
@@ -44,8 +46,9 @@ def _ingest_targets(session: Any, target_ids: list[str]) -> None:
     cold = "pipeline" not in vars_ and "parser" not in vars_
     for target_id in target_ids:
         status = None
+        reporter = FailureReporter(_source_root(session, target_id))
         try:
-            with session.console.status(f"Ingesting {target_id}...") as status:
+            with quiet_ingest(), session.console.status(f"Ingesting {target_id}...") as status:
                 if cold:
                     session.say(
                         "Loading document parser (first time only — "
@@ -61,13 +64,18 @@ def _ingest_targets(session: Any, target_ids: list[str]) -> None:
                             f"Ingesting {event.index}/{event.total}: {event.path.name}"
                         )
                     elif event.result is not None and event.result.status == "failed":
-                        session.error(f"FAILED: {event.path} -- {event.result.error}")
+                        line = reporter.line(event.path, event.result.error)
+                        if line is not None:
+                            session.error(line)
 
                 result = pipeline.run_ingestion_for_source(target_id, progress=on_progress)
         except (SourceNotFoundError, SourceNotActiveError) as exc:
             session.error(f"Error ingesting {target_id}: {exc}")
             continue
         _summarize(session, target_id, result)
+        prune_service = getattr(ctx, "prune_service", None)
+        for notice in ignore_notices(result, prune_service, target_id):
+            session.say(notice, style="dim")
         stale = len(pipeline.find_stale_versions(target_id))
         if stale:
             session.say(
@@ -75,6 +83,14 @@ def _ingest_targets(session: Any, target_ids: list[str]) -> None:
                 "run `docket ingest --all --rechunk` to update.",
                 style="dim",
             )
+
+
+def _source_root(session: Any, target_id: str) -> Path | None:
+    """Source folder, used to print failed paths relative to it."""
+    try:
+        return Path(session.context.source_manager.get_source(target_id).path)
+    except Exception:  # noqa: BLE001 -- display nicety only
+        return None
 
 
 def _summarize(session: Any, target_id: str, result: Any) -> None:

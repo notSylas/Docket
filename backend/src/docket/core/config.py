@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     # explicit decision).
     visual_index_enabled: bool = False
 
+    # Discovery ignore rules (hidden folders, virtualenvs, site-packages,
+    # node_modules, Office lock files, `.docketignore`). Escape hatch:
+    # DOCKET_INGEST_IGNORE_ENABLED=false walks everything, as before.
+    ingest_ignore_enabled: bool = True
+
     # Off by default, same posture as `visual_index_enabled`: this checkpoint
     # builds the formula-region crop + VLM transcription + storage
     # infrastructure (`docket.infra.parsing.formula_crop`,
