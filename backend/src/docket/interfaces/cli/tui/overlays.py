@@ -77,7 +77,7 @@ def kv_rows(items: list[tuple[str, str, str]], iw: int, label_w: int | None = No
     """
     if not items:
         return []
-    lw = label_w if label_w is not None else min(max(cw(k) for k, _v, _s in items) + 2, 20)
+    lw = label_w if label_w is not None else min(max(cw(k) for k, _v, _s in items) + 2, 26)
     rows: list[Row] = []
     for k, v, style in items:
         label = (k + " " * max(lw - cw(k), 0)) if k else " " * lw
