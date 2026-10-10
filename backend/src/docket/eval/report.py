@@ -89,6 +89,8 @@ class Report:
     failures_by_type: dict[str, dict[str, int]] = field(default_factory=dict)
     judged_runs: int = 0  # semantic fact/support checks applied
     judge_disagreements: int = 0  # ...where the cross-check judge disagreed
+    latency_p50_s: float | None = None  # end-to-end, over runs without error
+    latency_p90_s: float | None = None
 
 
 def classify_failure(question: Question, record: RunRecord, score: RunScore) -> str | None:
@@ -290,6 +292,8 @@ def build_report(
     if any(s.leaked or not s.abstained for _, _, s in revoked):
         reasons.append("revoked-source evidence or answer leak")
 
+    latencies = [r.latency_s for _, r, _ in pairs if not r.error and r.latency_s > 0]
+
     return Report(
         repeats=max((len(v) for v in scores.values()), default=0),
         overall=_slice(scored_questions, scores),
@@ -311,7 +315,20 @@ def build_report(
         failures_by_type=dict(sorted(failures_by_type.items())),
         judged_runs=sum(s.judged for _, _, s in pairs),
         judge_disagreements=sum(s.judge_disagreement for _, _, s in pairs),
+        latency_p50_s=percentile(latencies, 0.5),
+        latency_p90_s=percentile(latencies, 0.9),
     )
+
+
+def percentile(values: list[float], q: float) -> float | None:
+    """Linear-interpolated percentile (q in [0, 1]); None for no values."""
+    if not values:
+        return None
+    ordered = sorted(values)
+    pos = (len(ordered) - 1) * q
+    lo = int(pos)
+    hi = min(lo + 1, len(ordered) - 1)
+    return ordered[lo] + (ordered[hi] - ordered[lo]) * (pos - lo)
 
 
 def report_to_dict(report: Report) -> dict[str, Any]:
@@ -369,6 +386,11 @@ def format_report(report: Report) -> str:
         f"Abstention recall                {report.abstention_recall.fmt()}",
         f"Wrongful abstention (answerable) {report.wrongful_abstention.fmt()}",
         f"Revoked leaks: retrieved {report.revoked_retrieval_leaks}, answered {report.revoked_answer_leaks}",
+        *(
+            [f"Latency end-to-end             p50 {report.latency_p50_s:.1f}s  p90 {report.latency_p90_s:.1f}s"]
+            if report.latency_p50_s is not None and report.latency_p90_s is not None
+            else []
+        ),
         "",
         "Failure classification (runs):",
     ]

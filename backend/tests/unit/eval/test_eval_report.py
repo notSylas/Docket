@@ -145,3 +145,80 @@ def test_format_and_dict_output(make_record):
     data = report_to_dict(report)
     assert json.loads(json.dumps(data))["overall"]["strict"]["passed"] == 2
     assert data["overall"]["strict"]["lo"] == pytest.approx(0.3424, abs=1e-3)
+
+
+# -- structured abstention + latency percentiles ---------------------------
+
+
+def test_answer_status_abstained_scores_as_abstention(make_record):
+    from docket.eval.scoring import Verdict
+
+    q = _unanswerable()
+    rec = make_record(question_id="u", answer="I could not verify this: source unavailable.")
+    assert score_run(q, rec).verdict is Verdict.FAIL  # no status, no phrase
+    rec = rec.model_copy(update={"answer_status": "ABSTAINED", "abstention_reason": "SOURCE_UNAVAILABLE"})
+    score = score_run(q, rec)
+    assert score.abstained and score.verdict is Verdict.PASS
+
+
+def test_answer_status_abstained_on_answerable_is_wrongful(make_record):
+    q = _answerable()
+    rec = make_record(question_id="a", answer="Cannot say.", chunks=[CHUNK], cited=[0],
+                      answer_status="ABSTAINED")
+    score = score_run(q, rec)
+    assert score.abstained
+    assert "abstained on an answerable question" in score.reasons
+
+
+def test_phrase_fallback_and_non_abstained_status_unchanged(make_record):
+    q = _unanswerable()
+    assert score_run(q, make_record(question_id="u", answer=ABSTENTION_PHRASE)).abstained
+    rec = make_record(question_id="u", answer="25 days", answer_status="VERIFIED")
+    assert not score_run(q, rec).abstained
+    # a status of VERIFIED never overrides the phrase fallback
+    rec = make_record(question_id="u", answer=ABSTENTION_PHRASE, answer_status="VERIFIED")
+    assert score_run(q, rec).abstained
+
+
+def test_old_run_records_load_without_new_fields():
+    from docket.eval.schema import RunRecord
+
+    rec = RunRecord.model_validate({"question_id": "q", "repeat": 0, "answer": "x"})
+    assert rec.answer_status is None and rec.abstention_reason is None
+    assert rec.latency_by_phase is None and rec.claim_records is None
+    rec = RunRecord.model_validate({"question_id": "q", "repeat": 0,
+                                    "latency_by_phase": {"retrieve": 0.5, "generate": 7.0}})
+    assert rec.latency_by_phase["generate"] == 7.0
+
+
+def test_percentile_helper():
+    from docket.eval.report import percentile
+
+    assert percentile([], 0.5) is None
+    assert percentile([4.0], 0.9) == 4.0
+    assert percentile([1.0, 2.0, 3.0, 4.0, 5.0], 0.5) == 3.0
+    assert percentile([1.0, 2.0, 3.0, 4.0, 5.0], 0.9) == pytest.approx(4.6)
+
+
+def test_report_latency_percentiles(make_record):
+    gold = GoldSet(questions=[_answerable("a")])
+    recs = [
+        make_record(question_id="a", repeat=i, answer="25 days [f #c0]", chunks=[CHUNK],
+                    cited=[0], latency_s=float(s))
+        for i, s in enumerate([2, 4, 6, 8, 10])
+    ]
+    errored = make_record(question_id="a", repeat=9, error="boom", latency_s=99.0)
+    report = build_report(gold, recs + [errored])
+    assert report.latency_p50_s == 6.0
+    assert report.latency_p90_s == pytest.approx(9.2)
+    assert "p50 6.0s  p90 9.2s" in format_report(report)
+    data = report_to_dict(report)
+    assert data["latency_p50_s"] == 6.0
+
+
+def test_report_without_latency_omits_line(make_record):
+    gold = GoldSet(questions=[_answerable("a")])
+    rec = make_record(question_id="a", answer="25 days [f #c0]", chunks=[CHUNK], cited=[0])
+    report = build_report(gold, [rec])
+    assert report.latency_p50_s is None
+    assert "Latency end-to-end" not in format_report(report)

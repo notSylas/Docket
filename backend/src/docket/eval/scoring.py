@@ -106,6 +106,12 @@ def is_abstention(answer: str) -> bool:
     return normalize_text(strip_citations(answer)) == normalize_text(ABSTENTION_PHRASE)
 
 
+def record_abstained(record: RunRecord) -> bool:
+    """Structured status first (`answer_status == "ABSTAINED"`), the exact
+    fixed phrase as fallback so records without the field score as before."""
+    return record.answer_status == "ABSTAINED" or is_abstention(record.answer)
+
+
 def contains_refusal(answer: str) -> bool:
     """True if the refusal phrase appears anywhere (a hedged, partial refusal)."""
     return normalize_text(ABSTENTION_PHRASE) in normalize_text(answer)
@@ -260,7 +266,7 @@ def score_run(question: Question, record: RunRecord) -> RunScore:
         question_id=question.id,
         repeat=record.repeat,
         verdict=Verdict.FAIL,
-        abstained=is_abstention(record.answer),
+        abstained=record_abstained(record),
         span_retrieved=span_hits(question.gold_spans, chunk_texts),
         span_in_context=(span_hits(question.gold_spans, chunk_texts) if record.mode == "agent"
                          else fact_in_context(question.gold_spans, record.prompt)),

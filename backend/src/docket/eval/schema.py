@@ -279,6 +279,14 @@ class RunRecord(BaseModel):
     configuration: dict[str, Any] = Field(default_factory=dict)
     revoked_source_ids: list[str] = Field(default_factory=list)
     latency_s: float = 0.0
+    # Structured trust fields (doc 07 section 9); None on runs recorded before
+    # they existed. `answer_status` is a docket.services.query.trust.AnswerStatus
+    # value, `abstention_reason` an AbstentionReason value.
+    answer_status: str | None = None
+    abstention_reason: str | None = None
+    claim_records: list[dict[str, Any]] | None = None
+    # Seconds per phase (route, retrieve, plan, generate, verify), if timed.
+    latency_by_phase: dict[str, float] | None = None
     # Per gold span: does it appear in any indexed chunk of the corpus? Lets the
     # report tell a parse/chunk failure from a retrieval failure.
     spans_indexed: list[bool] = Field(default_factory=list)
