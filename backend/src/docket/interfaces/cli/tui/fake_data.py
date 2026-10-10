@@ -49,6 +49,7 @@ class FakeSource:
     files: list[FakeFile] = field(default_factory=list)
     last_indexed: str = "10 Oct 2026 10:42"
     note: str = ""
+    updates_paused: bool = False  # automatic updates paused for this folder
 
     def count(self, file_status: str) -> int:
         return sum(1 for f in self.files if f.status == file_status)

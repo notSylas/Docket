@@ -710,7 +710,24 @@ class SourcesOverlay(Overlay):
                 "n",
             ),
             Btn("update", "Update now", self._can_update(), self._update_why(), "u"),
+            *self._pause_buttons(s),
             Btn("close", "Close"),
+        ]
+
+    def _pause_buttons(self, s) -> list[Btn]:
+        """[Pause updates] / [Resume updates] for the selected folder; only
+        where automatic updates exist (not in the demo)."""
+        if not getattr(self.ui, "freshness_supported", False):
+            return []
+        paused = s is not None and s.updates_paused
+        return [
+            Btn(
+                "pause",
+                "Resume updates" if paused else "Pause updates",
+                s is not None and s.status in (fd.READY, fd.FAILED),
+                "Select a folder first." if s is None else "Only a connected folder can be paused.",
+                "p",
+            )
         ]
 
     def _can_update(self) -> bool:
@@ -743,6 +760,8 @@ class SourcesOverlay(Overlay):
             ("Last indexed", s.last_indexed, TEXT),
             ("Files", counts, TEXT),
         ]
+        if s.updates_paused:
+            items.append(("Updates", "Paused - resume to keep it current", "class:attention"))
         if self.expanded and short != s.path:
             items.insert(1, ("Full path", s.path, TEXT))
         rows: list[Row] = [[("class:title", s.name)]] + kv_rows(items, iw, lw)
@@ -834,6 +853,8 @@ class SourcesOverlay(Overlay):
             self.ui.push(FailedFilesOverlay(self.ui, s.id))
         elif key == "narrow" and s:
             self.ui.begin_narrow(s)
+        elif key == "pause" and s:
+            self.ui.toggle_updates(s)
         elif key == "disconnect" and s:
             self.ui.push(
                 ConfirmOverlay(
@@ -1387,8 +1408,8 @@ class DetailsOverlay(Overlay):
 # Settings
 # ---------------------------------------------------------------------------
 
-SETTINGS_TABS = ("answering", "appearance", "history", "system")
-TAB_LABELS = {"answering": "Answering", "appearance": "Appearance", "history": "History", "system": "System"}
+SETTINGS_TABS = ("answering", "appearance", "history", "library", "system")
+TAB_LABELS = {"answering": "Answering", "appearance": "Appearance", "history": "History", "library": "Library", "system": "System"}
 
 
 class SettingsOverlay(Overlay):
@@ -1399,6 +1420,12 @@ class SettingsOverlay(Overlay):
         self.tab = tab
         self.pending: dict[str, Any] = dict(ui.settings_values())
         super().__init__(ui)
+
+    def tabs(self) -> tuple[str, ...]:
+        """The Library tab only exists where automatic updates do."""
+        if getattr(self.ui, "freshness_supported", False):
+            return SETTINGS_TABS
+        return tuple(t for t in SETTINGS_TABS if t != "library")
 
     # stops: tabs, list, buttons
     def stops(self) -> list[tuple[str, int]]:
@@ -1429,6 +1456,15 @@ class SettingsOverlay(Overlay):
         elif self.tab == "appearance":
             e.append(Entry("theme", "Appearance", f"‹ {THEME_LABELS[p['theme']]} ›"))
             e.append(Entry("density", "Density", "Comfortable (read-only)", enabled=False, hint="Density and animation preferences arrive in a later release."))
+        elif self.tab == "library":
+            e.append(
+                Entry(
+                    "auto_refresh",
+                    "Keep my library up to date automatically",
+                    f"‹ {'On' if p['auto_refresh'] else 'Off'} ›",
+                    hint="While Docket is open it notices added, changed and deleted files and updates the library. Nothing runs after you close it.",
+                )
+            )
         elif self.tab == "history":
             e.append(Entry("history", "Input history", f"‹ {'On' if p['history'] else 'Off'} ›", hint="Stores what you type, not answers. DOCKET_NO_HISTORY turns it off for the whole process."))
         else:
@@ -1449,7 +1485,7 @@ class SettingsOverlay(Overlay):
 
     def preface(self, iw: int) -> list[Row]:
         tabs: Row = []
-        for t in SETTINGS_TABS:
+        for t in self.tabs():
             focused = self.zone == "tabs" and t == self.tab
             style = SEL if t == self.tab else MUTED
             if focused:
@@ -1509,15 +1545,17 @@ class SettingsOverlay(Overlay):
 
     def k_left(self) -> None:
         if self.zone == "tabs":
-            i = SETTINGS_TABS.index(self.tab)
-            self._set_tab(SETTINGS_TABS[max(0, i - 1)])
+            tabs = self.tabs()
+            i = tabs.index(self.tab)
+            self._set_tab(tabs[max(0, i - 1)])
         else:
             super().k_left()
 
     def k_right(self) -> None:
         if self.zone == "tabs":
-            i = SETTINGS_TABS.index(self.tab)
-            self._set_tab(SETTINGS_TABS[min(len(SETTINGS_TABS) - 1, i + 1)])
+            tabs = self.tabs()
+            i = tabs.index(self.tab)
+            self._set_tab(tabs[min(len(tabs) - 1, i + 1)])
         else:
             super().k_right()
 
@@ -1549,6 +1587,8 @@ class SettingsOverlay(Overlay):
             p["theme"] = THEMES[(THEMES.index(p["theme"]) + delta) % len(THEMES)]
         elif e.key == "history":
             p["history"] = not p["history"]
+        elif e.key == "auto_refresh":
+            p["auto_refresh"] = not p["auto_refresh"]
 
     def press(self, key: str) -> None:
         if key == "save":

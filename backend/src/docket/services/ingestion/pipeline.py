@@ -138,7 +138,8 @@ from docket.infra.index.manager import IndexManager
 from docket.infra.index.visual_index import LancePageIndexWriter
 from docket.infra.inference.gateway import InferenceGateway
 from docket.services.ingestion.chunk_writer import ChunkWriter
-from docket.services.ingestion.ignore import DiscoveryReport
+from docket.infra.parsing.filecheck import InvalidFileError, check_file_signature
+from docket.services.ingestion.ignore import DiscoveryReport, IgnoreRules
 from docket.services.ingestion.failure import condense_error
 from docket.services.ingestion.ignore import discover as discover_files
 from docket.services.ingestion.formula_transcriber import FormulaTranscriber
@@ -160,6 +161,7 @@ from docket.infra.parsing.recipes import (
 from docket.infra.parsing.xlsx_chunker import chunk_workbook
 from docket.infra.parsing.xlsx_wrapper import XlsxParser
 from docket.services.sources.manager import SourceManager, SourceNotFoundError
+from docket.services.sources.prune import supersede_and_deindex
 
 # Deliberately narrow, spike-validated set. Broadening this to more of
 # Docling's supported formats is a one-line change (add to the set); each
@@ -253,7 +255,11 @@ class SourceNotActiveError(Exception):
 @dataclass
 class FileIngestResult:
     path: Path
-    status: str  # "ingested" | "unchanged" | "failed"
+    # "ingested" | "unchanged" | "failed"; path-level runs
+    # (`run_ingestion_for_paths`) also report "deleted" (the file is gone and
+    # its version was superseded) and "skipped" (ignored, unsupported
+    # extension, not a real document, or gone with nothing indexed).
+    status: str
     error: str | None = None
     chunks_written: int = 0
 
@@ -862,24 +868,74 @@ class IngestionPipeline:
 
     # -- entrypoints ----------------------------------------------------
 
+    def _supersede_deleted_path(self, source_id: str, path: Path) -> bool:
+        """A file that no longer exists: supersede its current version and
+        drop its index entries (the same transition prune uses). Returns
+        whether there was a version to retire."""
+        version_id = self._chunk_writer.current_version_id(source_id, str(path))
+        if version_id is None:
+            return False
+        supersede_and_deindex(self._evidence_manager, self._index_manager, version_id)
+        return True
+
+    def _ingest_path(
+        self,
+        source_id: str,
+        path: Path,
+        root: Path,
+        rules: IgnoreRules,
+        *,
+        missing: str,
+    ) -> FileIngestResult:
+        try:
+            rel = path.resolve().relative_to(root.resolve())
+        except ValueError:
+            raise ValueError(f"{path} is not inside the source folder") from None
+        if not path.is_file():
+            if self._supersede_deleted_path(source_id, path):
+                return FileIngestResult(path=path, status="deleted")
+            if missing == "skip":
+                return FileIngestResult(path=path, status="skipped")
+            raise FileNotFoundError(f"file not found: {path.name}")
+        if path.suffix.lower() not in DISCOVERABLE_EXTENSIONS or rules.path_ignored(rel):
+            return FileIngestResult(path=path, status="skipped")
+        try:
+            check_file_signature(path)
+        except InvalidFileError:
+            return FileIngestResult(path=path, status="skipped")
+        except OSError:
+            pass  # unreadable: reported per file by the ingest below
+        return self._ingest_one_file(source_id, path)
+
     def run_ingestion_for_paths(
         self,
         source_id: str,
         paths: list[Path],
         progress: Callable[[ProgressEvent], None] | None = None,
+        *,
+        missing: str = "error",
     ) -> IngestionJobResult:
-        """Ingest just `paths` (files under the source root) through the same
-        per-file path as a whole-source run: unchanged files are a no-op, a
-        changed or previously failed file is re-processed (a retry that
-        succeeds clears its stored failure reason).
+        """The shared path-level entry: ingest just `paths` (files under the
+        source root), whether they are new, changed or deleted.
 
-        Used for "Retry this file" (CP5); the freshness watcher (CP6) extends
-        this with deleted-file handling. A path outside the source root, or
-        one that no longer exists, is reported as a failed result for that
-        path; nothing else is touched. Unlike a whole-source run no
-        discovery is done, so ignore rules are not consulted: the caller
-        chose these paths. Ends with the same whole-source reconcile pass and
-        records an `IngestionJob` row like any run."""
+        Existing files go through the same per-file path as a whole-source
+        run, so unchanged content is a cheap hash-and-skip and a previously
+        failed file is retried (a success clears its stored failure reason).
+        Paths the ignore rules (built-ins, `.docketignore`, the source's
+        `rules_json`), the extension list or the signature check would not
+        discover are "skipped". A path that no longer exists supersedes its
+        current version and deletes its index entries through the same
+        transition prune uses ("deleted"); with nothing indexed for it,
+        `missing="error"` (Retry) reports a failed result and
+        `missing="skip"` (freshness batches) a skipped one. Nothing is
+        superseded while the source root itself is unreachable (an unmounted
+        drive must not look like a deleted library); the run is then a
+        failed job. A path outside the root is a failed result.
+
+        Records one `IngestionJob` row with stats, ends with the same
+        whole-source reconcile pass when anything changed, and leaves
+        `source_mtime` current on every version it touched (via
+        `EvidenceManager.ingest_file`)."""
         source = self._load_active_source(source_id)
         self._chunk_writer.ensure_recipe_row()
         root = Path(source.path)
@@ -903,39 +959,56 @@ class IngestionPipeline:
             except Exception:  # noqa: BLE001
                 logger.debug("progress callback raised; ignored", exc_info=True)
 
+        def stats_for(results: list[FileIngestResult]) -> dict:
+            return {
+                "files_processed": len(results),
+                "files_failed": sum(1 for r in results if r.status == "failed"),
+                "files_deleted": sum(1 for r in results if r.status == "deleted"),
+                "files_skipped": sum(1 for r in results if r.status == "skipped"),
+                "chunks_written": sum(r.chunks_written for r in results),
+            }
+
         targets = [Path(p) for p in paths]
         file_results: list[FileIngestResult] = []
         try:
+            if not self._check_root_reachable(source):
+                self._finalize_job(
+                    job_id,
+                    IngestionJobStatus.FAILED,
+                    f"source root unreachable: {source.path}",
+                    stats_for([]),
+                )
+                return IngestionJobResult(
+                    source_id=source_id,
+                    job_id=job_id,
+                    status=IngestionJobStatus.FAILED.value,
+                    files_processed=0,
+                    files_failed=0,
+                )
+            rules = IgnoreRules.for_root(root, getattr(source, "rules_json", None))
+            if not getattr(self._settings, "ingest_ignore_enabled", True):
+                rules = IgnoreRules()
             total = len(targets)
             for index, path in enumerate(targets, start=1):
                 emit(ProgressEvent("start", index, total, path))
                 try:
-                    try:
-                        path.resolve().relative_to(root.resolve())
-                    except ValueError:
-                        raise ValueError(f"{path} is not inside the source folder") from None
-                    if not path.is_file():
-                        raise FileNotFoundError(f"file not found: {path.name}")
-                    result = self._ingest_one_file(source_id, path)
+                    result = self._ingest_path(source_id, path, root, rules, missing=missing)
                 except Exception as exc:  # noqa: BLE001 -- one bad file must not abort the batch
                     result = FileIngestResult(path=path, status="failed", error=str(exc))
                 file_results.append(result)
                 emit(ProgressEvent("done", index, total, path, result))
-            self._index_manager.reconcile_source(
-                source_id,
-                current_chunk_ids=self._chunk_writer.current_chunk_ids_for_source(source_id),
-                current_version_ids=self._chunk_writer.ready_version_ids_for_source(source_id),
-            )
+            if any(r.status not in ("unchanged", "skipped") for r in file_results):
+                self._index_manager.reconcile_source(
+                    source_id,
+                    current_chunk_ids=self._chunk_writer.current_chunk_ids_for_source(source_id),
+                    current_version_ids=self._chunk_writer.ready_version_ids_for_source(source_id),
+                )
         except BaseException as exc:
             self._finalize_job(
                 job_id,
                 IngestionJobStatus.FAILED,
                 "interrupted" if not isinstance(exc, Exception) else str(exc),
-                {
-                    "files_processed": len(file_results),
-                    "files_failed": sum(1 for r in file_results if r.status == "failed"),
-                    "chunks_written": sum(r.chunks_written for r in file_results),
-                },
+                stats_for(file_results),
             )
             raise
 
@@ -948,16 +1021,7 @@ class IngestionPipeline:
             job_status = IngestionJobStatus.PARTIAL
         else:
             job_status = IngestionJobStatus.SUCCEEDED
-        self._finalize_job(
-            job_id,
-            job_status,
-            error,
-            {
-                "files_processed": files_processed,
-                "files_failed": files_failed,
-                "chunks_written": sum(r.chunks_written for r in file_results),
-            },
-        )
+        self._finalize_job(job_id, job_status, error, stats_for(file_results))
         return IngestionJobResult(
             source_id=source_id,
             job_id=job_id,

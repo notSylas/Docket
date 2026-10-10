@@ -15,6 +15,7 @@ import math
 import sys
 import threading
 import time
+from pathlib import Path
 from dataclasses import dataclass, replace
 from typing import Any, Callable
 
@@ -204,6 +205,13 @@ class TuiApp:
         self.health: Any = None
         self._health_running = False
         self._health_announced = False
+        # Automatic freshness (services/sources/freshness.py): changed paths
+        # wait here, per source, until nothing else holds the indexing slot
+        # and no question is active.
+        self.auto_refresh = bool(getattr(backend, "freshness_supported", False)) and backend.auto_refresh_enabled()
+        self._refresh_queue: dict[str, dict[Path, None]] = {}
+        self._fresh_started = False
+        self._catching_up = False
 
         self._seed()
         self.composer = Buffer(multiline=True, name="composer", on_text_changed=lambda _b: self._clear_hint())
@@ -493,10 +501,18 @@ class TuiApp:
         if j and j.active:
             label = "Stopping" if j.state == "stopping" else j.verb
             tail = " - paused while answering" if j.paused and j.state != "stopping" else ""
-            job_seg = [("class:muted", " · "), ("class:accent", f"{label} {j.source_name} {j.file_index}/{j.total}{tail}")]
-            job_short = [("class:muted", " · "), ("class:accent", f"{label} {j.file_index}/{j.total}{tail}")]
+            if j.kind == "refresh":
+                n = max(j.total, 1)
+                text = f"{'Stopping' if j.state == 'stopping' else 'Updating'} {n} file{'s' if n != 1 else ''}{tail}"
+                job_seg = [("class:muted", " · "), ("class:accent", text)]
+                job_short = job_seg
+            else:
+                job_seg = [("class:muted", " · "), ("class:accent", f"{label} {j.source_name} {j.file_index}/{j.total}{tail}")]
+                job_short = [("class:muted", " · "), ("class:accent", f"{label} {j.file_index}/{j.total}{tail}")]
         q_seg = [("class:muted", " · "), ("class:accent", q.stage)] if q and q.active else []
-        for extra in (job_seg + q_seg, job_seg, job_short, []):
+        fresh_text = self.freshness_footer_text()
+        fresh_seg = [("class:muted", " · "), ("class:muted", fresh_text)] if fresh_text else []
+        for extra in (job_seg + q_seg + fresh_seg, job_seg + q_seg, job_seg, job_short, []):
             if row_width(parts + extra) + cw(right) + 1 <= cols:
                 break
         parts = parts + extra
@@ -987,6 +1003,8 @@ class TuiApp:
         message says to try again when the answer arrives).
         """
         if self.indexing_active:
+            if self.job is not None and self.job.kind == "refresh":
+                return "Docket is updating changed files. Wait a moment, or press Ctrl+C to stop that."
             return "Another indexing job is running. Wait for it, or press Ctrl+C to stop it."
         if self.question_active:
             return "A question is being answered. Wait for the answer, then start indexing again."
@@ -1071,6 +1089,7 @@ class TuiApp:
         job.paused = False
         job.notices = outcome.notices
         self._job_finished(job)
+        self._drain_refresh()
 
     def add_folder(self, path: str) -> None:
         if self.question_active:  # refuse before registering anything
@@ -1157,9 +1176,14 @@ class TuiApp:
         if j.state == "done" and j.kind == "index":
             self.backend.job_finished(j.source_id, j.on_done)
         self.refresh_world()
+        if j.kind == "refresh":
+            self._refresh_finished(j)
+            return
         if j.kind != "index":
             self._maintenance_finished(j)
             return
+        if j.state in ("done", "stopped") and j.source_id:
+            self._watch_after_index(j.source_id)
         self.refresh_health()
         if j.state == "done":
             level = "attention" if j.failed else "info"
@@ -1699,6 +1723,200 @@ class TuiApp:
         self.notice("Saved. Documents in the folders you left out are being removed from the index.")
         self._begin_update([plan.source_id], frozenset({"prune"}))
 
+    # ---- automatic freshness ---------------------------------------------------
+    @property
+    def freshness_supported(self) -> bool:
+        return bool(getattr(self.backend, "freshness_supported", False)) and not self.backend.demo
+
+    def queued_changes(self) -> int:
+        return sum(len(q) for q in self._refresh_queue.values())
+
+    def freshness_footer_text(self) -> str:
+        """The footer's freshness segment: changes waiting behind a question
+        or another job, and the pause indicator ("" when there is nothing)."""
+        if not self.freshness_supported:
+            return ""
+        parts: list[str] = []
+        waiting = self.queued_changes()
+        if waiting:
+            parts.append(f"{waiting} change{'s' if waiting != 1 else ''} waiting")
+        if not self.auto_refresh or any(s.updates_paused for s in self.world.sources):
+            parts.append("Updates paused")
+        return " · ".join(parts)
+
+    def start_freshness(self) -> None:
+        """Launch catch-up per source on a worker (a quiet notice says what it
+        found), then start the watchers. Called once, when the window opens."""
+        if not self.freshness_supported or not self.auto_refresh or self._fresh_started or self._loop is None:
+            return
+        self._fresh_started = True
+        ids = [
+            s.id
+            for s in self.world.sources
+            if s.status in (fd.READY, fd.FAILED) and s.files and not s.updates_paused
+        ]
+        if not ids:
+            return
+        self._catching_up = True
+        backend = self.backend
+
+        def work() -> None:
+            results = []
+            for sid in ids:
+                if self._closed or not self.auto_refresh:
+                    break
+                try:
+                    results.append(backend.catch_up(sid))
+                except Exception:  # noqa: BLE001 -- a check must never be an error in the window
+                    continue
+            hints = {
+                r.source_id: (self._LARGE_HINT if r.incomplete else r.entries_scanned) for r in results
+            }
+            if not self._closed and self.auto_refresh:
+                try:
+                    backend.watch_sources(self._on_watch_batch, ids, hints)
+                except Exception:  # noqa: BLE001
+                    pass
+            self._post(lambda: self._catch_up_done(results))
+
+        self._spawn("catchup", work)
+
+    _LARGE_HINT = 10**9  # "treat as a very large tree": the monitor falls back to periodic scans
+
+    def _on_watch_batch(self, batch: Any) -> None:
+        """A watcher thread reports changed paths: queue them on the UI loop."""
+        self._post(lambda: self.enqueue_refresh(batch.source_id, list(batch.paths)))
+
+    def _catch_up_done(self, results: list[Any]) -> None:
+        self._catching_up = False
+        if not self.auto_refresh:
+            return
+        changed = 0
+        checked = 0
+        for r in results:
+            if getattr(r, "unreachable", False):
+                continue
+            checked += r.checked
+            if r.paths:
+                changed += len(r.paths)
+                self.enqueue_refresh(r.source_id, list(r.paths))
+        if changed:
+            noun = "document" if changed == 1 else "documents"
+            self.notice(f"Updating {changed} changed {noun}")
+        elif checked:
+            noun = "document" if checked == 1 else "documents"
+            self.notice(f"Checked {checked} {noun} - up to date")
+
+    def enqueue_refresh(self, source_id: str, paths: list[Path]) -> None:
+        """Queue changed paths for a source (merged with what already waits)
+        and start them as soon as the slots allow."""
+        if not self.auto_refresh or not paths:
+            return
+        src = self.world.find(source_id)
+        if src is not None and src.updates_paused:
+            return
+        q = self._refresh_queue.setdefault(source_id, {})
+        for p in paths:
+            q[Path(p)] = None
+        self.invalidate()
+        self._drain_refresh()
+
+    def _drain_refresh(self) -> None:
+        """Start the next queued batch when nothing holds either slot. A
+        question always goes first: while one is active (or indexing is
+        blocked) the batch simply waits."""
+        if not self._refresh_queue or not self.auto_refresh or self._closed or self._loop is None:
+            return
+        if self.indexing_active or self.question_active or self.blocked:
+            return
+        source_id = next(iter(self._refresh_queue))
+        paths = list(self._refresh_queue.pop(source_id))
+        src = self.world.find(source_id)
+        if src is None or src.updates_paused or not paths:
+            return self._drain_refresh()
+        backend = self.backend
+
+        def runner(_sid: str, on_progress: Callable[[IndexProgress], None], should_stop: Callable[[], bool]) -> IndexOutcome:
+            return backend.refresh_paths(source_id, paths, on_progress, should_stop)
+
+        self.start_job(src, "Updating", "", show_overlay=False, runner=runner, kind="refresh")
+        if self.job is not None and self.job.kind == "refresh":
+            self.job.total = len(paths)
+        self.invalidate()
+
+    def _refresh_finished(self, j: IndexJob) -> None:
+        """A background update ended: say so quietly, and only loudly when
+        something could not be read."""
+        if j.state == "failed":
+            self.notice(f"Could not update {j.source_name}: {j.reason or 'something went wrong.'}", "attention")
+        elif j.state == "stopped":
+            self.notice("Update stopped. Changes not yet read are picked up the next time Docket checks.", "attention")
+        else:
+            for line in j.notices:
+                self.notice(line)
+            if j.failed:
+                noun = "file" if j.failed == 1 else "files"
+                self.notice(f"{j.failed} changed {noun} in {j.source_name} could not be read. Open Sources (F2) for the reason.", "attention")
+        if j.failed:
+            self.health = None
+            self.refresh_health()
+
+    def _watch_after_index(self, source_id: str) -> None:
+        """A folder that has just been indexed is watched from now on."""
+        if not self.freshness_supported or not self.auto_refresh or self._closed:
+            return
+        try:
+            self.backend.watch_sources(self._on_watch_batch, [source_id])
+        except Exception:  # noqa: BLE001
+            pass
+
+    def toggle_updates(self, src: SourceView) -> None:
+        """Pause or resume automatic updates for one folder (persisted)."""
+        if not self.freshness_supported:
+            self.notice("Automatic updates are not available here.", "attention")
+            return
+        paused = src.updates_paused
+        try:
+            if paused:
+                self.backend.resume_updates(src.id)
+            else:
+                self.backend.pause_updates(src.id)
+                self._refresh_queue.pop(src.id, None)
+        except BackendError as exc:
+            self.notice(str(exc), "error")
+            return
+        self.refresh_world()
+        if paused:
+            self.notice(f"Updates for {src.name} are on again. Docket will catch up on what changed.")
+        else:
+            self.notice(f"Updates for {src.name} are paused. Nothing changes in its index until you resume.")
+
+    def set_auto_refresh(self, enabled: bool) -> None:
+        """The global switch ("Keep my library up to date automatically"),
+        saved in preferences.json."""
+        try:
+            self.backend.set_auto_refresh(enabled)
+        except OSError:
+            self.notice("The setting could not be saved, so it applies to this session only.", "attention")
+        self.auto_refresh = enabled
+        if enabled:
+            self._fresh_started = False
+            self.notice("Docket will keep your library up to date while it is open.")
+            self.start_freshness()
+        else:
+            self._refresh_queue.clear()
+            self._stop_freshness()
+            self.notice("Automatic updates are off. Use Refresh or Update now to read changes yourself.")
+
+    def _stop_freshness(self) -> None:
+        self._fresh_started = False
+        if not self.freshness_supported:
+            return
+        try:
+            self.backend.stop_watching()
+        except Exception:  # noqa: BLE001 -- closing must never raise
+            pass
+
     # ------------------------------------------------------------------
     # state changes used by overlays
     # ------------------------------------------------------------------
@@ -1728,7 +1946,14 @@ class TuiApp:
         self.invalidate()
 
     def settings_values(self) -> dict[str, Any]:
-        return {"model": self.model, "mode": self.mode, "thinking": self.thinking, "theme": self.theme, "history": self.history_enabled}
+        return {
+            "model": self.model,
+            "mode": self.mode,
+            "thinking": self.thinking,
+            "theme": self.theme,
+            "history": self.history_enabled,
+            "auto_refresh": self.auto_refresh,
+        }
 
     def apply_settings(self, values: dict[str, Any]) -> None:
         self.model = values["model"]
@@ -1737,6 +1962,8 @@ class TuiApp:
         self.set_theme(values["theme"])
         if values["mode"] != self.mode:
             self.set_mode(values["mode"])
+        if values.get("auto_refresh", self.auto_refresh) != self.auto_refresh:
+            self.set_auto_refresh(bool(values["auto_refresh"]))
         self.notice(self.backend.settings_note)
 
     def palette_entries(self) -> list[ov.Entry]:
@@ -1759,10 +1986,16 @@ class TuiApp:
         if self._pending_start is not None:
             self._run_pending_start()
         self.refresh_health()
+        self.start_freshness()
 
     async def _ticker(self) -> None:
         while True:
             await asyncio.sleep(self.tick_interval)
+            if self._refresh_queue:
+                try:
+                    self._drain_refresh()
+                except Exception as exc:  # noqa: BLE001
+                    self._internal_error(exc)
             if self.reduced_motion:
                 continue
             if self.busy:
@@ -1773,12 +2006,14 @@ class TuiApp:
             await self.application.run_async(pre_run=self._start_ticker, handle_sigint=False)
         finally:
             self._closed = True
+            self._stop_freshness()
 
     def run(self) -> None:
         try:
             self.application.run(pre_run=self._start_ticker)
         finally:
             self._closed = True
+            self._stop_freshness()
 
 
 class DemoUI(TuiApp):

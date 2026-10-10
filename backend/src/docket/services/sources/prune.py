@@ -35,6 +35,20 @@ from docket.services.sources.manager import SourceNotFoundError
 _PRUNABLE = (VersionStatus.READY, VersionStatus.FAILED)
 
 
+def supersede_and_deindex(
+    evidence_manager: EvidenceManager,
+    index_manager: IndexManager | None,
+    version_id: str,
+) -> None:
+    """The one "this file is no longer served" transition: the version moves
+    to SUPERSEDED and its FTS/vector/page index entries are removed. Shared
+    by prune (rules now ignore the file) and freshness (the file was deleted
+    or renamed away); rows and blobs stay for the usual reference-counted GC."""
+    evidence_manager.mark_version_status(version_id, VersionStatus.SUPERSEDED)
+    if index_manager is not None:
+        index_manager.delete_version(version_id)
+
+
 def _is_invalid_file(path: Path) -> bool:
     """True when the file exists but its bytes contradict its extension --
     discovery now skips these, so an old FAILED version of one is dead weight."""
@@ -114,9 +128,7 @@ class SourcePruneService:
         """Supersede and de-index exactly these candidates (as found by
         `find`); "Ignore this file" uses it to touch only that one file."""
         for candidate in candidates:
-            self._evidence_manager.mark_version_status(
-                candidate.version_id, VersionStatus.SUPERSEDED
+            supersede_and_deindex(
+                self._evidence_manager, self._index_manager, candidate.version_id
             )
-            if self._index_manager is not None:
-                self._index_manager.delete_version(candidate.version_id)
         return candidates
