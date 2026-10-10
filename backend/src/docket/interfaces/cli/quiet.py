@@ -197,7 +197,8 @@ def display_path(path: Path, root: Path | None) -> str:
 def ignore_notices(result: object, prune_service: object, source_id: str) -> list[str]:
     """Dim one-liners after an ingest: what discovery skipped (folders and
     not-real-document files), and whether already-indexed files now sit in
-    ignored folders (so `prune` applies)."""
+    ignored folders (a plain statement; the update removes them, nothing here
+    names a command)."""
     from docket.services.ingestion.ignore import invalid_summary, skipped_summary
 
     skipped = int(getattr(result, "files_skipped", 0) or 0)
@@ -214,10 +215,28 @@ def ignore_notices(result: object, prune_service: object, source_id: str) -> lis
     if count > 0:
         noun = "file is" if count == 1 else "files are"
         notices.append(
-            f"{count} indexed {noun} now in ignored folders; "
-            f"run `docket sources prune {source_id}` to remove them."
+            f"{count} indexed {noun} now in ignored folders and will be removed "
+            "from the index in the next update."
         )
     return notices
+
+
+def stale_recipe_notice(count: int) -> str:
+    """Plain statement for files prepared with an older chunk recipe (no
+    command name: the update step handles it)."""
+    noun = "file was" if count == 1 else "files were"
+    return (
+        f"{count} already-read {noun} prepared with an older recipe and will be "
+        "re-prepared in the next update."
+    )
+
+
+def index_format_notice() -> str:
+    """Plain statement for an index that uses an older text format."""
+    return (
+        "The search index still uses an older text format; it will be rebuilt "
+        "in the next update."
+    )
 
 
 class FailureReporter:

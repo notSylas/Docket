@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -31,7 +32,7 @@ from sqlalchemy.orm import sessionmaker
 from docket.core.config import Settings
 from docket.core.config import settings as _default_settings
 from docket.core.db.models import AuthorizedSource, Source, SourceStatus, Workspace
-from docket.services.ingestion.ignore import dump_rules_json
+from docket.services.ingestion.ignore import dump_rules_json, parse_rules_json
 from docket.services.sources.resolve import display_names, resolve_source
 
 DEFAULT_WORKSPACE_NAME = "default"
@@ -71,6 +72,18 @@ class SourceCoveredError(ValueError):
 def _glob_escape(text: str) -> str:
     """Escape fnmatch metacharacters so a literal folder name matches itself."""
     return re.sub(r"([*?\[])", r"[\1]", text)
+
+
+def anchored_subfolder_name(pattern: str) -> str | None:
+    """The folder name of an anchored top-level exclude (`/name/`, as written
+    by `narrow_source` and the folder preview), or None for any other rule."""
+    p = pattern.strip()
+    if len(p) < 3 or not (p.startswith("/") and p.endswith("/")):
+        return None
+    inner = p[1:-1]
+    if "/" in inner:
+        return None
+    return re.sub(r"\[([*?\[])\]", r"\1", inner)
 
 
 def _is_within(child: Path, parent: Path) -> bool:
@@ -235,6 +248,59 @@ class SourceManager:
             session.commit()
             session.refresh(source)
             return source
+
+    def add_ignored_file(self, source_id: str, relative_path: str) -> Source:
+        """Append `relative_path` (relative to the source root) to the
+        source's `ignored_files` rule; a path already there is a no-op. The
+        file on disk is never touched."""
+        rel = relative_path.replace("\\", "/").lstrip("/")
+        if not rel:
+            raise ValueError("a file path is required")
+        rules = parse_rules_json(self.get_source(source_id).rules_json)
+        if rel not in rules["ignored_files"]:
+            rules["ignored_files"].append(rel)
+        return self.set_rules(source_id, rules)
+
+    def narrow_source(
+        self,
+        source_id: str,
+        keep_subfolders: Iterable[str],
+        *,
+        all_subfolders: Iterable[str] | None = None,
+    ) -> Source:
+        """Limit a source to some of its top-level subfolders.
+
+        Every top-level subfolder not in `keep_subfolders` gets an anchored
+        exclude (`/name/`, the leading slash pins it to the source root so a
+        nested folder of the same name is unaffected); a kept subfolder that
+        an earlier narrowing had excluded is let back in. Documents directly
+        in the root are always kept. `all_subfolders` is the universe to
+        choose from; by default the root's immediate non-hidden directories.
+        Other rules (include, ignored files, hand-written excludes) are kept.
+        Nothing is re-parsed here: run a prune afterwards to drop what is no
+        longer read."""
+        source = self.get_source(source_id)
+        keep = {k.strip("/") for k in keep_subfolders if k and k.strip("/")}
+        if all_subfolders is None:
+            try:
+                with os.scandir(source.path) as it:
+                    universe = sorted(
+                        e.name for e in it if e.is_dir(follow_symlinks=False) and not e.name.startswith(".")
+                    )
+            except OSError as exc:
+                raise ValueError(f"cannot read {source.path}: {exc}") from exc
+        else:
+            universe = sorted({n.strip("/") for n in all_subfolders if n and n.strip("/")})
+        rules = parse_rules_json(source.rules_json)
+        excludes: list[str] = list(rules["exclude"])
+        for name in universe:
+            pattern = "/" + _glob_escape(name) + "/"
+            if name in keep:
+                excludes = [e for e in excludes if e != pattern]
+            elif pattern not in excludes:
+                excludes.append(pattern)
+        rules["exclude"] = excludes
+        return self.set_rules(source_id, rules)
 
     def list_sources(self, *, workspace_id: str | None = None) -> list[Source]:
         with self._session_factory() as session:

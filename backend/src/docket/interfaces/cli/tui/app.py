@@ -200,6 +200,10 @@ class TuiApp:
         self._gate = YieldGate()  # indexing yields to a question between files
         self._readiness_running = False
         self._announced_blocked = False
+        # Library health (a MaintenancePlan, or None while unknown).
+        self.health: Any = None
+        self._health_running = False
+        self._health_announced = False
 
         self._seed()
         self.composer = Buffer(multiline=True, name="composer", on_text_changed=lambda _b: self._clear_hint())
@@ -988,20 +992,35 @@ class TuiApp:
             return "A question is being answered. Wait for the answer, then start indexing again."
         return ""
 
-    def start_job(self, src: SourceView, verb: str, on_done: str, show_overlay: bool = True) -> None:
+    def start_job(
+        self,
+        src: SourceView,
+        verb: str,
+        on_done: str,
+        show_overlay: bool = True,
+        runner: Callable[[str, Callable[[IndexProgress], None], Callable[[], bool]], IndexOutcome] | None = None,
+        kind: str = "index",
+    ) -> None:
         why = self._job_refusal()
         if why:
             self.notice(why, "attention")
             return
         if self.backend.demo:
-            self.job = IndexJob(src.id, src.name, verb, total=max(len(src.files), 1), on_done=on_done)
+            self.job = IndexJob(src.id, src.name, verb, total=max(len(src.files), 1), on_done=on_done, kind=kind)
         else:
-            self._start_real_job(src, verb, on_done)
+            self._start_real_job(src, verb, on_done, runner, kind)
         if show_overlay:
             self.push(ov.IndexingOverlay(self))
 
-    def _start_real_job(self, src: SourceView, verb: str, on_done: str) -> None:
-        job = IndexJob(src.id, src.name, verb, total=0, on_done=on_done, real=True, started=time.monotonic())
+    def _start_real_job(
+        self,
+        src: SourceView,
+        verb: str,
+        on_done: str,
+        runner: Callable[..., IndexOutcome] | None = None,
+        kind: str = "index",
+    ) -> None:
+        job = IndexJob(src.id, src.name, verb, total=0, on_done=on_done, real=True, started=time.monotonic(), kind=kind)
         self.job = job
         stop = threading.Event()
         self._job_stop = stop
@@ -1021,7 +1040,8 @@ class TuiApp:
         def work() -> None:
             try:
                 with quiet_ingest():
-                    outcome = self.backend.run_index(src.id, on_progress, stop.is_set)
+                    run = runner or self.backend.run_index
+                    outcome = run(src.id, on_progress, stop.is_set)
             except Exception as exc:  # noqa: BLE001 -- surfaced as a failed job
                 outcome = IndexOutcome("failed", IndexProgress(), reason=describe_error(exc))
             self._post(lambda: self._real_job_done(job, outcome))
@@ -1036,6 +1056,7 @@ class TuiApp:
         if job is not self.job or not job.active:
             return
         job.file_index, job.total, job.current_name = p.index, p.total, p.current
+        job.stage_text = p.stage
         job.indexed, job.unchanged, job.failed = p.indexed, p.unchanged, p.failed
         job.failures = list(p.failures)
 
@@ -1133,9 +1154,13 @@ class TuiApp:
         self.invalidate()
 
     def _job_finished(self, j: IndexJob) -> None:
-        if j.state == "done":
+        if j.state == "done" and j.kind == "index":
             self.backend.job_finished(j.source_id, j.on_done)
         self.refresh_world()
+        if j.kind != "index":
+            self._maintenance_finished(j)
+            return
+        self.refresh_health()
         if j.state == "done":
             level = "attention" if j.failed else "info"
             self.notice(f"Indexing {j.source_name} finished: {j.indexed} indexed, {j.unchanged} unchanged, {j.failed} failed.", level)
@@ -1242,7 +1267,7 @@ class TuiApp:
         ``total`` is 0 until discovery has finished.
         """
         j = self.job
-        if not (j and j.active):
+        if not (j and j.active) or j.kind != "index":
             return None
         if self.scope.kind != "all" and self.scope.source_id != j.source_id:
             return None
@@ -1483,15 +1508,196 @@ class TuiApp:
         self.push(ov.DetailsOverlay(self, pos))
 
     def cmd_rechunk(self, arg: str) -> None:
-        self.notice(self._maintenance_note("Updating stored chunks"), "attention")
+        self._maintenance_command("Updating stored chunks")
 
     def cmd_reindex(self, arg: str) -> None:
-        self.notice(self._maintenance_note("Rebuilding the index"), "attention")
+        self._maintenance_command("Rebuilding the index")
 
-    def _maintenance_note(self, what: str) -> str:
+    def cmd_update(self, arg: str) -> None:
+        self._maintenance_command("Updating the library")
+
+    def _maintenance_command(self, what: str) -> None:
         if self.backend.demo:
-            return f"{what} arrives with the maintenance stage; it is not wired in this prototype."
-        return f"{what} is not available in this screen yet. Use the command line: docket ingest --all --rechunk, or docket reindex."
+            self.notice(f"{what} arrives with the maintenance stage; it is not wired in this prototype.", "attention")
+        else:
+            self.update_now()
+
+    # ---- library health and self-maintenance --------------------------------
+    def health_line(self) -> str:
+        """One plain line: 'Everything is up to date' / '3 updates available (about 2 minutes)'."""
+        if self.backend.demo or not self.world.sources:
+            return ""
+        j = self.job
+        if j and j.active and j.kind == "update":
+            return "Updating the library..."
+        if self.health is not None:
+            return self.health.headline
+        return "Checking..." if self._health_running else ""
+
+    def refresh_health(self) -> None:
+        """Work out what is out of date, on a worker (the first check can load
+        the document parser). Skipped while a job runs; the job's end asks again."""
+        if self.backend.demo or self._health_running or self.indexing_active or self._closed:
+            return
+        if self._loop is None:
+            return
+        self._health_running = True
+
+        def work() -> None:
+            try:
+                plan = self.backend.maintenance_plan()
+            except Exception:  # noqa: BLE001 -- a health check must never be an error
+                plan = None
+            self._post(lambda: self._health_arrived(plan))
+
+        self._spawn("health", work)
+
+    def _health_arrived(self, plan: Any) -> None:
+        self._health_running = False
+        self.health = plan
+        if plan is None or plan.empty:
+            self._health_announced = False
+            return
+        if not self._health_announced and not self.indexing_active:
+            self._health_announced = True
+            self.notice(f"{plan.headline}. Open Sources (F2) and choose Update now.", "attention")
+
+    def update_now(self) -> None:
+        """Run the maintenance plan. Quick steps just run; slower ones ask once
+        with the estimate. The run is an indexing-slot job, so it pauses
+        between files while a question is answered."""
+        why = self._job_refusal()
+        if why:
+            self.notice(why, "attention")
+            return
+        plan = self.health
+        if plan is None:
+            self.notice("Docket is still checking what needs updating. Try again in a moment.", "attention")
+            self.refresh_health()
+            return
+        if plan.empty:
+            self.notice("Everything is up to date.")
+            return
+        costly = plan.costly_steps
+        if not costly:
+            self._begin_update()
+            return
+        lines = " ".join(s.label for s in plan.steps)
+        self.push(
+            ov.ConfirmOverlay(
+                self,
+                "Update the library?",
+                f"{plan.headline}. {lines} Your original files are never changed.",
+                [("Update now", self._begin_update), ("Later", None)],
+            )
+        )
+
+    def _begin_update(self, source_ids: list[str] | None = None, kinds: frozenset[str] | None = None) -> None:
+        why = self._job_refusal()
+        if why:
+            self.notice(why, "attention")
+            return
+        src = SourceView("library-update", "the library", "", fd.READY, [])
+
+        def runner(_sid: str, on_progress: Callable[[IndexProgress], None], should_stop: Callable[[], bool]) -> IndexOutcome:
+            return self.backend.run_maintenance(
+                None, on_progress, should_stop, source_ids=source_ids, kinds=kinds
+            )
+
+        self.start_job(src, "Updating", "", runner=runner, kind="update")
+
+    def _maintenance_finished(self, j: IndexJob) -> None:
+        """End of an update or single-file retry: say what happened, then look again."""
+        if j.state == "failed":
+            self.notice(f"The update did not finish: {j.reason or 'something went wrong.'}", "error")
+        elif j.state == "stopped":
+            self.notice("Update stopped. What finished was kept; the rest is still listed.", "attention")
+        for line in j.notices:
+            self.notice(line, "attention" if j.failed else "info")
+        self._health_announced = False
+        self.health = None
+        self.refresh_health()
+
+    # ---- failed files: retry / ignore ---------------------------------------
+    def retry_file(self, src: SourceView, rel_path: str) -> None:
+        if self.backend.demo:
+            self.notice(f"Demo: {rel_path} would be read again.")
+            return
+        why = self._job_refusal()
+        if why:
+            self.notice(why, "attention")
+            return
+
+        def runner(_sid: str, on_progress: Callable[[IndexProgress], None], should_stop: Callable[[], bool]) -> IndexOutcome:
+            return self.backend.retry_file(src.id, rel_path, on_progress, should_stop)
+
+        self.start_job(src, "Retrying", "", show_overlay=False, runner=runner, kind="retry")
+        self.notice(f"Reading {rel_path} again.")
+
+    def ignore_file(self, src: SourceView, rel_path: str) -> None:
+        if self.busy:
+            self.notice(self._job_refusal() or "Wait for the current work to finish, then ignore the file.", "attention")
+            return
+        try:
+            self.backend.ignore_file(src.id, rel_path)
+        except BackendError as exc:
+            self.notice(str(exc), "error")
+            return
+        self.refresh_world()
+        self.notice(
+            f"{rel_path} will be left out from now on. The file itself is untouched.",
+        )
+        self.health = None
+        self.refresh_health()
+
+    # ---- narrow an existing broad source ------------------------------------
+    def begin_narrow(self, src: SourceView) -> None:
+        if self.backend.demo:
+            self.notice("Narrowing is not available in the demo.", "attention")
+            return
+        why = self._job_refusal()
+        if why:
+            self.notice(why, "attention")
+            return
+        self.notice(f"Looking through {src.name}...")
+
+        def work() -> None:
+            try:
+                plan = self.backend.narrow_plan(src.id)
+                err = ""
+            except BackendError as exc:
+                plan, err = None, str(exc)
+            except Exception as exc:  # noqa: BLE001
+                plan, err = None, describe_error(exc)
+            self._post(lambda: self._narrow_ready(src, plan, err))
+
+        self._spawn("narrow", work)
+
+    def _narrow_ready(self, src: SourceView, plan: Any, err: str) -> None:
+        if err or plan is None:
+            self.notice(err or "Nothing to narrow.", "attention")
+            return
+        if plan.reason:
+            self.notice(plan.reason)
+            return
+        self.push(ov.FolderPreviewOverlay(self, plan.plan, narrow=plan))
+
+    def narrow_confirmed(self, plan: Any, kept: tuple[str, ...]) -> None:
+        """Save the choice as rules (nothing is re-parsed), then remove what is
+        no longer read from the index on the indexing slot."""
+        why = self._job_refusal()
+        if why:
+            self.notice(why, "attention")
+            return
+        universe = tuple(n for n, _c in plan.plan.scan.subfolders)
+        try:
+            self.backend.narrow_source(plan.source_id, tuple(kept), universe)
+        except BackendError as exc:
+            self.notice(str(exc), "error")
+            return
+        self.refresh_world()
+        self.notice("Saved. Documents in the folders you left out are being removed from the index.")
+        self._begin_update([plan.source_id], frozenset({"prune"}))
 
     # ------------------------------------------------------------------
     # state changes used by overlays
@@ -1552,6 +1758,7 @@ class TuiApp:
             self.refresh_readiness()
         if self._pending_start is not None:
             self._run_pending_start()
+        self.refresh_health()
 
     async def _ticker(self) -> None:
         while True:

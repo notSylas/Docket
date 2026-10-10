@@ -108,7 +108,11 @@ class SourcePruneService:
 
     def apply(self, source_id: str) -> list[PruneCandidate]:
         """Supersede and de-index every candidate; returns what was pruned."""
-        candidates = self.find(source_id)
+        return self.apply_candidates(self.find(source_id))
+
+    def apply_candidates(self, candidates: list[PruneCandidate]) -> list[PruneCandidate]:
+        """Supersede and de-index exactly these candidates (as found by
+        `find`); "Ignore this file" uses it to touch only that one file."""
         for candidate in candidates:
             self._evidence_manager.mark_version_status(
                 candidate.version_id, VersionStatus.SUPERSEDED
