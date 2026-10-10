@@ -105,7 +105,7 @@ def _first_line(text: object) -> str:
 
 class RealBackend:
     demo = False
-    scope_enforced = False  # QueryScope does not exist yet; see Upgrade/16
+    scope_enforced = True  # the chosen scope is passed to QueryService.ask as a QueryScope
     can_open_original = False  # needs original-file verification (deferred)
     supported_formats = _FORMATS
     thinking_levels = ("Fast", "Balanced", "Thorough")
@@ -543,7 +543,11 @@ class RealBackend:
         started = time.perf_counter()
         try:
             service = self._factory(ctx, table)
-            result = service.ask(request.question, mode=mode, history=history)
+            query_scope = self._query_scope(request.scope, scope_label)
+            if query_scope is None:
+                result = service.ask(request.question, mode=mode, history=history)
+            else:
+                result = service.ask(request.question, mode=mode, history=history, scope=query_scope)
         except Exception as exc:  # noqa: BLE001
             return AskOutcome(error=describe_error(exc, self.default_model))
         elapsed = time.perf_counter() - started
@@ -561,20 +565,53 @@ class RealBackend:
             warnings=tuple(str(w) for w in (result.validation_warnings or ())),
             compute=self._compute_text(result),
             abstained=bool(result.abstained),
-            abstain_reason="The retrieved evidence did not support an answer." if result.abstained else "",
+            abstain_reason=self._abstain_reason(result),
             status="No answer" if result.abstained else "Answered; citations are not verified",
             model=self.default_model,
             searched=-1,  # the query service does not report how many passages it searched
         )
         return AskOutcome(answer=answer, history_answer=result.answer)
 
+    def _query_scope(self, chosen: Any, label: str) -> Any:
+        """The TUI `Scope` as a `QueryScope`; None (search everything, exactly
+        as before) for "all". A single file is a folder scope on its own path
+        (containment is component-wise, so it matches only that file)."""
+        kind = getattr(chosen, "kind", "all")
+        if chosen is None or kind == "all":
+            return None
+        from docket.services.query.scope import QueryScope
+
+        if kind == "source":
+            return QueryScope.for_source(chosen.source_id, label=label)
+        with self._ctx.session_factory() as session:
+            source = session.get(Source, chosen.source_id)
+            root = source.path if source is not None else None
+        if root is None:
+            # The source is gone: an explicit scope that matches nothing.
+            return QueryScope.for_source(chosen.source_id, label=label)
+        return QueryScope.for_folder(str(Path(root) / chosen.file_path), label=label)
+
+    @staticmethod
+    def _abstain_reason(result: Any) -> str:
+        if not result.abstained:
+            return ""
+        if getattr(result, "abstention_reason", None) and getattr(result, "scope_label", None):
+            return str(result.answer)
+        return "The retrieved evidence did not support an answer."
+
     # -- answer details ------------------------------------------------------
     @staticmethod
     def _scope_label(scope_label: str, result: Any) -> str:
+        label = getattr(result, "scope_label", None) or scope_label
+        count = getattr(result, "scope_file_count", None)
+        if getattr(result, "scope_label", None) and count is not None:
+            label = f"{label} ({count} document{'s' if count != 1 else ''})"
         named = getattr(result, "scoped_to", None)
         if named:
-            return "Named in the question: " + ", ".join(named)
-        return scope_label
+            return "Named in the question: " + ", ".join(named) + (
+                f", within {label}" if getattr(result, "scope_label", None) else ""
+            )
+        return label
 
     @staticmethod
     def _rewrite_text(question: str, result: Any) -> str:

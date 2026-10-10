@@ -272,6 +272,10 @@ class RunRecord(BaseModel):
     # Deterministic compute stage (flag compute_stage_enabled): plan, derivation
     # and fallback reason; None when the stage was off or did not apply.
     compute: dict[str, Any] | None = None
+    # Query scope the question ran inside (None = unscoped), and how many
+    # documents it held; absent in run files written before scoping existed.
+    scope_label: str | None = None
+    scope_file_count: int | None = None
     agent_trace: list[dict[str, Any]] = Field(default_factory=list)
     model_calls: list[dict[str, Any]] = Field(default_factory=list)
     gold_fingerprint: str | None = None

@@ -82,23 +82,43 @@ class QuerySignals:
 
 
 _ELIGIBLE_FILES_SQL = text(
-    "SELECT evidence_versions.id, evidence_versions.file_path, sources.path "
+    "SELECT evidence_versions.id, evidence_versions.file_path, sources.path, sources.id "
     "FROM evidence_versions JOIN sources ON sources.id = evidence_versions.source_id "
     "WHERE sources.status = :active_status AND evidence_versions.status = :ready_status "
     "ORDER BY evidence_versions.id"
 )
 
 
-def load_eligible_files(engine: Engine) -> list[EligibleFile]:
+@dataclass(frozen=True)
+class EligibleVersion:
+    """One eligible version with where it lives: `path` is the version's own
+    file, else the source path (the same fallback the resolver uses)."""
+
+    version_id: str
+    path: str
+    source_id: str
+
+
+def load_eligible_versions(engine: Engine) -> list[EligibleVersion]:
     """READY versions of ACTIVE sources (revoked and non-READY files are never
-    candidates), named like the resolver names them: the version's own file,
-    else the source path."""
+    candidates). The single eligibility query: `load_eligible_files` and the
+    query scope (`docket.services.query.scope`) both read it."""
     with engine.connect() as conn:
         rows = conn.execute(
             _ELIGIBLE_FILES_SQL,
             {"active_status": SourceStatus.ACTIVE.name, "ready_status": VersionStatus.READY.name},
         ).all()
-    return [EligibleFile(name=Path(fp or sp).name, version_id=vid) for vid, fp, sp in rows]
+    return [EligibleVersion(vid, fp or sp, source_id) for vid, fp, sp, source_id in rows]
+
+
+def load_eligible_files(engine: Engine) -> list[EligibleFile]:
+    """READY versions of ACTIVE sources (revoked and non-READY files are never
+    candidates), named like the resolver names them: the version's own file,
+    else the source path."""
+    return [
+        EligibleFile(name=Path(v.path).name, version_id=v.version_id)
+        for v in load_eligible_versions(engine)
+    ]
 
 
 def _stem_tokens(stem: str) -> list[str]:

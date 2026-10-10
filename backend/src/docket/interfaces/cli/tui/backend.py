@@ -24,7 +24,7 @@ which receive immutable snapshots.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Protocol
+from typing import Any, Callable, Protocol
 
 from docket.interfaces.cli.tui import fake_data as fd
 
@@ -102,6 +102,7 @@ class AskRequest:
     question: str
     mode: str  # a key from backend.modes
     history: tuple[Turn, ...] = ()
+    scope: Any = None  # the chosen `Scope` (all | source | folder | file); None = everything
 
 
 @dataclass(frozen=True)

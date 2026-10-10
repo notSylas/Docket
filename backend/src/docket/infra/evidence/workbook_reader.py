@@ -36,7 +36,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from openpyxl.utils import column_index_from_string, get_column_letter
 from sqlalchemy import select
@@ -400,9 +400,18 @@ class WorkbookReader:
     """See the module docstring. `session_factory` and `store` are the app's
     existing database sessions and content-addressed blob store."""
 
-    def __init__(self, *, session_factory: sessionmaker, store: ContentAddressedStore):
+    def __init__(
+        self,
+        *,
+        session_factory: sessionmaker,
+        store: ContentAddressedStore,
+        boundary_provider: Callable[[], list[str] | None] | None = None,
+    ):
         self._session_factory = session_factory
         self._store = store
+        # Outer query-scope boundary (evidence-version ids) or None; a chunk
+        # whose version is outside it is refused like an unknown chunk.
+        self._boundary_provider = boundary_provider
         self._bundles: OrderedDict[tuple[str, str], _Bundle] = OrderedDict()
 
     # -- lookup ---------------------------------------------------------------
@@ -426,6 +435,11 @@ class WorkbookReader:
                 "revoked, or from a superseded version); search again"
             )
         chunk, source, version, unit = row
+        boundary = self._boundary_provider() if self._boundary_provider else None
+        if boundary is not None and version.id not in set(boundary):
+            raise WorkbookReadError(
+                f"chunk is outside the selected search scope: {chunk_id}; search again"
+            )
         try:
             locator = json.loads(unit.locator_json) if unit.locator_json else {}
         except ValueError:

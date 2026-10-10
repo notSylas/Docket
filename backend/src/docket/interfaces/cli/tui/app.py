@@ -988,7 +988,7 @@ class TuiApp:
 
     def _finish_query(self, q: QueryOp, outcome: AskOutcome | None = None) -> None:
         if outcome is None:  # the demo: answer synchronously when its simulated stages end
-            outcome = self.backend.ask(AskRequest(q.question, self.mode, self._history_for(q)), lambda _s: None, q.scope_label, q.mode_label)
+            outcome = self.backend.ask(AskRequest(q.question, self.mode, self._history_for(q), q.scope), lambda _s: None, q.scope_label, q.mode_label)
         if q is not self.query_op and not self.backend.demo:
             return
         cancelled = q.state == "stopping" and q.real
@@ -1031,6 +1031,7 @@ class TuiApp:
         op = QueryOp(
             question,
             scope_label=self.scope_label(),
+            scope=self.scope,
             mode_label=self.mode_label(),
             real=real,
             started=time.monotonic() if real else None,
@@ -1049,7 +1050,7 @@ class TuiApp:
         return True
 
     def _start_real_ask(self, op: QueryOp) -> None:
-        request = AskRequest(op.question, self.mode, self._history_for(op))
+        request = AskRequest(op.question, self.mode, self._history_for(op), op.scope)
 
         def on_stage(label: str) -> None:
             self._post(lambda: self._set_stage(op, label))
