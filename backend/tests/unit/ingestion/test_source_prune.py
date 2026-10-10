@@ -108,7 +108,14 @@ def test_hint_when_nothing_skipped_but_index_has_ignored_files(indexed):
         "1 indexed file is now in ignored folders; "
         f"run `docket sources prune {indexed.source.id}` to remove them."
     ]
-    # Nothing to hint about when discovery already skipped something.
+    # Skipped files AND already-indexed ignored files: both lines are shown.
+    both = ignore_notices(SimpleNamespace(files_skipped=3), indexed.prune, indexed.source.id)
+    assert both == [
+        "Skipped 3 files in ignored folders (virtualenvs, site-packages, hidden)",
+        "1 indexed file is now in ignored folders; "
+        f"run `docket sources prune {indexed.source.id}` to remove them.",
+    ]
+    # Skipped files and nothing indexed there: only the skipped line.
     assert ignore_notices(SimpleNamespace(files_skipped=3), indexed.prune, "x") == [
         "Skipped 3 files in ignored folders (virtualenvs, site-packages, hidden)"
     ]

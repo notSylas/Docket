@@ -89,25 +89,26 @@ def display_path(path: Path, root: Path | None) -> str:
 
 
 def ignore_notices(result: object, prune_service: object, source_id: str) -> list[str]:
-    """Dim one-liners after an ingest: what discovery skipped, or (when it
-    skipped nothing) that already-indexed files are now in ignored folders."""
+    """Dim one-liners after an ingest: what discovery skipped, and whether
+    already-indexed files now sit in ignored folders (so `prune` applies)."""
     from docket.services.ingestion.ignore import skipped_summary
 
     skipped = int(getattr(result, "files_skipped", 0) or 0)
+    notices: list[str] = []
     line = skipped_summary(skipped)
     if line is not None:
-        return [line]
+        notices.append(line)
     try:
         count = int(prune_service.count(source_id))  # type: ignore[attr-defined]
     except Exception:  # noqa: BLE001 -- a hint must never break ingestion output
-        return []
+        return notices
     if count > 0:
         noun = "file is" if count == 1 else "files are"
-        return [
+        notices.append(
             f"{count} indexed {noun} now in ignored folders; "
             f"run `docket sources prune {source_id}` to remove them."
-        ]
-    return []
+        )
+    return notices
 
 
 class FailureReporter:
