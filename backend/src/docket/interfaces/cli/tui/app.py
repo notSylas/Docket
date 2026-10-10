@@ -51,6 +51,7 @@ from docket.interfaces.cli.tui.textfmt import (
     render_markdown,
     row_width,
     truncate_row,
+    unique_path_labels,
     wrap_text,
     wrap_tokens,
     inline_tokens,
@@ -223,15 +224,17 @@ class DemoUI:
         elif m.role == "assistant":
             label = ("› " if focused else "") + "Docket"
             rows.append([("class:assistant", label)])
-            rows.extend(indent_rows(render_markdown(m.text, width - 2), "  "))
+            rows.extend(indent_rows(render_markdown(m.text, width - 2, ascii_mode=self.ascii_mode), "  "))
             a = m.answer
             if a and a.citations:
                 rows.append([])
                 rows.append([("class:muted", "  Sources:")])
-                for n, c in enumerate(a.citations, 1):
+                labels = unique_path_labels([c.rel_path for c in a.citations])
+                for n, (c, label) in enumerate(zip(a.citations, labels), 1):
                     tail = [] if c.available else [("class:attention", "  (unavailable)")]
-                    rows.append(truncate_row([("", "    "), ("class:chip", f"[{n}]"), ("class:text", f" {c.source_name}"), *tail], width))
-            if a:
+                    rows.append(truncate_row([("", "    "), ("class:chip", f"[{n}]"), ("class:text", f" {label}"), *tail], width))
+            if a and a.warnings:
+                rows.append([])  # a gap, so a warning never reads as one more source
                 for w in a.warnings:
                     rows.extend(indent_rows(wrap_text(f"Warning: {w}", width - 2, "class:attention"), "  "))
             meta = [m.mode_label or "Quick search"]
@@ -242,15 +245,27 @@ class DemoUI:
             if a and a.abstained:
                 meta.insert(0, "No answer")
             rows.append([])
-            rows.extend(
-                indent_rows(
-                    wrap_tokens(
-                        [("class:muted", " · ".join(meta) + "   "), ("class:chip", "[Evidence F5]"), (" ", " "), ("class:chip", "[Details F6]")],
-                        width - 2,
-                    ),
-                    "  ",
+            actions: list[tuple[str, str]] = []
+            if a and a.citations:
+                actions += [("class:chip", "[Evidence F5]"), (" ", " "), ("class:chip", "[Ctrl+E]"), (" ", " ")]
+            actions.append(("class:chip", "[Details F6]"))
+            rows.extend(indent_rows(wrap_tokens([("class:muted", " · ".join(meta) + "   ")] + actions, width - 2), "  "))
+            if a and a.citations:
+                rows.extend(
+                    indent_rows(
+                        wrap_tokens(
+                            inline_tokens(
+                                "Open a source: /show 1" + (f" to /show {len(a.citations)}" if len(a.citations) > 1 else ""),
+                                "class:muted",
+                            ),
+                            width - 2,
+                        ),
+                        "  ",
+                    )
                 )
-            )
+            if focused:
+                note = "Selected answer: Enter opens evidence, Esc clears" if a and a.citations else "Selected answer: Esc clears"
+                rows.extend(indent_rows([[("class:muted", note)]], "  "))
         else:
             label, style = {"info": ("Notice", "class:system"), "attention": ("Attention", "class:attention"), "error": ("Failed", "class:error")}[m.level]
             rows.extend(wrap_tokens([(style + " class:bold", label + ": ")] + inline_tokens(m.text, style), width, "  "))
@@ -258,9 +273,14 @@ class DemoUI:
         self._line_cache[key] = rows
         return rows
 
+    def marker_visible(self) -> bool:
+        """True while a specific answer is marked with the selected-answer arrow."""
+        answers = self.answers()
+        return len(answers) > 1 and 0 <= self.focus_answer < len(answers)
+
     def transcript_rows(self, width: int) -> list[Row]:
         answers = self.answers()
-        focus_uid = answers[self.focus_answer].uid if answers and 0 <= self.focus_answer < len(answers) and len(answers) > 1 else -1
+        focus_uid = answers[self.focus_answer].uid if self.marker_visible() else -1
         out: list[Row] = []
         for m in self.messages:
             out.extend(self._render_message(m, width, m.uid == focus_uid))
@@ -344,6 +364,16 @@ class DemoUI:
         right = "F1 / Commands "
         if self.hint_text:
             parts += [("class:muted", " · "), ("class:attention", self.hint_text)]
+        elif self.answers() and not self.overlays:
+            # keyboard routes to the evidence; each hint is dropped whole when it will not fit
+            hints = ["Ctrl+E evidence · /show N"] if any(m.answer.citations for m in self.answers()) else []
+            if self.marker_visible():
+                cited = bool(self.answers()[self.focus_answer].answer.citations)
+                hints.insert(0, "Enter opens evidence, Esc clears" if cited else "Esc clears the selection")
+            for h in hints:
+                trial = parts + [("class:muted", " · "), ("class:muted", h)]
+                if row_width(trial) + cw(right) + 1 <= cols:
+                    parts = trial
         left = parts
         if row_width(left) + cw(right) + 1 > cols:
             # drop the middle segments, keep counts and the commands hint
@@ -365,6 +395,9 @@ class DemoUI:
 
     def transcript_fragments(self) -> FormattedText:
         m = self.metrics()
+        if self.overlays:
+            # A modal sits on a clean backdrop: no half-hidden transcript beside it.
+            return self._fix([("", "\n" * max(m.transcript_h - 1, 0))])
         rows = self.transcript_rows(m.text_w)
         h = m.transcript_h
         total = len(rows)
@@ -580,6 +613,17 @@ class DemoUI:
         def _latest(event):
             self.scroll = 0
             self.unread = False
+            self.invalidate()
+
+        @kb.add("c-e", filter=no_overlay)
+        def _ctrl_e(event):
+            self.open_evidence(None, 0)
+
+        marker_on = Condition(self.marker_visible)
+
+        @kb.add("escape", filter=no_overlay & marker_on)
+        def _clear_marker(event):
+            self.focus_answer = -1
             self.invalidate()
 
         @kb.add("escape", "up", filter=no_overlay)
@@ -816,6 +860,8 @@ class DemoUI:
     def submit(self) -> None:
         text = self.composer.text.strip()
         if not text:
+            if self.marker_visible():
+                self.open_evidence(self.focus_answer, 0)
             return
         if text.startswith("/") or text.lower() in BARE_WORDS:
             self.composer.reset()

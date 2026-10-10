@@ -12,6 +12,7 @@ function/dataclass here is replaced by a service call listed in
 from __future__ import annotations
 
 import copy
+import re
 from dataclasses import dataclass, field
 
 DEMO_TAG = "DEMO DATA"
@@ -46,7 +47,7 @@ class FakeSource:
     path: str
     status: str
     files: list[FakeFile] = field(default_factory=list)
-    last_indexed: str = "demo time 10:42"
+    last_indexed: str = "10 Oct 2026 10:42"
     note: str = ""
 
     def count(self, file_status: str) -> int:
@@ -59,15 +60,39 @@ class FakeSource:
 
 @dataclass(frozen=True)
 class FakeCitation:
-    source_name: str
+    source_name: str  # file name only; always equals the last part of rel_path
     rel_path: str
     location: str | None
     passage: str
     available: bool = True
     reason: str = ""
-    version: str = "stored version 3 (demo)"
-    indexed: str = "demo time 10:42"
+    version: int = 3
+    versions: int = 3  # versions stored for this file; the newest is current
+    indexed: str = "10 Oct 2026 10:42"
     chunk_id: str = "chunk-demo-0001"
+    source: str = ""  # registered source the file belongs to
+    # Spreadsheet passages: header row first, then data rows. `table_origin` is the
+    # address of the top-left cell (e.g. "B7"); `cited` lists the cells the answer used.
+    table: tuple[tuple[str, ...], ...] = ()
+    table_origin: str = ""
+    cited: tuple[str, ...] = ()
+
+    @property
+    def version_label(self) -> str:
+        state = "current" if self.version >= self.versions else "superseded"
+        return f"version {self.version} of {self.versions} ({state})"
+
+
+def cell_address(origin: str, row: int, col: int) -> str:
+    """Address of the cell `row`, `col` (0-based) inside a table whose top-left is `origin`."""
+    letters = "".join(c for c in origin if c.isalpha()).upper()
+    number = int("".join(c for c in origin if c.isdigit()) or "1")
+    return f"{chr(ord(letters[0]) + col)}{number + row}"
+
+
+def table_range(origin: str, table: tuple[tuple[str, ...], ...]) -> str:
+    rows, cols = len(table), max((len(r) for r in table), default=0)
+    return f"{origin}:{cell_address(origin, rows - 1, cols - 1)}"
 
 
 @dataclass(frozen=True)
@@ -80,9 +105,12 @@ class FakeAnswer:
     rewrite: str = ""
     ambiguity: str = ""
     warnings: tuple[str, ...] = ()
-    compute: str = "Deterministic computation was not used."
+    compute: str = "Not used"
     abstained: bool = False
     abstain_reason: str = ""
+    status: str = "Not verified (prototype)"
+    model: str = "demo-model-14b"
+    searched: int = 12  # passages searched; 0 means no search was made
 
 
 # -- sources ------------------------------------------------------------------
@@ -111,7 +139,7 @@ def initial_sources() -> list[FakeSource]:
         "/demo/work/finance",
         READY,
         _files(finance_names, failed={18: "Unsupported legacy format .xls", 19: "Workbook is corrupt (demo)"}, empty=(20,)),
-        last_indexed="demo time 10:42",
+        last_indexed="10 Oct 2026 10:42",
     )
     handbook = FakeSource(
         "src-demo-handbook",
@@ -119,7 +147,7 @@ def initial_sources() -> list[FakeSource]:
         "/demo/work/handbook",
         READY,
         _files([(f"policies/{n}.docx", "docx") for n in ("hiring", "leave", "travel", "security", "expenses", "onboarding")]),
-        last_indexed="demo time 09:15",
+        last_indexed="10 Oct 2026 09:15",
     )
     contracts = FakeSource(
         "src-demo-contracts",
@@ -127,7 +155,7 @@ def initial_sources() -> list[FakeSource]:
         "/demo/work/contracts",
         FAILED,
         _files([(f"vendors/agreement-{i}.pdf", "pdf") for i in range(1, 5)]),
-        last_indexed="demo time yesterday 17:20",
+        last_indexed="9 Oct 2026 17:20",
         note="The folder cannot be reached at /demo/work/contracts. Restore it, then retry.",
     )
     old = FakeSource(
@@ -136,7 +164,7 @@ def initial_sources() -> list[FakeSource]:
         "/demo/archive/old-project",
         DISCONNECTED,
         _files([(f"notes/{i}.md", "md") for i in range(1, 6)]),
-        last_indexed="demo time last week",
+        last_indexed="3 Oct 2026 14:05",
         note="Disconnected by you. Stored originals are kept; it is not searched.",
     )
     return [finance, handbook, contracts, old]
@@ -200,18 +228,23 @@ FOLDER_SUGGESTIONS = (
 DATA_DIR_LABEL = "/demo/data (not a real directory)"
 
 JOB_HISTORY = (
-    ("Finance", "Partial", "demo time 10:42", "18 indexed · 0 unchanged · 2 failed"),
-    ("Handbook", "Completed", "demo time 09:15", "6 indexed · 0 unchanged · 0 failed"),
-    ("Old project", "Interrupted", "demo time last week", "Stopped when the process exited; retry to finish."),
+    ("Finance", "Partial", "10 Oct 2026 10:42", "18 indexed · 0 unchanged · 2 failed"),
+    ("Handbook", "Completed", "10 Oct 2026 09:15", "6 indexed · 0 unchanged · 0 failed"),
+    ("Old project", "Interrupted", "3 Oct 2026 14:05", "Stopped when the process exited; retry to finish."),
 )
 
 # -- conversation -------------------------------------------------------------
 
 _CIT_SUMMARY = FakeCitation(
-    "q3-summary.xlsx",
+    "q3-summary-2025.xlsx",
     "reports/q3-summary-2025.xlsx",
-    "Sheet Summary · B8:F8",
-    "Region | Revenue | Target\nNorth | 4.2 | 4.0\nSouth | 3.1 | 3.4\nWest | 2.8 | 2.5\n(sample figures for the demo)",
+    "Sheet Summary · B7:D10",
+    "Region | Revenue | Target\nNorth | 4.2 | 4.0\nSouth | 3.1 | 3.4\nWest | 2.8 | 2.5",
+    source="Finance",
+    chunk_id="chunk-demo-0101",
+    table=(("Region", "Revenue", "Target"), ("North", "4.2", "4.0"), ("South", "3.1", "3.4"), ("West", "2.8", "2.5")),
+    table_origin="B7",
+    cited=("C8", "C9", "C10"),
 )
 _CIT_REVIEW = FakeCitation(
     "regional-review.pdf",
@@ -223,6 +256,9 @@ _CIT_REVIEW = FakeCitation(
     "used to review how a long verbatim passage wraps, scrolls and keeps its "
     "original line breaks inside the evidence panel.\n\nA second paragraph shows "
     "that blank lines inside a passage are preserved exactly as stored.",
+    source="Finance",
+    indexed="10 Oct 2026 10:41",
+    chunk_id="chunk-demo-0212",
 )
 _CIT_POLICY = FakeCitation(
     "hiring.docx",
@@ -230,6 +266,9 @@ _CIT_POLICY = FakeCitation(
     None,
     "New hires are paused until the start of the next financial year unless a "
     "role is explicitly approved by the executive team.",
+    source="Handbook",
+    indexed="10 Oct 2026 09:15",
+    chunk_id="chunk-demo-0307",
 )
 _CIT_GONE = FakeCitation(
     "forecast-draft.xlsx",
@@ -238,6 +277,31 @@ _CIT_GONE = FakeCitation(
     "",
     available=False,
     reason="Its stored version was superseded after this answer was written, so the original passage can no longer be shown.",
+    version=2,
+    versions=3,
+    source="Finance",
+    chunk_id="chunk-demo-0420",
+)
+# Two different files that share a name: the Sources list must tell them apart.
+_CIT_HANDBOOK_CURRENT = FakeCitation(
+    "handbook.pdf",
+    "policies/handbook.pdf",
+    "Page 12 · Section 4",
+    "Approved travel is booked through the central desk. Claims above the limit need a manager sign-off.",
+    source="Handbook",
+    indexed="10 Oct 2026 09:15",
+    chunk_id="chunk-demo-0511",
+)
+_CIT_HANDBOOK_OLD = FakeCitation(
+    "handbook.pdf",
+    "archive/2023/handbook.pdf",
+    "Page 9 · Section 4",
+    "Travel is booked by each team. Claims above the limit need a manager sign-off.",
+    source="Handbook",
+    version=1,
+    versions=1,
+    indexed="3 Oct 2026 14:05",
+    chunk_id="chunk-demo-0498",
 )
 
 INTRO_NOTICE = (
@@ -252,7 +316,8 @@ def initial_answer() -> FakeAnswer:
         "Key points:\n"
         "- Revenue rose 12% on the prior quarter [1]\n"
         "- The southern region missed its target because renewals slipped [2]\n"
-        "- Hiring is paused until the next financial year [3]\n\n"
+        "- Hiring is paused until the next financial year [3]\n"
+        "- Travel above the limit needs a manager sign-off [5], unchanged from the older handbook [6]\n\n"
         "| Region | Revenue | Target | Result |\n"
         "|---|---|---|---|\n"
         "| North | 4.2 | 4.0 | Met |\n"
@@ -262,10 +327,11 @@ def initial_answer() -> FakeAnswer:
     )
     return FakeAnswer(
         text,
-        (_CIT_SUMMARY, _CIT_REVIEW, _CIT_POLICY, _CIT_GONE),
-        rewrite='Follow-up rewritten as: "quarterly revenue by region against target"',
-        ambiguity="Period not stated; the most recent quarter in the sources was used.",
+        (_CIT_SUMMARY, _CIT_REVIEW, _CIT_POLICY, _CIT_GONE, _CIT_HANDBOOK_CURRENT, _CIT_HANDBOOK_OLD),
+        rewrite='Rewritten as "quarterly revenue by region against target"',
+        ambiguity="Not stated; the most recent quarter was used",
         warnings=("Citation [4] refers to a version that is no longer available.",),
+        searched=14,
     )
 
 
@@ -273,9 +339,34 @@ def initial_question() -> str:
     return "How did each region do against target last quarter?"
 
 
+_GREETING = re.compile(
+    r"^(hi|hey|hello|hiya|yo|howdy|thanks|thank you|good (morning|afternoon|evening))( there| docket)?$"
+)
+
+GREETING_REPLY = (
+    "Hello. I answer questions about the documents in your sources, with a citation for every claim. "
+    "Ask about a topic or a file, or type /help to see what else I can do."
+)
+
+
+def is_greeting(question: str) -> bool:
+    return bool(_GREETING.match(re.sub(r"[^a-z ]", "", question.lower()).strip()))
+
+
 def answer_for(question: str, scope_label: str, mode_label: str) -> FakeAnswer:
     """Pick a canned answer from keywords. Deterministic; no model involved."""
     q = question.lower()
+    if is_greeting(question):
+        # Small talk: no retrieval, so no citations and no sourced claims.
+        return FakeAnswer(
+            GREETING_REPLY,
+            (),
+            mode_label,
+            0.4,
+            scope_label,
+            status="Not applicable (no sourced claims)",
+            searched=0,
+        )
     if any(w in q for w in ("nothing", "unknown", "missing", "abstain", "weather")):
         return FakeAnswer(
             "The available evidence did not support an answer to that question.\n\n"
@@ -286,6 +377,8 @@ def answer_for(question: str, scope_label: str, mode_label: str) -> FakeAnswer:
             scope_label,
             abstained=True,
             abstain_reason="No retrieved evidence matched the question (demo).",
+            status="No answer (evidence did not support one)",
+            searched=9,
         )
     if any(w in q for w in ("table", "compare", "region", "target")):
         base = initial_answer()
@@ -296,7 +389,7 @@ def answer_for(question: str, scope_label: str, mode_label: str) -> FakeAnswer:
             "- Hiring needs executive approval [1]\n"
             "- Travel above the limit needs a manager sign-off [2]\n"
             "- Expense claims are due within 30 days [2]",
-            (_CIT_POLICY, _CIT_REVIEW),
+            (_CIT_POLICY, _CIT_HANDBOOK_CURRENT),
             mode_label,
             5.0,
             scope_label,
@@ -357,7 +450,7 @@ class World:
             path,
             READY,
             _files([(f"docs/file-{i + 1:02d}.pdf", "pdf") for i in range(6)]),
-            last_indexed="demo time now",
+            last_indexed="10 Oct 2026 11:05",
         )
         self.sources.append(src)
         return src

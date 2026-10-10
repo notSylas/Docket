@@ -32,7 +32,7 @@ OVERLAYS = [
     ("f2", "Sources"),
     ("f3", "Search scope"),
     ("f4", "Answering mode"),
-    ("f5", "Evidence [1] of 4"),
+    ("f5", "Evidence [1] of 6"),
     ("f6", "Answer details"),
     ("f7", "Jobs"),
     ("f8", "Settings"),
@@ -292,7 +292,7 @@ def test_add_folder_validation_and_auto_index():
 
 def test_indexing_progress_stop_and_hide():
     async def go(h):
-        assert "File 7 of 24" in h.text()
+        assert "7 of 24" in h.text()
         await h.type("n")  # reduced motion: manual progress step
         assert h.ui.job.ticks == 22
         await h.press("tab")  # Stop indexing
@@ -401,7 +401,7 @@ def test_show_command_and_unavailable_citation_variant():
         await h.type("/show 4")
         await h.press("enter")
         text = h.text()
-        assert "Evidence [4] of 4" in text
+        assert "Evidence [4] of 6" in text
         assert "Unavailable" in text
         assert "superseded" in text
         await h.press("o")  # open original is disabled and explains
@@ -409,7 +409,7 @@ def test_show_command_and_unavailable_citation_variant():
         await h.press("esc")
         await h.type("/show 9")
         await h.press("enter")
-        assert "choose 1-4" in h.text()
+        assert "choose 1-6" in h.text()
 
     scenario(go, rows=60)
 
@@ -419,10 +419,10 @@ def test_evidence_previous_next_and_missing_location_label():
         await h.press("f5")
         assert "Sheet Summary" in h.text()
         await h.press("n", "n")
-        assert "Evidence [3] of 4" in h.text()
+        assert "Evidence [3] of 6" in h.text()
         assert "Location not extracted" in h.text()
         await h.press("p")
-        assert "Evidence [2] of 4" in h.text()
+        assert "Evidence [2] of 6" in h.text()
         assert "Page 4" in h.text()
 
     scenario(go)

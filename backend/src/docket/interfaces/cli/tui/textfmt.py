@@ -62,6 +62,174 @@ def truncate(text: str, width: int) -> str:
     return plain(truncate_row([("", text)], width))
 
 
+def middle_ellipsis(text: str, width: int) -> str:
+    """Shorten to `width` cells keeping the start and the end (the file name)."""
+    if width <= 0:
+        return ""
+    if cw(text) <= width:
+        return text
+    if width <= 3:
+        return text[:width]
+    keep = width - 1
+    tail_w = max(keep // 2, 1)
+    head_w = keep - tail_w
+    head, used = "", 0
+    for ch in text:
+        w = get_cwidth(ch)
+        if used + w > head_w:
+            break
+        head += ch
+        used += w
+    tail, used = "", 0
+    for ch in reversed(text):
+        w = get_cwidth(ch)
+        if used + w > tail_w:
+            break
+        tail = ch + tail
+        used += w
+    return head + "…" + tail
+
+
+def unique_path_labels(paths: list[str]) -> list[str]:
+    """Show each path's file name; add the shortest unique parent path on clashes.
+
+    ``policies/handbook.pdf`` and ``archive/2024/handbook.pdf`` become
+    ``policies/handbook.pdf`` and ``2024/handbook.pdf``; a unique name stays bare.
+    """
+    parts = [p.strip("/").split("/") for p in paths]
+    out: list[str] = []
+    for i, comps in enumerate(parts):
+        base = comps[-1]
+        rivals = [c for j, c in enumerate(parts) if j != i and c[-1] == base and c != comps]
+        if not rivals:
+            out.append(base)
+            continue
+        depth = 2
+        while depth < len(comps) and any(r[-depth:] == comps[-depth:] for r in rivals):
+            depth += 1
+        out.append("/".join(comps[-depth:]))
+    return out
+
+
+# -- numbers, result glyphs -----------------------------------------------
+
+_NUMERIC = re.compile(r"^[+\-\u2212]?[$\u00a3\u20ac]?\d[\d,]*(\.\d+)?%?$")
+
+
+def is_numeric(cell: str) -> bool:
+    return bool(_NUMERIC.match(cell.strip()))
+
+
+def numeric_columns(rows: list[list[str]]) -> list[bool]:
+    """True per column when every non-empty body cell is a number (row 0 is the header)."""
+    ncols = max((len(r) for r in rows), default=0)
+    flags = []
+    for i in range(ncols):
+        body = [r[i].strip() for r in rows[1:] if i < len(r) and r[i].strip()]
+        flags.append(bool(body) and all(is_numeric(c) for c in body))
+    return flags
+
+
+# word -> (unicode glyph, ascii glyph, style)
+RESULT_WORDS = {
+    "met": ("\u2713", "OK", "class:ready"),
+    "passed": ("\u2713", "OK", "class:ready"),
+    "pass": ("\u2713", "OK", "class:ready"),
+    "missed": ("\u2717", "X", "class:attention"),
+    "failed": ("\u2717", "X", "class:attention"),
+    "fail": ("\u2717", "X", "class:attention"),
+}
+
+
+def with_result_glyph(cell: str, ascii_mode: bool = False) -> tuple[str, str]:
+    """('✓ Met', style) for result words, keeping the word; otherwise (cell, '')."""
+    hit = RESULT_WORDS.get(cell.strip().lower())
+    if not hit:
+        return cell, ""
+    glyph = hit[1] if ascii_mode else hit[0]
+    return f"{glyph} {cell.strip()}", hit[2]
+
+
+def pad_cell(text: str, width: int, right: bool) -> str:
+    gap = max(width - cw(text), 0)
+    return " " * gap + text if right else text + " " * gap
+
+
+def render_grid(
+    rows: list[list[str]],
+    width: int,
+    *,
+    first_row: int = 1,
+    first_col: str = "A",
+    cited: frozenset[tuple[int, int]] = frozenset(),
+    ascii_mode: bool = False,
+) -> list[Row]:
+    """A spreadsheet-style grid: column letters, row numbers, header rule, right-aligned numbers.
+
+    `cited` holds (row index, column index) pairs (0-based, within `rows`); those
+    cells are drawn as ``[value]`` and highlighted so they survive without colour.
+    """
+    if not rows:
+        return []
+    ncols = max(len(r) for r in rows)
+    rows = [r + [""] * (ncols - len(r)) for r in rows]
+    right = numeric_columns(rows)
+    cited_cols = {c for _r, c in cited}
+    shown: list[list[str]] = []
+    for ri, r in enumerate(rows):
+        line = []
+        for ci, cell in enumerate(r):
+            text, _st = with_result_glyph(cell, ascii_mode) if ri else (cell, "")
+            if ci in cited_cols:
+                text = f"[{text}]" if (ri, ci) in cited else f" {text} "
+            line.append(text)
+        shown.append(line)
+    widths = [max(cw(r[i]) for r in shown) for i in range(ncols)]
+    letters = [chr(ord(first_col.upper()) + i) for i in range(ncols)]
+    for i in range(ncols):
+        widths[i] = max(widths[i], 1)
+    num_w = max(len(str(first_row + len(rows) - 1)), 1)
+    gutter = " " * (num_w + 2)
+    sep = " \u2502 "
+    out: list[Row] = []
+    ruler: Row = [("class:muted", gutter)]
+    for i, letter in enumerate(letters):
+        ruler.append(("class:muted", pad_cell(letter, widths[i], False)))
+        if i < ncols - 1:
+            ruler.append(("class:muted", " " * cw(sep)))
+    out.append(ruler)
+    for ri, r in enumerate(shown):
+        num = str(first_row + ri).rjust(num_w)
+        row: Row = [("class:muted", f"{num}  ")]
+        for ci, cell in enumerate(r):
+            base = "class:title" if ri == 0 else "class:text"
+            if ri and (ri, ci) in cited:
+                style = "class:selected class:bold"
+            elif ri:
+                _t, st = with_result_glyph(rows[ri][ci], ascii_mode)
+                style = st or base
+            else:
+                style = base
+            row.append((style, pad_cell(cell, widths[ci], right[ci])))
+            if ci < ncols - 1:
+                row.append(("class:muted", sep))
+        out.append(row)
+        if ri == 0:
+            rule: Row = [("class:muted", gutter)]
+            for ci in range(ncols):
+                rule.append(("class:muted", "\u2500" * widths[ci]))
+                if ci < ncols - 1:
+                    rule.append(("class:muted", "\u2500\u253c\u2500"))
+            out.append(rule)
+    return out
+
+
+def grid_width(rows: list[list[str]], first_row: int = 1) -> int:
+    ncols = max((len(r) for r in rows), default=0)
+    widths = [max((cw(r[i]) for r in rows if i < len(r)), default=1) + 2 for i in range(ncols)]
+    return len(str(first_row + len(rows) - 1)) + 2 + sum(widths) + 3 * (ncols - 1)
+
+
 # -- inline markup and wrapping ------------------------------------------
 
 _INLINE = re.compile(r"(\*\*[^*]+\*\*|`[^`]+`|\[\d+\])")
@@ -147,30 +315,40 @@ def _table_cells(line: str) -> list[str]:
     return [c.strip() for c in line.strip().strip("|").split("|")]
 
 
-def _render_table(lines: list[str], width: int) -> list[Row]:
+def _render_table(lines: list[str], width: int, ascii_mode: bool = False) -> list[Row]:
     rows = [_table_cells(ln) for ln in lines]
     rows = [r for r in rows if not all(re.fullmatch(r":?-{2,}:?", c) for c in r)]
     if not rows:
         return []
     ncols = max(len(r) for r in rows)
     rows = [r + [""] * (ncols - len(r)) for r in rows]
-    widths = [max(cw(r[i]) for r in rows) for i in range(ncols)]
+    right = numeric_columns(rows)
+    shown = [rows[0]] + [[with_result_glyph(c, ascii_mode)[0] for c in r] for r in rows[1:]]
+    widths = [max(cw(r[i]) for r in shown) for i in range(ncols)]
     total = sum(widths) + 3 * (ncols - 1)
     out: list[Row] = []
     if total <= width:
-        for idx, r in enumerate(rows):
+        for idx, r in enumerate(shown):
             row: Row = []
             for i, cell in enumerate(r):
-                style = "class:title" if idx == 0 else "class:text"
-                row.append((style, cell + " " * (widths[i] - cw(cell))))
+                if idx == 0:
+                    style = "class:title"
+                else:
+                    style = with_result_glyph(rows[idx][i], ascii_mode)[1] or "class:text"
+                row.append((style, pad_cell(cell, widths[i], right[i])))
                 if i < ncols - 1:
-                    row.append(("class:muted", " │ "))
+                    row.append(("class:muted", " \u2502 "))
             out.append(row)
             if idx == 0:
-                out.append([("class:muted", "─" * min(total, width))])
+                rule: Row = []
+                for i in range(ncols):
+                    rule.append(("class:muted", "\u2500" * widths[i]))
+                    if i < ncols - 1:
+                        rule.append(("class:muted", "\u2500\u253c\u2500"))
+                out.append(rule)
         return out
     # Narrow fallback: one record per row, never clip a value.
-    header, body = rows[0], rows[1:]
+    header, body = rows[0], shown[1:]
     for r in body:
         for i, cell in enumerate(r):
             label = header[i] if i < len(header) else ""
@@ -181,7 +359,7 @@ def _render_table(lines: list[str], width: int) -> list[Row]:
     return out
 
 
-def render_markdown(text: str, width: int, base: str = "class:text") -> list[Row]:
+def render_markdown(text: str, width: int, base: str = "class:text", ascii_mode: bool = False) -> list[Row]:
     """Paragraphs, bullet/numbered lists, fenced code and tables, wrapped to width."""
     out: list[Row] = []
     lines = text.split("\n")
@@ -213,7 +391,7 @@ def render_markdown(text: str, width: int, base: str = "class:text") -> list[Row
             while i < len(lines) and lines[i].lstrip().startswith("|"):
                 block.append(lines[i])
                 i += 1
-            out.extend(_render_table(block, width))
+            out.extend(_render_table(block, width, ascii_mode))
         elif _BULLET.match(line):
             flush_para()
             m = _BULLET.match(line)
