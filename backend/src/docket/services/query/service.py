@@ -44,7 +44,22 @@ from docket.services.query.citations import (
     validate_citations,
 )
 from docket.services.query.latex import normalize_latex
-from docket.prompts.query import period_ambiguity_note, rewrite_prompt
+from docket.prompts.query import (
+    COMPUTE_PLAN_SYSTEM_PROMPT,
+    compute_note,
+    compute_plan_prompt,
+    period_ambiguity_note,
+    rewrite_prompt,
+)
+from docket.services.query.compute import (
+    ComputeFallback,
+    derivation_for_record,
+    execute_plan,
+    looks_computational,
+    parse_plan,
+    plan_to_dicts,
+    record_for,
+)
 from docket.services.query.prompts import (
     ABSTENTION_PHRASE,
     AGENT_SYSTEM_PROMPT,
@@ -61,6 +76,9 @@ from docket.services.query.signals import (
     has_period,
     load_eligible_files,
 )
+from docket.core.db.engine import get_session_factory
+from docket.infra.evidence.store import ContentAddressedStore
+from docket.infra.evidence.workbook_reader import WorkbookReader
 from docket.infra.parsing.tokens import get_token_counter
 from docket.infra.retrieval.hybrid import hybrid_search
 from docket.infra.retrieval.resolver import ChunkNotFoundError, EvidenceResolver, ResolvedEvidence
@@ -98,6 +116,10 @@ class QueryResult(BaseModel):
     # Set (reason "period") when the answer was asked to cover each fiscal year
     # and end with a clarifying question; None otherwise.
     ambiguity: dict[str, Any] | None = None
+    # Deterministic compute stage record (None unless the stage was attempted):
+    # {"status": "used"|"fallback", "plan"/"plan_raw", "derivation",
+    # "fallback_reason"}. See `docket.services.query.compute`.
+    compute: dict[str, Any] | None = None
 
 
 # Tools whose successful results make chunks citable on the agent path.
@@ -193,6 +215,7 @@ class QueryService:
         trace_callback: Callable[[dict[str, Any]], None] | None = None,
         page_table: Any | None = None,
         manifest_guard: Any | None = None,
+        workbook_reader: WorkbookReader | None = None,
     ):
         """
         `classifier` defaults to `HeuristicQueryClassifier()` -- zero-cost,
@@ -251,6 +274,8 @@ class QueryService:
         # Refuses queries when the index manifest names a different embedding
         # model (see `docket.infra.index.manifest`); `None` skips the check.
         self._manifest_guard = manifest_guard
+        # Only used by the flagged compute stage; built lazily when not injected.
+        self._workbook_reader = workbook_reader
         # Follow-up rewrite of the CURRENT agent run, read by the agent's
         # `search_knowledge` tool for every call (see `_ask_agent`).
         self._run_extra_queries: list[str] = []
@@ -429,6 +454,14 @@ class QueryService:
                     [(o.file, o.fiscal_year, o.context_lines) for o in ambiguity.options]
                 )
 
+        # Flagged deterministic compute stage: default off, and then nothing
+        # below differs from the previous behaviour.
+        compute_record: dict[str, Any] | None = None
+        if self._settings.compute_stage_enabled:
+            system, compute_record = self._compute_stage(
+                question, standalone, system, resolved, ambiguity is not None
+            )
+
         answer = self._gateway.generate(system=system, prompt=prompt, **self._answer_opts())
 
         return self._finalize_answer(
@@ -439,7 +472,85 @@ class QueryService:
             "standalone_query": standalone,
             "scoped_to": scoped_to,
             "ambiguity": ambiguity.to_dict() if ambiguity is not None else None,
+            "compute": compute_record,
         })
+
+    def _get_workbook_reader(self) -> WorkbookReader:
+        if self._workbook_reader is None:
+            self._workbook_reader = WorkbookReader(
+                session_factory=get_session_factory(self._engine),
+                store=ContentAddressedStore(self._settings.evidence_store_path),
+            )
+        return self._workbook_reader
+
+    def _compute_stage(
+        self,
+        question: str,
+        standalone: str | None,
+        system: str,
+        resolved: list[ResolvedEvidence],
+        ambiguous: bool,
+    ) -> tuple[str, dict[str, Any] | None]:
+        """Returns `(system, record)`: `system` with the pinned computed note
+        appended when the plan ran, else unchanged; `record` is None when the
+        stage did not apply (no arithmetic wording, no spreadsheet chunks)."""
+        sheet_chunks = [c for c in resolved if c.sheet]
+        if not sheet_chunks or not looks_computational(question, standalone):
+            return system, None
+        if ambiguous:
+            return system, record_for(
+                status="fallback",
+                fallback_reason="ambiguous period: the answer is per fiscal year, not one computed value",
+            )
+        raw = ""
+        try:
+            raw = self._plan_call(question, sheet_chunks)
+            steps = parse_plan(
+                raw, {c.chunk_id for c in sheet_chunks}, self._settings.compute_max_steps
+            )
+        except ComputeFallback as exc:
+            return system, record_for(status="fallback", raw_plan=raw, fallback_reason=str(exc))
+        except Exception as exc:  # noqa: BLE001 -- a failed plan must never fail the query
+            logger.warning("compute plan call failed (%s); using the normal path", exc)
+            return system, record_for(
+                status="fallback", raw_plan=raw,
+                fallback_reason=f"plan call failed: {type(exc).__name__}: {exc}",
+            )
+        plan = plan_to_dicts(steps)
+        try:
+            outcome = execute_plan(
+                self._get_workbook_reader(), steps, {c.citation_label for c in resolved}
+            )
+        except ComputeFallback as exc:
+            return system, record_for(status="fallback", plan=plan, fallback_reason=str(exc))
+        except Exception as exc:  # noqa: BLE001
+            return system, record_for(
+                status="fallback", plan=plan,
+                fallback_reason=f"execution failed: {type(exc).__name__}: {exc}",
+            )
+        derivation = derivation_for_record(outcome)
+        return system + compute_note(derivation), record_for(
+            status="used", plan=plan, derivation=derivation
+        )
+
+    def _plan_call(self, question: str, sheet_chunks: list[ResolvedEvidence]) -> str:
+        """The one short, deterministic planning call (same style as the
+        follow-up rewrite: thinking off, temperature 0, bounded output)."""
+        opts: dict[str, Any] = {
+            "options": {"temperature": 0.0, "num_predict": self._settings.compute_num_predict},
+            "think": False,
+            "format": "json",
+        }
+        if self._settings.compute_model:
+            opts["model"] = self._settings.compute_model
+        system = COMPUTE_PLAN_SYSTEM_PROMPT.replace(
+            "{max_steps}", str(self._settings.compute_max_steps)
+        )
+        prompt = compute_plan_prompt(
+            question,
+            [(c.chunk_id, c.location or "", c.text) for c in sheet_chunks],
+        )
+        return self._gateway.generate(system=system, prompt=prompt, **opts) or ""
 
     def _rewrite_followup(
         self, question: str, history: list[ConversationTurn] | None

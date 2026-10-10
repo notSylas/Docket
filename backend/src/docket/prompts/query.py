@@ -195,3 +195,75 @@ def period_ambiguity_note(options: list[tuple[str, str, list[str]]]) -> str:
         detail = f" -- workbook context: {'; '.join(context_lines)}" if context_lines else ""
         lines.append(f"- {fiscal_year}: {file_name}{detail}")
     return PERIOD_AMBIGUITY_NOTE_HEAD + "\n".join(lines) + "\n" + PERIOD_AMBIGUITY_NOTE_TAIL
+
+
+# -- deterministic compute stage (doc 05 section 8) ---------------------------
+
+COMPUTE_PLAN_SYSTEM_PROMPT = """You plan a calculation over spreadsheet cells. \
+You NEVER compute, quote or invent numbers: you only say which cells to use and \
+which operation to run; a calculator reads the cells itself.
+
+Reply with ONE JSON object and nothing else:
+{"steps": [{"op": "<operation>", "refs": [{"chunk_id": "<id>", "cell": "B7"}, \
+{"chunk_id": "<id>", "range": "B2:B7"}]}]}
+
+Rules:
+- op is one of: sum, average, difference, ratio, pct_change, min, max, count.
+- difference, ratio and pct_change take exactly two refs, each a single "cell"; \
+difference is first minus second, ratio is first divided by second, pct_change is \
+the percent change from the first (start) to the second (end).
+- sum, average, min, max and count take one or more refs; a ref may be a "range" \
+of cells in one column or row.
+- chunk_id must be copied exactly from a chunk listed below. Each chunk is one \
+sheet row and its location line gives the cell range it covers, e.g. "range B5:F5" \
+means its values sit in B5, C5, D5, E5, F5 in the order shown; use those addresses. \
+To use cells of another row of the same sheet, give a chunk_id of any listed chunk \
+of that sheet and the address of the cell you want (add "sheet" only if needed).
+- Use at most {max_steps} steps. Never include numbers, values or results.
+- If the question cannot be answered by such a calculation over these cells, reply \
+{"steps": []}.
+"""
+
+
+def compute_plan_prompt(question: str, chunks: list[tuple[str, str, str]]) -> str:
+    """`chunks`: (chunk_id, location line, text) of the spreadsheet chunks."""
+    blocks = []
+    for chunk_id, location, text in chunks:
+        blocks.append(f"chunk_id: {chunk_id}\n{location}\n{text}")
+    return "Spreadsheet chunks:\n\n" + "\n\n".join(blocks) + f"\n\nQuestion: {question}\n\nJSON plan:"
+
+
+COMPUTE_NOTE_HEAD = """
+COMPUTED RESULT (deterministic: produced by a calculator reading the workbook \
+cells, not by a model; it is not evidence to cite itself). The context chunks \
+below hold the input cells:
+"""
+
+COMPUTE_NOTE_TAIL = """
+State the computed value EXACTLY as given (do not recompute or re-round it) with \
+its units, name the inputs it came from, and cite the citation tags listed for the \
+inputs, copied verbatim. If the question asks for something these results do not \
+cover, answer that part from the context as usual.
+"""
+
+
+def compute_note(steps: list[dict]) -> str:
+    """`steps`: derivation dicts built by `docket.services.query.compute`. Only
+    calculator output goes in here, never model-written text."""
+    lines: list[str] = []
+    for index, step in enumerate(steps, start=1):
+        shown = step["result_text"] + (
+            f" ({step['result_percent_text']})" if step.get("result_percent_text") else ""
+        )
+        lines.append(
+            f"- Step {index}: {step['operation']} = {shown} [units: {step['units']}]; "
+            f"derivation: {step['expression']}"
+        )
+        for inp in step["inputs"]:
+            header = f", column '{inp['header']}'" if inp.get("header") else ""
+            lines.append(
+                f"    input: {inp['source']} > {inp['sheet']}!{inp['address']} = "
+                f"{inp['value']}{header} [units: {inp['units']}]"
+            )
+        lines.append("    cite: " + " ".join(step["citation_labels"]))
+    return COMPUTE_NOTE_HEAD + "\n".join(lines) + "\n" + COMPUTE_NOTE_TAIL

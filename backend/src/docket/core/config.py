@@ -119,6 +119,18 @@ class Settings(BaseSettings):
     # (experiment E4: pool 30 / send 12 raises all-spans recall).
     retrieval_pool_k: int | None = None
 
+    # Deterministic compute stage in the fast path (Upgrade doc 05 section 8
+    # candidate move; env DOCKET_COMPUTE_STAGE_ENABLED). When on and the
+    # question looks arithmetic/aggregate over retrieved spreadsheet chunks, one
+    # short JSON-planning model call names cells and an allow-listed operation,
+    # the existing `calculate` tool executes it, and the answering call gets the
+    # result as a pinned note. Any failure falls back to the normal path. Off
+    # (default) = behaviour is unchanged. The planner never supplies numbers.
+    compute_stage_enabled: bool = False
+    compute_model: str | None = None  # None = the generation model
+    compute_num_predict: int = 384
+    compute_max_steps: int = 4
+
     # 4, not 3: the minimum a well-behaved investigation needs is 3 agent
     # turns (search_knowledge -> read_evidence -> cited final answer). 3
     # left no headroom at all for `docket.services.agent.graph.build_agent`'s

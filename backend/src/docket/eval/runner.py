@@ -356,6 +356,11 @@ class EvalRunner:
                 "rewrite_think": self._context.settings.rewrite_think,
                 "query_scope_enabled": self._context.settings.query_scope_enabled,
                 "query_ambiguity_enabled": self._context.settings.query_ambiguity_enabled,
+                **(
+                    {"compute_stage_enabled": True}
+                    if self._context.settings.compute_stage_enabled
+                    else {}
+                ),
                 "top_k": self._top_k,
                 "requested_mode": self._mode.value if self._mode else "auto",
             },
@@ -379,6 +384,7 @@ class EvalRunner:
         record.standalone_query = result.standalone_query
         record.scoped_to = result.scoped_to
         record.ambiguity = result.ambiguity
+        record.compute = result.compute
         record.citations = [RecordedCitation(**c.model_dump()) for c in result.citations]
         unique = {c.chunk_id: c for c in self._resolver.resolved}  # first-seen order, deduped
         record.retrieved = _to_record_chunks(list(unique.values()))

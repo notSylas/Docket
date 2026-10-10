@@ -269,6 +269,9 @@ class RunRecord(BaseModel):
     # Period ambiguity the answer was asked to resolve, if any (see
     # `docket.services.query.signals`): {"reason": "period", "options": [...]}.
     ambiguity: dict[str, Any] | None = None
+    # Deterministic compute stage (flag compute_stage_enabled): plan, derivation
+    # and fallback reason; None when the stage was off or did not apply.
+    compute: dict[str, Any] | None = None
     agent_trace: list[dict[str, Any]] = Field(default_factory=list)
     model_calls: list[dict[str, Any]] = Field(default_factory=list)
     gold_fingerprint: str | None = None
