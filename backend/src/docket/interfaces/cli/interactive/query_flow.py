@@ -89,7 +89,11 @@ def ask(session: Any, question: str, *, retry: bool = False) -> None:
     if replace_at is not None:
         history = history[:replace_at]
     with session.console.status("Thinking..."):
-        result = service.ask(question, mode=session.mode, history=history)
+        scope = getattr(session, "scope", None)
+        if scope is None:
+            result = service.ask(question, mode=session.mode, history=history)
+        else:
+            result = service.ask(question, mode=session.mode, history=history, scope=scope)
     elapsed = time.perf_counter() - start
     text, numbered = number_citations(result.answer, list(result.citations))
     render(session.console, result, elapsed, text, numbered)

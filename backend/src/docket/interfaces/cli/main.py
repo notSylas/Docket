@@ -31,6 +31,7 @@ from docket.services.sources.resolve import (
 from docket.services.sources.watcher import SourceWatcher
 
 _EVAL_COMMAND_NAME = "eval"
+_PATH_META = "docket.folder_path"
 _eval_click_command: click.Command | None = None
 
 
@@ -76,6 +77,21 @@ class _LazyEvalGroup(typer.core.TyperGroup):
             return _eval_click()
         return super().get_command(ctx, cmd_name)
 
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        """`docket [PATH]`: a first bare word that is not a command name is a
+        folder, so `docket ~/work/proj` works next to `docket chat`. (A folder
+        that shares a command's name is reached as `docket ./chat`.)"""
+        args = list(args)
+        commands = set(self.list_commands(ctx))
+        for i, word in enumerate(args):
+            if word.startswith("-"):
+                continue
+            if word not in commands:
+                ctx.meta[_PATH_META] = word
+                del args[i]
+            break
+        return super().parse_args(ctx, args)
+
 
 app = typer.Typer(
     name="docket",
@@ -95,20 +111,48 @@ app.add_typer(formulas_app, name="formulas")
 def main(
     ctx: typer.Context,
     version: bool = typer.Option(False, "--version", help="Show the version and exit."),
+    all_folders: bool = typer.Option(
+        False, "--all", help="Open the library of all folders instead of the current folder."
+    ),
 ) -> None:
     if version:
         typer.echo(f"docket {__version__}")
         raise typer.Exit()
     if ctx.invoked_subcommand is None:
         if sys.stdin.isatty() and sys.stdout.isatty():
+            folder = _folder_arg(ctx.meta.get(_PATH_META), all_folders)
             # Own window first; fall back to running in place (no display, SSH, ...).
-            if not launcher.spawn_window():
-                _run_interactive()
+            if not launcher.spawn_window(
+                folder=str(folder) if folder is not None else None, all_folders=all_folders
+            ):
+                _run_interactive(folder)
         else:
             typer.echo(ctx.get_help())
 
 
-def _run_interactive() -> None:
+def _folder_arg(path: str | Path | None, all_folders: bool = False) -> Path | None:
+    """The folder Docket opens on: PATH, else the current folder; None for
+    `--all` (library mode). Exits with a plain message for a bad path."""
+    if all_folders:
+        return None
+    try:
+        target = Path(path).expanduser() if path else Path.cwd()
+        resolved = target.resolve()
+    except (OSError, RuntimeError):
+        typer.echo(f"Error: cannot use that folder: {path}", err=True)
+        raise typer.Exit(code=2)
+    if not resolved.is_dir():
+        typer.echo(f"Error: not a folder: {path}", err=True)
+        raise typer.Exit(code=2)
+    return resolved
+
+
+def _set_window_title(folder: Path | None) -> None:
+    sys.stdout.write(f"\033]0;{launcher.window_title(str(folder) if folder else None)}\007")
+    sys.stdout.flush()
+
+
+def _run_interactive(folder: Path | None = None) -> None:
     from docket.infra.inference.health import check_ollama
 
     context = build_context()
@@ -120,21 +164,25 @@ def _run_interactive() -> None:
         health_check=lambda: check_ollama([settings.gen_model, settings.embed_model]),
         # Only prompt when a human is on a TTY; never swallow piped commands.
         offer_first_run=sys.stdin.isatty() and sys.stdout.isatty(),
+        folder=folder,
     )
 
 
 @app.command("chat")
 def chat(
+    path: Path = typer.Argument(None, help="Folder to open on (default: the current folder)."),
+    all_folders: bool = typer.Option(False, "--all", help="Open the library of all folders."),
     in_window: bool = typer.Option(False, "--in-window", hidden=True),
+    folder_opt: Path = typer.Option(None, "--folder", hidden=True),
 ) -> None:
     """Start an interactive session (multi-turn questions and /commands)."""
+    folder = _folder_arg(folder_opt or path, all_folders)
     if not in_window:
-        _run_interactive()
+        _run_interactive(folder)
         return
-    sys.stdout.write("\033]0;Docket\007")
-    sys.stdout.flush()
+    _set_window_title(folder)
     try:
-        _run_interactive()
+        _run_interactive(folder)
     except (KeyboardInterrupt, SystemExit, typer.Exit):
         raise
     except Exception as exc:  # the window would otherwise vanish unread
@@ -152,10 +200,11 @@ def chat(
 @app.command("launch")
 def launch() -> None:
     """Open Docket in its own terminal window (used by the app-menu icon)."""
-    if launcher.spawn_window():
+    # An icon launch has no meaningful folder: it opens the library.
+    if launcher.spawn_window(all_folders=True):
         return
     if sys.stdin.isatty() and sys.stdout.isatty():
-        _run_interactive()
+        _run_interactive(None)
         return
     typer.echo("Could not open a terminal window; run `docket` from a terminal.", err=True)
     raise typer.Exit(code=1)
@@ -184,6 +233,8 @@ def ui_command(
     reduced_motion: bool = typer.Option(False, "--reduced-motion", help="Fewer redraws while working."),
     ascii_mode: bool = typer.Option(False, "--ascii", help="Force ASCII borders (also DOCKET_ASCII=1)."),
     in_window: bool = typer.Option(False, "--in-window", hidden=True),
+    folder_opt: Path = typer.Option(None, "--folder", help="Open on this folder (default: the current folder)."),
+    all_folders: bool = typer.Option(False, "--all", help="Open the library of all folders."),
 ) -> None:
     """Full-screen terminal UI. `docket` opens it in its own window; `docket chat` is the classic prompt."""
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
@@ -191,13 +242,13 @@ def ui_command(
         raise typer.Exit(code=1)
     from docket.interfaces.cli.tui import run_ui
 
+    folder = _folder_arg(folder_opt, all_folders)
     if not in_window:
-        run_ui(build_context(), reduced_motion=reduced_motion, ascii_mode=True if ascii_mode else None)
+        run_ui(build_context(), reduced_motion=reduced_motion, ascii_mode=True if ascii_mode else None, folder=folder)
         return
-    sys.stdout.write("\033]0;Docket\007")
-    sys.stdout.flush()
+    _set_window_title(folder)
     try:
-        run_ui(build_context(), reduced_motion=reduced_motion, ascii_mode=True if ascii_mode else None)
+        run_ui(build_context(), reduced_motion=reduced_motion, ascii_mode=True if ascii_mode else None, folder=folder)
     except (KeyboardInterrupt, SystemExit, typer.Exit):
         raise
     except Exception as exc:  # the window would otherwise vanish unread

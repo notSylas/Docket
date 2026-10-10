@@ -20,10 +20,12 @@ from docket.infra.retrieval.resolver import ChunkNotFoundError, ResolvedEvidence
 class FakeService:
     def __init__(self, error: Exception | None = None):
         self.calls: list[dict] = []
+        self.scopes: list = []
         self.error = error
 
-    def ask(self, question, mode=None, history=None):
+    def ask(self, question, mode=None, history=None, scope=None):
         self.calls.append({"question": question, "mode": mode, "history": list(history or [])})
+        self.scopes.append(scope)
         if self.error:
             raise self.error
         return QueryResult(
@@ -581,25 +583,41 @@ def test_friendly_inference_errors(ctx):
     assert "Model not found: foo:1b" in out and "ollama pull foo:1b" in out
 
 
-def _first_run(ctx, monkeypatch, tmp_path, answers, cwd=None, **kw):
-    work = cwd or (tmp_path / "work")
-    work.mkdir(exist_ok=True)
+def _work(tmp_path, name="work", docs=2):
+    folder = tmp_path / name
+    folder.mkdir(exist_ok=True)
+    for i in range(docs):
+        (folder / f"doc{i}.pdf").write_bytes(b"%PDF-1.4\n" + b"x" * 64)
+    return folder
+
+
+def _first_run(ctx, monkeypatch, tmp_path, answers, cwd=None, docs=2, **kw):
+    work = cwd if cwd is not None else _work(tmp_path, docs=docs)
     monkeypatch.chdir(work)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    return drive(ctx, answers, offer_first_run=True, **kw)
+    return drive(ctx, answers, offer_first_run=True, folder=work, **kw)
 
 
-def test_first_run_yes_yes_registers_and_ingests(ctx, monkeypatch, tmp_path):
-    out, _ = _first_run(ctx, monkeypatch, tmp_path, ["y", "y"])
+def test_first_run_yes_registers_and_ingests(ctx, monkeypatch, tmp_path):
+    out, _ = _first_run(ctx, monkeypatch, tmp_path, ["y"])
     sources = ctx.source_manager.list_sources()
     assert len(sources) == 1
+    assert sources[0].display_name == "work"
     assert "1 ingested" in out
+    # consent is remembered for the data directory
+    import json
+
+    prefs = json.loads((tmp_path / "data" / "preferences.json").read_text())
+    assert "folder_consent_v1" in prefs
 
 
-def test_first_run_yes_then_no_ingest(ctx, monkeypatch, tmp_path):
-    out, _ = _first_run(ctx, monkeypatch, tmp_path, ["y", "n"])
-    assert len(ctx.source_manager.list_sources()) == 1
-    assert "ingested," not in out
+def test_first_run_consent_is_asked_once(ctx, monkeypatch, tmp_path):
+    _first_run(ctx, monkeypatch, tmp_path, ["y"])
+    other = _work(tmp_path, "other", docs=1)
+    out, _ = _first_run(ctx, monkeypatch, tmp_path, [], cwd=other)  # no answer needed
+    assert "Index them now?" not in out
+    assert "Reading 1 document in" in out
+    assert len(ctx.source_manager.list_sources()) == 2
 
 
 def test_first_run_no_and_eof(ctx, monkeypatch, tmp_path):
@@ -609,31 +627,63 @@ def test_first_run_no_and_eof(ctx, monkeypatch, tmp_path):
     assert ctx.source_manager.list_sources() == []
     _first_run(ctx, monkeypatch, tmp_path, [KeyboardInterrupt()])
     assert ctx.source_manager.list_sources() == []
+    assert not (tmp_path / "data" / "preferences.json").exists()
 
 
-def test_first_run_skipped_when_sources_exist(ctx, monkeypatch, tmp_path):
+def test_first_run_empty_folder_explains(ctx, monkeypatch, tmp_path):
+    out, _ = _first_run(ctx, monkeypatch, tmp_path, ["y"], docs=0)
+    assert "No supported documents in" in out
+    assert ctx.source_manager.list_sources() == []
+
+
+def test_first_run_covered_folder_reuses_source(ctx, monkeypatch, tmp_path):
+    root = _work(tmp_path, "proj", docs=1)
+    sub = root / "docs"
+    sub.mkdir()
+    (sub / "a.pdf").write_bytes(b"%PDF-1.4\n")
+    ctx.source_manager.register_source(root, display_name="proj")
+    out, _ = _first_run(ctx, monkeypatch, tmp_path, ["y"], cwd=sub)
+    assert "already indexed" in out and "proj / docs" in out
+    assert len(ctx.source_manager.list_sources()) == 1  # nothing new, nothing indexed
+
+
+def test_first_run_scopes_questions_to_the_folder(ctx, monkeypatch, tmp_path):
+    out, svc = _first_run(ctx, monkeypatch, tmp_path, ["y", "what is in here?"])
+    assert svc.calls  # the question ran
+    assert svc.scopes and svc.scopes[0] is not None
+    assert svc.scopes[0].kind.value == "source"
+
+
+def test_first_run_offered_even_when_other_sources_exist(ctx, monkeypatch, tmp_path):
     other = tmp_path / "other"
     other.mkdir()
     ctx.source_manager.register_source(other)
     _first_run(ctx, monkeypatch, tmp_path, ["y"])
-    assert len(ctx.source_manager.list_sources()) == 1
+    assert len(ctx.source_manager.list_sources()) == 2
 
 
 def test_first_run_skipped_in_home_and_root(ctx, monkeypatch, tmp_path):
     home = tmp_path / "home"
     home.mkdir()
+    (home / "a.pdf").write_bytes(b"%PDF-1.4\n")
     _first_run(ctx, monkeypatch, tmp_path, ["y"], cwd=home)
     assert ctx.source_manager.list_sources() == []
     monkeypatch.chdir("/")
-    drive(ctx, ["y"], offer_first_run=True)
+    drive(ctx, ["y"], offer_first_run=True, folder=Path("/"))
+    assert ctx.source_manager.list_sources() == []
+
+
+def test_first_run_needs_a_folder(ctx, monkeypatch, tmp_path):
+    work = _work(tmp_path)
+    monkeypatch.chdir(work)
+    drive(ctx, ["y"], offer_first_run=True)  # no folder given: nothing is offered
     assert ctx.source_manager.list_sources() == []
 
 
 def test_first_run_off_by_default(ctx, monkeypatch, tmp_path):
-    work = tmp_path / "work"
-    work.mkdir()
+    work = _work(tmp_path)
     monkeypatch.chdir(work)
-    drive(ctx, ["y"])
+    drive(ctx, ["y"], folder=work)
     assert ctx.source_manager.list_sources() == []
 
 

@@ -411,10 +411,49 @@ class RealBackend:
 
     def add_source(self, path: str) -> SourceView:
         try:
-            source = self._ctx.source_manager.register_source(Path(path))
+            source = self._ctx.source_manager.register_source(
+                Path(path), display_name=Path(path).name or None
+            )
         except SourceCoveredError as exc:
             raise BackendError(f"Already covered by {exc.covering_name}.") from exc
         except ValueError as exc:
+            raise BackendError(f"Error: {exc}") from exc
+        return SourceView(source.id, Path(source.path).name or source.path, source.path, fd.READY, [], last_indexed="Never indexed")
+
+    # -- folder-first launch -------------------------------------------------
+    def plan_for(self, folder: Any) -> Any:
+        """What opening Docket on `folder` means (see `resolve_session`); a
+        scan problem degrades to the library rather than failing the launch."""
+        from docket.services.sources.session import KIND_LIBRARY, SessionPlan, resolve_session
+
+        try:
+            return resolve_session(
+                folder, self._ctx.source_manager, session_factory=self._ctx.session_factory
+            )
+        except Exception as exc:  # noqa: BLE001
+            return SessionPlan(KIND_LIBRARY, reason=_first_line(exc))
+
+    def consent_given(self) -> bool:
+        from docket.services.sources.session import has_consent
+
+        return has_consent(Path(self._ctx.settings.data_dir))
+
+    def record_consent(self) -> None:
+        from docket.services.sources.session import record_consent
+
+        try:
+            record_consent(Path(self._ctx.settings.data_dir))
+        except OSError:
+            pass  # asked again next time; never blocks the folder
+
+    def start_folder(self, plan: Any, excluded: tuple[str, ...] = ()) -> SourceView:
+        from docket.services.sources.session import start_folder
+
+        try:
+            source = start_folder(self._ctx.source_manager, plan, excluded_subfolders=tuple(excluded))
+        except SourceCoveredError as exc:
+            raise BackendError(f"Already covered by {exc.covering_name}.") from exc
+        except (ValueError, InvalidSourceTransitionError, SourceNotFoundError) as exc:
             raise BackendError(f"Error: {exc}") from exc
         return SourceView(source.id, Path(source.path).name or source.path, source.path, fd.READY, [], last_indexed="Never indexed")
 

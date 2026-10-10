@@ -1421,11 +1421,24 @@ class WelcomeOverlay(Overlay):
     has_list = False
 
     def __init__(self, ui: Any, blocked: bool = False) -> None:
+        plan = getattr(ui, "session_plan", None)
+        self.suggestions: tuple[tuple[str, int], ...] = tuple(getattr(plan, "suggestions", ()) or ())
+        self.has_list = bool(self.suggestions)  # an empty library offers folders to start from
         super().__init__(ui)
 
     @property
     def blocked(self) -> bool:
         return self.ui.readiness.blocked
+
+    def entries(self) -> list[Entry]:
+        out: list[Entry] = []
+        for path, n in self.suggestions:
+            name = path.rstrip("/").rsplit("/", 1)[-1] or path
+            out.append(Entry(path, name, f"{n} document{'s' if n != 1 else ''}", data=path))
+        return out
+
+    def activate(self, entry: Entry) -> None:
+        self.ui.open_folder(entry.data)
 
     def buttons(self) -> list[Btn]:
         return [
@@ -1436,6 +1449,8 @@ class WelcomeOverlay(Overlay):
         ]
 
     def hint(self) -> str:
+        if self.suggestions:
+            return "Up/Down choose a folder · Enter read it · Tab actions · Esc close"
         return "Tab move · Enter activate · Esc close"
 
     def build_body(self, iw: int):
@@ -1450,7 +1465,17 @@ class WelcomeOverlay(Overlay):
         if rep_.message:
             rows.append([])
             rows.append([(MUTED, rep_.message)])
-        return rows, None
+        sel_row = None
+        es = self.entries()
+        if es:
+            rows.append([])
+            rows.append([(MUTED, "Folders here that hold documents:")])
+            self._clamp_sel()
+            for i, e in enumerate(es):
+                if i == self.sel:
+                    sel_row = len(rows)
+                rows.append(self.entry_row(e, i == self.sel and self.zone == "list", iw))
+        return rows, sel_row
 
     def press(self, key: str) -> None:
         if key == "add":
@@ -1461,6 +1486,177 @@ class WelcomeOverlay(Overlay):
             self.ui.push(SettingsOverlay(self.ui, "system"))
         else:
             super().press(key)
+
+
+_TYPE_LABELS = {".pdf": "PDF", ".docx": "Word", ".xlsx": "Excel", ".pptx": "PowerPoint"}
+
+
+def _plural(n: int, noun: str) -> str:
+    return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
+
+
+def _size_text(n: int) -> str:
+    value = float(n)
+    for unit in ("bytes", "KB", "MB", "GB"):
+        if value < 1024 or unit == "GB":
+            return f"{int(value)} bytes" if unit == "bytes" else f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{n} bytes"
+
+
+class FolderConsentOverlay(Overlay):
+    """First folder-first launch in a data directory: one key to agree."""
+
+    name = "folder-consent"
+    title = "Read this folder?"
+    has_list = False
+
+    def __init__(self, ui: Any, plan: Any) -> None:
+        self.plan = plan
+        super().__init__(ui)
+
+    def build_body(self, iw: int):
+        n = self.plan.documents
+        rows = wrap_text(
+            f"Docket will read {_plural(n, 'document')} in {self.plan.name} and make "
+            "them searchable on this PC. Your files are not changed.",
+            iw,
+            TEXT,
+        )
+        rows.append([])
+        rows.extend(wrap_text("You will only be asked this once.", iw, MUTED))
+        return rows, None
+
+    def buttons(self) -> list[Btn]:
+        return [Btn("go", "Continue", hot="c"), Btn("no", "Not now", hot="n")]
+
+    def hint(self) -> str:
+        return "Enter continue · Esc not now"
+
+    def text(self, s: str) -> None:
+        if s.lower() == "y":
+            self.press("go")
+            return
+        super().text(s)
+
+    def press(self, key: str) -> None:
+        if key == "go":
+            self.ui.consent_accepted(self.plan)
+        else:
+            self.ui.close_top()
+
+    def on_dismiss(self) -> None:
+        self.ui.consent_declined()
+
+
+class FolderPreviewOverlay(Overlay):
+    """A broad or large folder: counts by type and subfolder, skipped counts,
+    a time estimate, and a checkbox per subfolder (unticked ones are saved as
+    exclude rules on the new source)."""
+
+    name = "folder-preview"
+    title = "Choose what to read"
+
+    def __init__(self, ui: Any, plan: Any) -> None:
+        self.plan = plan
+        self.ticked: dict[str, bool] = {name: True for name, _n in plan.scan.subfolders}
+        super().__init__(ui)
+
+    # ---- numbers ---------------------------------------------------------
+    def selected(self) -> int:
+        scan = self.plan.scan
+        return scan.root_documents + sum(n for name, n in scan.subfolders if self.ticked.get(name))
+
+    def excluded(self) -> tuple[str, ...]:
+        return tuple(name for name, on in self.ticked.items() if not on)
+
+    # ---- content ---------------------------------------------------------
+    def entries(self) -> list[Entry]:
+        out: list[Entry] = []
+        for name, n in self.plan.scan.subfolders:
+            box = "[x]" if self.ticked.get(name) else "[ ]"
+            out.append(Entry(name, f"{box} {name}/", _plural(n, "document"), data=name))
+        return out
+
+    def preface(self, iw: int) -> list[Row]:
+        from docket.services.sources.scan import format_duration
+
+        scan = self.plan.scan
+        more = " or more" if scan.incomplete else ""
+        rows = wrap_text(
+            f"{self.plan.name} holds {_plural(scan.documents, 'document')}{more} "
+            f"({_size_text(scan.total_bytes)}).",
+            iw,
+            TEXT,
+        )
+        types = " · ".join(
+            f"{n} {_TYPE_LABELS.get(ext, ext.lstrip('.'))}"
+            for ext, n in sorted(scan.by_type.items(), key=lambda kv: -kv[1])
+        )
+        if types:
+            rows.extend(wrap_text("By type: " + types, iw, MUTED))
+        total = max(scan.documents, 1)
+        est = scan.estimated_seconds * (self.selected() / total)
+        rows.extend(wrap_text(f"Reading the ticked folders would take {format_duration(est)}.", iw, MUTED))
+        skipped: list[str] = []
+        if scan.skipped.get("ignored_folders"):
+            skipped.append(f"{_plural(scan.skipped['ignored_folders'], 'folder')} Docket never reads")
+        if scan.skipped.get("ignored_files"):
+            skipped.append(_plural(scan.skipped["ignored_files"], "ignored file"))
+        if scan.skipped.get("invalid_files"):
+            skipped.append(f"{_plural(scan.skipped['invalid_files'], 'file')} that are not real documents")
+        if skipped:
+            rows.extend(wrap_text("Skipped: " + ", ".join(skipped) + ".", iw, MUTED))
+        if scan.incomplete:
+            rows.extend(wrap_text("Only part of this folder was checked; there may be more.", iw, "class:attention"))
+        rows.append([])
+        if scan.subfolders:
+            rows.extend(wrap_text("Untick a folder to leave it out (Space).", iw, MUTED))
+        return rows
+
+    def postface(self, iw: int) -> list[Row]:
+        n = self.plan.scan.root_documents
+        if n:
+            return [[], *wrap_text(f"Plus {_plural(n, 'document')} directly in this folder.", iw, MUTED)]
+        return []
+
+    def buttons(self) -> list[Btn]:
+        n = self.selected()
+        return [
+            Btn("go", f"Index {_plural(n, 'document')}", n > 0, "Tick at least one folder first.", hot="i"),
+            Btn("other", "Choose another folder", hot="c"),
+            Btn("cancel", "Cancel", hot="n"),
+        ]
+
+    def hint(self) -> str:
+        return "Space tick or untick · Enter toggles · Tab actions · Esc cancel"
+
+    # ---- keys ------------------------------------------------------------
+    def _toggle(self, name: str) -> None:
+        self.ticked[name] = not self.ticked.get(name, True)
+
+    def activate(self, entry: Entry) -> None:
+        self._toggle(entry.data)
+
+    def text(self, s: str) -> None:
+        if s == " " and self.zone == "list":
+            es = self.entries()
+            if es:
+                self._toggle(es[min(self.sel, len(es) - 1)].data)
+            return
+        super().text(s)
+
+    def press(self, key: str) -> None:
+        if key == "go":
+            self.ui.begin_folder(self.plan, self.excluded())
+        elif key == "other":
+            self.ui.close_top()
+            self.ui.push(AddFolderOverlay(self.ui))
+        else:
+            self.ui.close_top()
+
+    def on_dismiss(self) -> None:
+        self.ui.consent_declined()
 
 
 class ConfirmOverlay(Overlay):

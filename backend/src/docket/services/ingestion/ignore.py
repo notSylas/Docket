@@ -16,6 +16,7 @@ from __future__ import annotations
 import fnmatch
 import json
 import os
+import time
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
@@ -72,10 +73,11 @@ def _compile_pattern(line: str) -> _Pattern | None:
     if not line or line.startswith("#") or line.startswith("!"):
         return None
     dir_only = line.endswith("/")
+    anchored = line.startswith("/")  # gitignore: a leading slash anchors to the root
     line = line.strip("/")
     if not line:
         return None
-    return _Pattern(line, dir_only, "/" in line)
+    return _Pattern(line, dir_only, "/" in line or anchored)
 
 
 def parse_rules_json(raw: object) -> dict:
@@ -208,6 +210,10 @@ class DiscoveryReport:
     # Files whose bytes contradict their extension (e.g. a text file named
     # x.pdf): not real documents, never handed to a parser.
     invalid_skipped: int = 0
+    # Set when a `max_entries` / `time_budget_s` bound stopped the walk early
+    # (bounded scans only; ingestion never passes a budget).
+    incomplete: bool = False
+    entries_scanned: int = 0
 
 
 def discover(
@@ -216,15 +222,34 @@ def discover(
     extensions: frozenset[str] | set[str],
     enabled: bool = True,
     extra_rules: object = None,
+    max_entries: int | None = None,
+    time_budget_s: float | None = None,
+    count_ignored: bool = True,
 ) -> DiscoveryReport:
     """Walk `root`, pruning ignored directories. With `enabled=False` nothing
     is ignored (escape hatch: DOCKET_INGEST_IGNORE_ENABLED=false).
-    `extra_rules` is the source's stored `rules_json`."""
+    `extra_rules` is the source's stored `rules_json`.
+
+    The remaining parameters serve bounded scans (`services/sources/scan.py`)
+    and default to the unbounded behaviour ingestion relies on: stop after
+    `max_entries` directory entries or `time_budget_s` seconds (reported as
+    `incomplete`), and `count_ignored=False` skips counting the documents
+    inside ignored folders (which would walk e.g. a whole `node_modules`)."""
     root = Path(root)
     rules = IgnoreRules.for_root(root, extra_rules) if enabled else IgnoreRules()
     report = DiscoveryReport(files=[])
+    deadline = None if time_budget_s is None else time.monotonic() + time_budget_s
+
+    def over_budget() -> bool:
+        if max_entries is not None and report.entries_scanned > max_entries:
+            return True
+        return deadline is not None and time.monotonic() > deadline
 
     for dirpath, dirnames, filenames in os.walk(root):
+        report.entries_scanned += len(dirnames) + len(filenames)
+        if over_budget():
+            report.incomplete = True
+            break
         here = Path(dirpath)
         rel_dir = here.relative_to(root)
         rel_prefix = "" if str(rel_dir) == "." else rel_dir.as_posix() + "/"
@@ -233,7 +258,8 @@ def discover(
         for d in dirnames:
             if enabled and rules.entry_ignored(rel_prefix + d, d, True):
                 report.dirs_skipped += 1
-                report.files_skipped += _count_supported(here / d, extensions)
+                if count_ignored:
+                    report.files_skipped += _count_supported(here / d, extensions)
             else:
                 kept.append(d)
         dirnames[:] = kept
@@ -241,6 +267,9 @@ def discover(
         for f in filenames:
             if Path(f).suffix.lower() not in extensions:
                 continue
+            if deadline is not None and time.monotonic() > deadline:
+                report.incomplete = True
+                break
             if enabled and rules.entry_ignored(rel_prefix + f, f, False):
                 report.files_skipped += 1
                 continue

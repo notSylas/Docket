@@ -83,6 +83,32 @@ def _is_within(child: Path, parent: Path) -> bool:
     return c != p and p in c.parents
 
 
+is_within = _is_within  # public name for the session/scan layer
+
+
+def child_excludes(path: Path, sources: list[Source]) -> list[str]:
+    """Exclude patterns a registration of `path` stores for existing
+    ACTIVE/MISSING sources that lie inside it (they stay their own sources).
+    Shared with the session layer so a scan counts what indexing would read."""
+    excludes: list[str] = []
+    for other in sources:
+        if other.source_type != "local_folder":
+            continue
+        if other.status in (SourceStatus.ACTIVE, SourceStatus.MISSING) and _is_within(
+            Path(other.path), path
+        ):
+            try:
+                rel = Path(os.path.realpath(other.path)).relative_to(
+                    Path(os.path.realpath(path))
+                )
+            except ValueError:
+                continue
+            pattern = "/".join(_glob_escape(part) for part in rel.parts) + "/"
+            if pattern not in excludes:
+                excludes.append(pattern)
+    return sorted(excludes)
+
+
 class InvalidSourceTransitionError(Exception):
     """Raised when a caller asks for a `SourceStatus` transition that isn't
     reachable from the source's current status -- e.g. trying to
@@ -156,21 +182,8 @@ class SourceManager:
                     raise SourceCoveredError(
                         path, other, display_names(existing).get(other.id)
                     )
-            excludes: list[str] = []
-            for other in local:
-                if other.status in (SourceStatus.ACTIVE, SourceStatus.MISSING) and _is_within(
-                    Path(other.path), path
-                ):
-                    try:
-                        rel = Path(os.path.realpath(other.path)).relative_to(
-                            Path(os.path.realpath(path))
-                        )
-                    except ValueError:
-                        continue
-                    pattern = "/".join(_glob_escape(part) for part in rel.parts) + "/"
-                    if pattern not in excludes:
-                        excludes.append(pattern)
-            rules = dump_rules_json({"exclude": sorted(excludes)}) if excludes else None
+            excludes = child_excludes(path, local)
+            rules = dump_rules_json({"exclude": excludes}) if excludes else None
 
             authorized_source = AuthorizedSource(
                 workspace_id=workspace_id, scope_path=str(path)
@@ -187,6 +200,37 @@ class SourceManager:
                 display_name=(display_name or "").strip() or None,
                 rules_json=rules,
             )
+            session.add(source)
+            session.commit()
+            session.refresh(source)
+            return source
+
+    def set_rules(self, source_id: str, rules: dict | None) -> Source:
+        """Replace a source's stored per-folder rules (`rules_json`).
+
+        `rules` is {"exclude": [...], "include": [...], "ignored_files":
+        [...]} (each a list of strings; a missing key means empty). Anything
+        else raises ValueError and nothing is written. An empty rules dict (or
+        None) clears the column. One transaction, so a reader never sees a
+        half-written value. Merge with the current rules first when you mean
+        to add to them (`parse_rules_json(source.rules_json)`)."""
+        if rules is None:
+            rules = {}
+        if not isinstance(rules, dict):
+            raise ValueError("rules must be a mapping")
+        unknown = set(rules) - {"exclude", "include", "ignored_files", "version"}
+        if unknown:
+            raise ValueError(f"unknown rule keys: {', '.join(sorted(unknown))}")
+        for key in ("exclude", "include", "ignored_files"):
+            value = rules.get(key, [])
+            if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+                raise ValueError(f"rules[{key!r}] must be a list of strings")
+        text = dump_rules_json(rules)
+        with self._session_factory() as session:
+            source = session.get(Source, source_id)
+            if source is None:
+                raise SourceNotFoundError(source_id)
+            source.rules_json = text
             session.add(source)
             session.commit()
             session.refresh(source)

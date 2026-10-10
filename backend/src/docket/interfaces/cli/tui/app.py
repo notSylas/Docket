@@ -151,8 +151,11 @@ class TuiApp:
         input: Any = None,
         output: Any = None,
         tick_interval: float = 0.5,
+        session_plan: Any = None,
     ) -> None:
         self.backend = backend
+        self.session_plan = session_plan  # a SessionPlan (folder-first launch) or None
+        self._pending_start: tuple[Any, tuple[str, ...]] | None = None
         self.ascii_mode = (
             detect_ascii(encoding=getattr(sys.stdout, "encoding", None)) if ascii_mode is None else ascii_mode
         )
@@ -205,8 +208,102 @@ class TuiApp:
     # ------------------------------------------------------------------
     def _seed(self) -> None:
         self.add_message(Message("system", self.backend.intro_notice))
+        if self.session_plan is not None and self._apply_plan(self.session_plan):
+            return
         if not self.world.sources:
             self.overlays.append(ov.WelcomeOverlay(self))
+
+    # ---- folder-first launch ------------------------------------------------
+    def _apply_plan(self, plan: Any, explicit: bool = False) -> bool:
+        """Act on a `SessionPlan`. Returns True when it fully handled the
+        start (so the usual welcome is not needed), False to fall back to the
+        library behaviour. Never starts work here: indexing begins from
+        `_start_ticker` once the UI loop exists."""
+        kind = getattr(plan, "kind", "library")
+        if kind == "covered":
+            src = self.world.find(plan.source.id)
+            if src is None:
+                return False
+            if plan.relative_path:
+                self.scope = Scope("folder", src.id, plan.relative_path)
+            else:
+                self.scope = Scope("source", src.id)
+            self.notice(f"Searching {self.scope_label()}. It is already indexed.")
+            return True
+        if kind == "new":
+            if plan.needs_preview:
+                self.overlays.append(ov.FolderPreviewOverlay(self, plan))
+            elif explicit or self.backend.consent_given():
+                self._pending_start = (plan, ())
+            else:
+                self.overlays.append(ov.FolderConsentOverlay(self, plan))
+            return True
+        if kind == "empty":
+            self.overlays.append(
+                ov.ConfirmOverlay(
+                    self,
+                    "Nothing to read here",
+                    f"Docket found nothing to read in {plan.name}: {plan.reason}.",
+                    [("Open the library", self.open_library), ("Close", None)],
+                )
+            )
+            return True
+        return False
+
+    def open_library(self) -> None:
+        if self.world.sources:
+            self.push(ov.SourcesOverlay(self))
+        else:
+            self.push(ov.WelcomeOverlay(self))
+
+    def open_folder(self, path: str) -> None:
+        """Open Docket on a folder chosen at run time (a suggestion): the same
+        folder-first rules as a launch, with the chosen folder as the plan."""
+        plan = self.backend.plan_for(path)
+        self.overlays = [o for o in self.overlays if o.name != "welcome"]
+        if getattr(plan, "kind", "library") == "library":
+            self.notice("That is a broad place. Choose a folder inside it.", "attention")
+            self.open_library()
+        elif self._apply_plan(plan):
+            if self._pending_start is not None:
+                self._run_pending_start()
+            self._sync_focus()
+            self.invalidate()
+
+    def begin_folder(self, plan: Any, excluded: tuple[str, ...] = ()) -> None:
+        """Register the planned folder (with unticked subfolders as exclude
+        rules) and start indexing in the footer; the composer stays usable."""
+        try:
+            src = self.backend.start_folder(plan, tuple(excluded))
+        except BackendError as exc:
+            self.notice(str(exc), "error")
+            return
+        self.refresh_world()
+        src = self.world.find(src.id) or src
+        self.overlays = [o for o in self.overlays if o.name not in ("welcome", "folder-consent", "folder-preview")]
+        self.scope = Scope("source", src.id)
+        n = plan.documents
+        if plan.scan is not None and excluded:
+            n -= sum(plan.scan.by_subfolder.get(name, 0) for name in excluded)
+        self.notice(f"Reading {n} document{'s' if n != 1 else ''} in {plan.name}.")
+        self.start_job(src, "Indexing", "", show_overlay=False)
+        self._sync_focus()
+
+    def _run_pending_start(self) -> None:
+        pending, self._pending_start = self._pending_start, None
+        if pending is not None:
+            self.begin_folder(*pending)
+
+    def consent_accepted(self, plan: Any) -> None:
+        self.backend.record_consent()
+        self.begin_folder(plan)
+
+    def consent_declined(self) -> None:
+        """The folder offer was dismissed: the usual start for an empty library."""
+        if not self.world.sources and not any(o.name == "welcome" for o in self.overlays):
+            self.overlays.append(ov.WelcomeOverlay(self))
+        self._sync_focus()
+        self.invalidate()
 
     @property
     def blocked(self) -> bool:
@@ -740,6 +837,9 @@ class TuiApp:
             )
             return
         self.overlays.pop()
+        dismissed = getattr(top, "on_dismiss", None)
+        if callable(dismissed):
+            dismissed()
         self._sync_focus()
         self.invalidate()
 
@@ -848,7 +948,7 @@ class TuiApp:
             self.notice(f"Not ready: {report.help or 'a required service or model is missing.'} Open Settings (F8) for details.", "attention")
 
     # ---- indexing ---------------------------------------------------------
-    def start_job(self, src: SourceView, verb: str, on_done: str) -> None:
+    def start_job(self, src: SourceView, verb: str, on_done: str, show_overlay: bool = True) -> None:
         if self.busy:
             self.notice("Another operation is running. Wait for it, or press Ctrl+C to stop it.", "attention")
             return
@@ -856,7 +956,8 @@ class TuiApp:
             self.job = IndexJob(src.id, src.name, verb, total=max(len(src.files), 1), on_done=on_done)
         else:
             self._start_real_job(src, verb, on_done)
-        self.push(ov.IndexingOverlay(self))
+        if show_overlay:
+            self.push(ov.IndexingOverlay(self))
 
     def _start_real_job(self, src: SourceView, verb: str, on_done: str) -> None:
         job = IndexJob(src.id, src.name, verb, total=0, on_done=on_done, real=True, started=time.monotonic())
@@ -895,6 +996,11 @@ class TuiApp:
         self._job_finished(job)
 
     def add_folder(self, path: str) -> None:
+        if not self.backend.demo:
+            plan = self.backend.plan_for(path)
+            if getattr(plan, "kind", "") == "new" and plan.needs_preview:
+                self.push(ov.FolderPreviewOverlay(self, plan))
+                return
         try:
             src = self.backend.add_source(path)
         except BackendError as exc:
@@ -1346,6 +1452,8 @@ class TuiApp:
         self.application.create_background_task(self._ticker())
         if not self.backend.demo:
             self.refresh_readiness()
+        if self._pending_start is not None:
+            self._run_pending_start()
 
     async def _ticker(self) -> None:
         while True:
