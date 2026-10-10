@@ -65,7 +65,7 @@ def test_terminal_var_with_extra_args(monkeypatch):
 # -- argv --------------------------------------------------------------------
 
 
-CMD = ["env", "DOCKET_IN_WINDOW=1", "/opt/bin/docket", "chat", "--in-window"]
+CMD = ["env", "DOCKET_IN_WINDOW=1", "/opt/bin/docket", "ui", "--in-window"]
 
 
 @pytest.mark.parametrize(
@@ -112,7 +112,7 @@ def test_build_spawn_argv_absolute_path_and_env_forwarding():
     assert "DOCKET_GEN_MODEL=m" in inner
     assert "DOCKET_IN_WINDOW=1" in inner
     assert not any(a.startswith(("PATH=", "HOME=")) for a in inner)
-    assert inner[-3:] == ["/opt/bin/docket", "chat", "--in-window"]
+    assert inner[-3:] == ["/opt/bin/docket", "ui", "--in-window"]
 
 
 def test_resolve_docket_command_absolute(monkeypatch, tmp_path):
@@ -331,3 +331,13 @@ def test_install_uninstall_commands(monkeypatch):
     assert launcher.desktop_file_path().exists()
     assert r.invoke(cli_main.app, ["uninstall-launcher"]).exit_code == 0
     assert not launcher.desktop_file_path().exists()
+
+
+def test_spawn_argv_uses_ui_by_default_and_chat_when_classic():
+    term = ["/usr/bin/gnome-terminal"]
+    default = launcher.build_spawn_argv(term, "/tmp", env={}, docket_command=["/opt/bin/docket"])
+    assert default[-2:] == ["ui", "--in-window"]
+    classic = launcher.build_spawn_argv(
+        term, "/tmp", env={"DOCKET_CLASSIC": "1"}, docket_command=["/opt/bin/docket"]
+    )
+    assert classic[-2:] == ["chat", "--in-window"]

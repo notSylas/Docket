@@ -177,14 +177,34 @@ def tui_demo(
 def ui_command(
     reduced_motion: bool = typer.Option(False, "--reduced-motion", help="Fewer redraws while working."),
     ascii_mode: bool = typer.Option(False, "--ascii", help="Force ASCII borders (also DOCKET_ASCII=1)."),
+    in_window: bool = typer.Option(False, "--in-window", hidden=True),
 ) -> None:
-    """Full-screen terminal UI on your real sources (preview; `docket` and `docket chat` are unchanged)."""
+    """Full-screen terminal UI. `docket` opens it in its own window; `docket chat` is the classic prompt."""
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         typer.echo("docket ui needs an interactive terminal. Use `docket chat` or `docket query`.", err=True)
         raise typer.Exit(code=1)
     from docket.interfaces.cli.tui import run_ui
 
-    run_ui(build_context(), reduced_motion=reduced_motion, ascii_mode=True if ascii_mode else None)
+    if not in_window:
+        run_ui(build_context(), reduced_motion=reduced_motion, ascii_mode=True if ascii_mode else None)
+        return
+    sys.stdout.write("\033]0;Docket\007")
+    sys.stdout.flush()
+    try:
+        run_ui(build_context(), reduced_motion=reduced_motion, ascii_mode=True if ascii_mode else None)
+    except (KeyboardInterrupt, SystemExit, typer.Exit):
+        raise
+    except Exception as exc:  # the window would otherwise vanish unread
+        import traceback
+
+        traceback.print_exc()
+        print(f"\nDocket stopped unexpectedly: {exc}")
+        print("Run `docket chat` for the classic prompt.")
+        try:
+            input("Press Enter to close this window...")
+        except (EOFError, KeyboardInterrupt):
+            pass
+        raise typer.Exit(code=1) from exc
 
 
 @app.command("install-launcher")

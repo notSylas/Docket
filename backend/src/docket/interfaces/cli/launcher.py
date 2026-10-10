@@ -149,7 +149,10 @@ def build_spawn_argv(
     docket_command: list[str] | None = None,
 ) -> list[str]:
     docket = docket_command if docket_command is not None else resolve_docket_command()
-    inner = ["env", *forwarded_env(env), *docket, "chat", "--in-window"]
+    # The full-screen UI is the default in its own window; DOCKET_CLASSIC=1
+    # keeps the classic prompt there.
+    entry = "chat" if (env if env is not None else os.environ).get("DOCKET_CLASSIC") == "1" else "ui"
+    inner = ["env", *forwarded_env(env), *docket, entry, "--in-window"]
     return build_terminal_argv(terminal, inner, cwd)
 
 

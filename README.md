@@ -163,3 +163,7 @@ A Tauri + React desktop GUI exists in [`desktop/`](desktop/) but is currently pa
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE).
+
+### Full-screen UI
+
+Bare `docket` opens the full-screen UI in its own window. Set `DOCKET_CLASSIC=1` to open the classic prompt there instead, or run `docket chat` for the classic prompt in the current terminal. `docket ui` runs the full-screen UI in the current terminal.
