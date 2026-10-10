@@ -29,6 +29,7 @@ Read first: `13-terminal-ui-screen-a-design.md`, then the "Review notes" in sect
 | `services/sources/**`, readiness/inventory services | UI work | |
 | `services/ingestion/**` (progress, cancellation) | UI work | |
 | DB models and Alembic migrations | UI work (single owner, linear chain) | tell the accuracy agent before adding one |
+| Migration `0012` (revision `b8e1f3a45c92`, UI work) | UI work | takes the one migration slot: `sources.display_name`, `sources.rules_json`, `evidence_versions.failure_reason`, `evidence_versions.source_mtime`; all nullable; chain on top of it |
 | `QueryService.ask()` signature, `RunContext` plumbing (`services/agent/run_context.py`) | UI work | scope, progress callback, cancellation token ride on `RunContext` |
 | Inside `_ask_fast` / `_ask_agent` bodies, `services/query/compute.py`, `routing.py`, `trust.py`, prompts | accuracy work | rebase before editing `service.py` |
 | `eval/**`, `backend/eval-public/**`, `Upgrade/05-08` | accuracy work | do not edit gold sets or corpora |

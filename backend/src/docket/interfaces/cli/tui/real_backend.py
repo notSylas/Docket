@@ -39,6 +39,7 @@ from docket.infra.retrieval.resolver import ChunkNotFoundError, ResolvedEvidence
 from docket.interfaces.cli.interactive.render import number_citations
 from docket.interfaces.cli.quiet import condense_error, display_path, ignore_notices, quiet_ingest
 from docket.interfaces.cli.tui import fake_data as fd
+from docket.services.sources.resolve import display_names
 from docket.interfaces.cli.tui.backend import (
     AnswerView,
     AskOutcome,
@@ -61,7 +62,11 @@ from docket.interfaces.cli.tui.backend import (
 from docket.services.ingestion.pipeline import SUPPORTED_EXTENSIONS, SourceNotActiveError
 from docket.services.query.classifier import QueryMode
 from docket.services.query.conversation import ConversationTurn
-from docket.services.sources.manager import InvalidSourceTransitionError, SourceNotFoundError
+from docket.services.sources.manager import (
+    InvalidSourceTransitionError,
+    SourceCoveredError,
+    SourceNotFoundError,
+)
 
 _STATUS_MAP = {
     SourceStatus.ACTIVE: fd.READY,
@@ -170,19 +175,9 @@ class RealBackend:
 
     # -- state -------------------------------------------------------------
     def _names(self, sources: list[Source]) -> dict[str, str]:
-        """Display names: the folder name, with its parent added when two collide."""
-        base = {s.id: (Path(s.path).name or s.path) for s in sources}
-        counts: dict[str, int] = {}
-        for n in base.values():
-            counts[n] = counts.get(n, 0) + 1
-        out: dict[str, str] = {}
-        for s in sources:
-            n = base[s.id]
-            if counts[n] > 1:
-                parent = Path(s.path).parent.name
-                n = f"{n} ({parent})" if parent else n
-            out[s.id] = n
-        return out
+        """Display names (shared with the CLI): stored name or folder name,
+        disambiguated by parent path when two collide."""
+        return display_names(sources)
 
     def load_world(self) -> World:
         sf = self._ctx.session_factory
@@ -403,11 +398,22 @@ class RealBackend:
             if s.status in (SourceStatus.ACTIVE, SourceStatus.MISSING):
                 return FolderCheck(False, str(resolved), f"{name} is already registered at that path.")
             return FolderCheck(False, str(resolved), f"{name} is {s.status.value}; it cannot be registered again here.")
+        for s in sources:
+            if s.status != SourceStatus.ACTIVE:
+                continue
+            try:
+                inside = Path(s.path).expanduser().resolve() in resolved.parents
+            except OSError:
+                inside = False
+            if inside:
+                return FolderCheck(False, str(resolved), f"Already covered by {names.get(s.id, Path(s.path).name)}.")
         return FolderCheck(True, str(resolved))
 
     def add_source(self, path: str) -> SourceView:
         try:
             source = self._ctx.source_manager.register_source(Path(path))
+        except SourceCoveredError as exc:
+            raise BackendError(f"Already covered by {exc.covering_name}.") from exc
         except ValueError as exc:
             raise BackendError(f"Error: {exc}") from exc
         return SourceView(source.id, Path(source.path).name or source.path, source.path, fd.READY, [], last_indexed="Never indexed")

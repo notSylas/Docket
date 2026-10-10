@@ -8,10 +8,11 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
-import re
 import warnings
 from collections.abc import Iterator
 from pathlib import Path
+
+from docket.services.ingestion.failure import condense_error as _condense_error
 
 _NOISY_LOGGERS = (
     "RapidOCR",
@@ -26,8 +27,6 @@ _NOISY_LOGGERS = (
     "PIL",
 )
 _NOISY_ENV = {"TQDM_DISABLE": "1", "HF_HUB_DISABLE_PROGRESS_BARS": "1"}
-_MAX_ERROR_LEN = 140
-_PARSE_PREFIX = re.compile(r"^\s*failed to parse .+? for source \S+?:\s*", re.DOTALL)
 
 
 def debug_enabled() -> bool:
@@ -66,17 +65,8 @@ def quiet_ingest() -> Iterator[None]:
 
 
 def condense_error(error: object) -> str:
-    """Collapse a (possibly multi-line, traceback-ish) error to one short
-    line: the first meaningful line, whitespace-collapsed and truncated."""
-    text = "" if error is None else str(error)
-    # `ParseError` wraps the real cause: "failed to parse <path> for source
-    # <id>: <cause>". The path is shown separately, so keep only the cause.
-    text = _PARSE_PREFIX.sub("", text, count=1)
-    first = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
-    first = re.sub(r"\s+", " ", first) or "unknown error"
-    if len(first) > _MAX_ERROR_LEN:
-        first = first[: _MAX_ERROR_LEN - 1].rstrip() + "…"
-    return first
+    """One short line for an error (shared with the stored failure reason)."""
+    return _condense_error(error)
 
 
 def display_path(path: Path, root: Path | None) -> str:
@@ -91,12 +81,17 @@ def display_path(path: Path, root: Path | None) -> str:
 def ignore_notices(result: object, prune_service: object, source_id: str) -> list[str]:
     """Dim one-liners after an ingest: what discovery skipped, or (when it
     skipped nothing) that already-indexed files are now in ignored folders."""
-    from docket.services.ingestion.ignore import skipped_summary
+    from docket.services.ingestion.ignore import invalid_summary, skipped_summary
 
     skipped = int(getattr(result, "files_skipped", 0) or 0)
-    line = skipped_summary(skipped)
-    if line is not None:
-        return [line]
+    invalid = int(getattr(result, "invalid_skipped", 0) or 0)
+    lines = [
+        line
+        for line in (skipped_summary(skipped), invalid_summary(invalid))
+        if line is not None
+    ]
+    if lines:
+        return lines
     try:
         count = int(prune_service.count(source_id))  # type: ignore[attr-defined]
     except Exception:  # noqa: BLE001 -- a hint must never break ingestion output

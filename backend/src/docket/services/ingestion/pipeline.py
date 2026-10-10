@@ -139,6 +139,7 @@ from docket.infra.index.visual_index import LancePageIndexWriter
 from docket.infra.inference.gateway import InferenceGateway
 from docket.services.ingestion.chunk_writer import ChunkWriter
 from docket.services.ingestion.ignore import DiscoveryReport
+from docket.services.ingestion.failure import condense_error
 from docket.services.ingestion.ignore import discover as discover_files
 from docket.services.ingestion.formula_transcriber import FormulaTranscriber
 from docket.infra.index.manifest import IndexManifestGuard
@@ -301,6 +302,9 @@ class IngestionJobResult:
     # was skipped. Optional so existing constructors keep working.
     dirs_skipped: int = 0
     files_skipped: int = 0
+    # Files skipped at discovery because their bytes do not match their
+    # extension ("not a real document").
+    invalid_skipped: int = 0
 
 
 class IngestionPipeline:
@@ -522,11 +526,12 @@ class IngestionPipeline:
         see `docket.services.ingestion.ignore`."""
         return self._discover(root).files
 
-    def _discover(self, root: Path) -> DiscoveryReport:
+    def _discover(self, root: Path, rules_json: str | None = None) -> DiscoveryReport:
         return discover_files(
             root,
             extensions=DISCOVERABLE_EXTENSIONS,
             enabled=bool(getattr(self._settings, "ingest_ignore_enabled", True)),
+            extra_rules=rules_json,
         )
 
     def _ingest_one_file(self, source_id: str, path: Path) -> FileIngestResult:
@@ -639,8 +644,10 @@ class IngestionPipeline:
             records = self._chunk_and_index_version(
                 FAMILY_DOCLING, source_id, evidence_version.id, parsed
             )
-        except Exception:
-            self._evidence_manager.mark_version_status(evidence_version.id, VersionStatus.FAILED)
+        except Exception as exc:
+            self._evidence_manager.mark_version_status(
+                evidence_version.id, VersionStatus.FAILED, failure_reason=condense_error(exc)
+            )
             raise
 
         self._evidence_manager.mark_version_status(evidence_version.id, VersionStatus.READY)
@@ -676,8 +683,10 @@ class IngestionPipeline:
             records = self._chunk_and_index_version(
                 FAMILY_XLSX, source_id, evidence_version.id, workbook
             )
-        except Exception:
-            self._evidence_manager.mark_version_status(evidence_version.id, VersionStatus.FAILED)
+        except Exception as exc:
+            self._evidence_manager.mark_version_status(
+                evidence_version.id, VersionStatus.FAILED, failure_reason=condense_error(exc)
+            )
             raise
 
         self._evidence_manager.mark_version_status(evidence_version.id, VersionStatus.READY)
@@ -712,8 +721,10 @@ class IngestionPipeline:
             records = self._chunk_and_index_version(
                 FAMILY_PPTX, source_id, evidence_version.id, presentation
             )
-        except Exception:
-            self._evidence_manager.mark_version_status(evidence_version.id, VersionStatus.FAILED)
+        except Exception as exc:
+            self._evidence_manager.mark_version_status(
+                evidence_version.id, VersionStatus.FAILED, failure_reason=condense_error(exc)
+            )
             raise
 
         self._evidence_manager.mark_version_status(evidence_version.id, VersionStatus.READY)
@@ -796,7 +807,9 @@ class IngestionPipeline:
                 parsed = self._parse_for_family(family, source_id, tmp_path)
             records = self._chunk_and_index_version(family, source_id, candidate.version_id, parsed)
         except Exception as exc:  # noqa: BLE001
-            self._evidence_manager.mark_version_status(candidate.version_id, VersionStatus.FAILED)
+            self._evidence_manager.mark_version_status(
+                candidate.version_id, VersionStatus.FAILED, failure_reason=condense_error(exc)
+            )
             return FileIngestResult(path=candidate.path, status="failed", error=str(exc))
         self._evidence_manager.mark_version_status(candidate.version_id, VersionStatus.READY)
         return FileIngestResult(path=candidate.path, status="ingested", chunks_written=len(records))
@@ -890,7 +903,9 @@ class IngestionPipeline:
                     file_results=[],
                 )
 
-            discovery = self._discover(Path(source.path))
+            discovery = self._discover(
+                Path(source.path), getattr(source, "rules_json", None)
+            )
             files = discovery.files
             total = len(files)
             for index, path in enumerate(files, start=1):
@@ -961,4 +976,5 @@ class IngestionPipeline:
             file_results=file_results,
             dirs_skipped=discovery.dirs_skipped,
             files_skipped=discovery.files_skipped,
+            invalid_skipped=discovery.invalid_skipped,
         )

@@ -167,7 +167,7 @@ def test_ingest_paths(ctx, tmp_path):
     out, _ = drive(ctx, ["/ingest", "/ingest all", f"/ingest {src.id}", "/ingest bogus"])
     assert out.count("0 unchanged, 0 failed \u2014 3 chunks written") == 3  # was: chunks_written=3
     assert f"{src.id}: 1 ingested" in out  # was: files_processed=1
-    assert "Error ingesting bogus" in out
+    assert "source not found: bogus" in out
 
 
 def test_question_without_table(ctx):

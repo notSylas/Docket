@@ -68,6 +68,10 @@ class EvidenceManager:
     ) -> EvidenceVersion:
         path = Path(path)
         data = path.read_bytes()
+        try:
+            source_mtime: float | None = path.stat().st_mtime
+        except OSError:
+            source_mtime = None
         content_hash = hashlib.sha256(data).hexdigest()
         file_path = str(path)
 
@@ -85,6 +89,13 @@ class EvidenceManager:
                 # to READY instead of treating it as settled. Only a READY
                 # row is a genuine no-op. See Upgrade doc 03 section 4's
                 # Failed->Ready transition.
+                if source_mtime is not None and current.source_mtime != source_mtime:
+                    # Same bytes, new mtime (touched/copied): record it so
+                    # later change checks by mtime stay cheap.
+                    current.source_mtime = source_mtime
+                    session.add(current)
+                    session.commit()
+                    session.refresh(current)
                 return current
 
             if current is not None:
@@ -114,6 +125,7 @@ class EvidenceManager:
                 byte_size=len(data),
                 mime_type=mime_type,
                 observed_at=_utcnow(),
+                source_mtime=source_mtime,
                 parser_name=parser_name,
                 parser_version=parser_version,
                 status=VersionStatus.PENDING,
@@ -142,7 +154,13 @@ class EvidenceManager:
             session.refresh(evidence_version)
             return evidence_version
 
-    def mark_version_status(self, evidence_version_id: str, status: VersionStatus) -> None:
+    def mark_version_status(
+        self,
+        evidence_version_id: str,
+        status: VersionStatus,
+        *,
+        failure_reason: str | None = None,
+    ) -> None:
         """Transition a version to `READY` or `FAILED` once its processing
         (parse + chunk + index) finishes, one way or the other.
 
@@ -158,6 +176,10 @@ class EvidenceManager:
             if version is None or version.status == VersionStatus.SUPERSEDED:
                 return
             version.status = status
+            if status == VersionStatus.FAILED:
+                version.failure_reason = failure_reason
+            else:
+                version.failure_reason = None  # a retry that succeeds clears it
             session.add(version)
             session.commit()
 

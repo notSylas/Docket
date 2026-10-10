@@ -26,7 +26,14 @@ EXT = {".pdf", ".docx", ".txt"}
 def _touch(root: Path, rel: str) -> Path:
     p = root / rel
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_bytes(b"x")
+    # A valid signature per extension: discovery skips files whose bytes
+    # contradict their extension.
+    if p.suffix.lower() == ".pdf":
+        p.write_bytes(b"%PDF-1.4\n")
+    elif p.suffix.lower() in (".docx", ".xlsx", ".pptx"):
+        p.write_bytes(b"PK\x03\x04")
+    else:
+        p.write_bytes(b"x")
     return p
 
 

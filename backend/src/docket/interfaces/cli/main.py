@@ -21,7 +21,13 @@ from docket.interfaces.cli.interactive import run_session
 from docket.core.db.models import SourceStatus
 from docket.services.ingestion.pipeline import SourceNotActiveError
 from docket.services.query.service import QueryService
-from docket.services.sources.manager import SourceNotFoundError
+from docket.services.sources.manager import SourceCoveredError, SourceNotFoundError
+from docket.services.sources.resolve import (
+    SourceRefError,
+    display_names,
+    ordered_sources,
+    resolve_source,
+)
 from docket.services.sources.watcher import SourceWatcher
 
 _EVAL_COMMAND_NAME = "eval"
@@ -228,14 +234,28 @@ def uninstall_launcher_cmd() -> None:
 # -- sources -----------------------------------------------------------
 
 
+def _resolve_ref(context, ref: str):
+    """Resolve a name, list number, ID prefix or ID to a source (exit 1 with
+    the candidates listed when unknown or ambiguous)."""
+    try:
+        return resolve_source(ref, context.source_manager.list_sources())
+    except SourceRefError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
 @sources_app.command("add")
 def sources_add(
     path: Path = typer.Argument(..., help="Local folder to register as a source."),
+    name: str = typer.Option(None, "--name", help="Display name (default: the folder name)."),
 ) -> None:
     """Register a local folder as a source."""
     context = build_context()
     try:
-        source = context.source_manager.register_source(path)
+        source = context.source_manager.register_source(path, display_name=name)
+    except SourceCoveredError as exc:
+        typer.echo(f"Already covered by {exc.covering_name}.", err=True)
+        raise typer.Exit(code=1) from exc
     except ValueError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
@@ -250,14 +270,25 @@ def sources_list() -> None:
     if not sources:
         typer.echo("No sources registered.")
         return
-    typer.echo(f"{'ID':<40}{'STATUS':<12}PATH")
-    for source in sources:
-        typer.echo(f"{source.id:<40}{source.status.value:<12}{source.path}")
+    ordered = ordered_sources(sources)
+    names = display_names(ordered)
+    try:
+        counts = context.readiness.files_by_source()
+    except Exception:  # noqa: BLE001 -- the count is a nicety
+        counts = {}
+    name_width = max(8, min(32, max(len(n) for n in names.values()) + 2))
+    typer.echo(f"{'#':<4}{'NAME':<{name_width}}{'STATUS':<12}{'DOCUMENTS':<11}PATH  ID")
+    for number, source in enumerate(ordered, start=1):
+        docs = str(counts[source.id]) if source.id in counts else "-"
+        typer.echo(
+            f"{number:<4}{names[source.id]:<{name_width}}{source.status.value:<12}"
+            f"{docs:<11}{source.path}  {source.id}"
+        )
 
 
 @sources_app.command("prune")
 def sources_prune(
-    source_id: str = typer.Argument(..., help="Source id to prune."),
+    source_ref: str = typer.Argument(..., help="Source name, list number or id to prune."),
     apply: bool = typer.Option(
         False, "--apply", help="Actually remove them from the index (default: dry run)."
     ),
@@ -267,6 +298,7 @@ def sources_prune(
 
     Dry run by default. Never deletes files on disk."""
     context = build_context()
+    source_id = _resolve_ref(context, source_ref).id
     try:
         service = context.prune_service
         candidates = service.apply(source_id) if apply else service.find(source_id)
@@ -274,7 +306,7 @@ def sources_prune(
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
     if not candidates:
-        typer.echo("Nothing to prune: no indexed files are in ignored folders.")
+        typer.echo("Nothing to prune: no indexed files are in ignored folders or invalid.")
         return
     verb = "Pruned" if apply else "Would prune"
     typer.echo(f"{verb} {len(candidates)} file(s):")
@@ -297,7 +329,7 @@ def _stale_notice(count: int) -> str:
 
 @app.command("ingest")
 def ingest(
-    source_id: str = typer.Argument(None, help="Source id to ingest."),
+    source_id: str = typer.Argument(None, help="Source name, list number or id to ingest."),
     all_sources: bool = typer.Option(False, "--all", help="Ingest active and temporarily missing sources."),
     rechunk: bool = typer.Option(
         False,
@@ -311,7 +343,7 @@ def ingest(
 ) -> None:
     """Run incremental ingestion, including recovery of temporarily missing sources."""
     if bool(source_id) == bool(all_sources):
-        typer.echo("Error: pass exactly one of a source_id or --all.", err=True)
+        typer.echo("Error: pass exactly one of a source (name, number or id) or --all.", err=True)
         raise typer.Exit(code=1)
     if dry_run and not rechunk:
         typer.echo("Error: --dry-run only applies together with --rechunk.", err=True)
@@ -329,7 +361,7 @@ def ingest(
             typer.echo("No active or missing sources to ingest.")
             raise typer.Exit(code=0)
     else:
-        target_ids = [source_id]
+        target_ids = [_resolve_ref(context, source_id).id]
 
     if rechunk:
         raise typer.Exit(code=_rechunk_sources(context, target_ids, dry_run))
@@ -501,17 +533,16 @@ def query(question: str = typer.Argument(..., help="Question to ask over ingeste
 
 
 @app.command("watch")
-def watch(source_id: str = typer.Argument(..., help="Source id to watch for changes.")) -> None:
+def watch(
+    source_ref: str = typer.Argument(..., help="Source name, list number or id to watch for changes."),
+) -> None:
     """Watch a source's folder and re-ingest on any filesystem change.
 
     Long-running foreground command -- blocks until interrupted (Ctrl+C).
     """
     context = build_context()
-    try:
-        source = context.source_manager.get_source(source_id)
-    except SourceNotFoundError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
+    source = _resolve_ref(context, source_ref)
+    source_id = source.id
 
     typer.echo(f"Watching {source.path} (source_id={source_id})... press Ctrl+C to stop.")
     watcher = SourceWatcher(context.pipeline)

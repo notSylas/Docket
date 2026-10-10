@@ -133,7 +133,19 @@ def test_cli_prune_dry_run_and_apply(monkeypatch, tmp_path):
             return [cand]
 
     monkeypatch.setattr(
-        cli_main, "build_context", lambda: SimpleNamespace(prune_service=FakeService())
+        cli_main,
+        "build_context",
+        lambda: SimpleNamespace(
+            prune_service=FakeService(),
+            source_manager=SimpleNamespace(
+                list_sources=lambda: [
+                    SimpleNamespace(
+                        id="src_1", path="/x/docs", display_name=None, created_at=None,
+                        status=None,
+                    )
+                ]
+            ),
+        ),
     )
     runner = CliRunner()
     dry = runner.invoke(cli_main.app, ["sources", "prune", "src_1"])

@@ -117,7 +117,7 @@ def test_draft_then_review_via_cli(monkeypatch, fake_env, tmp_path):
     corpus = tmp_path / "corpus"
     corpus.mkdir()
     (corpus / "handbook.pdf").write_text(
-        "Vacation Policy\n\nEmployees receive 25 days of paid vacation per year. "
+        "%PDF-1.4\nVacation Policy\n\nEmployees receive 25 days of paid vacation per year. "
         "Unused vacation days do not carry over past March 31 of the next year.\n"
     )
     reply = json.dumps({"question": "How many vacation days do employees get per year?",
@@ -149,7 +149,7 @@ def test_frozen_run_mode_and_acceptance_cli(fake_env, monkeypatch):
     corpus = fake_env / "corpus"
     corpus.mkdir()
     source = corpus / "handbook.pdf"
-    source.write_text("Employees receive 25 days of paid vacation per year.")
+    source.write_text("%PDF-1.4\nEmployees receive 25 days of paid vacation per year.")
     gold = fake_env / "gold.yaml"
     gold.write_text(yaml.safe_dump({"version": 1, "population": "real_user_documents", "questions": [{
         "id": "vacation", "type": "single_fact", "question": "How many days of paid vacation?",

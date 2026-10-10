@@ -265,7 +265,8 @@ def test_one_corrupt_file_fails_without_aborting_the_batch(env: SimpleNamespace)
     corrupt = env.folder / "corrupt.docx"
     _write_docx(doc1, "Section One", "Alpha content about penguins and glaciers.")
     _write_docx(doc2, "Section Two", "Beta content about volcanoes and coffee.")
-    corrupt.write_text("this is plain text, not a real .docx file")
+    # Right signature, garbage body: gets past discovery, fails in the parser.
+    corrupt.write_bytes(b"PK\x03\x04" + b"this is not a real .docx file")
 
     result = env.pipeline.run_ingestion_for_source(env.source.id)
 
@@ -285,6 +286,9 @@ def test_one_corrupt_file_fails_without_aborting_the_batch(env: SimpleNamespace)
             select(EvidenceVersion).where(EvidenceVersion.file_path == str(corrupt))
         ).scalar_one()
         assert corrupt_version.status == VersionStatus.FAILED
+        assert corrupt_version.failure_reason  # short plain reason recorded
+        assert "\n" not in corrupt_version.failure_reason
+        assert corrupt_version.source_mtime == corrupt.stat().st_mtime
         good_versions = session.execute(
             select(EvidenceVersion.status).where(EvidenceVersion.file_path.in_([str(doc1), str(doc2)]))
         ).scalars().all()

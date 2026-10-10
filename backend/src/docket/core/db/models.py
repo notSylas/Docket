@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     Enum,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -164,6 +165,14 @@ class Source(Base):
     # transition never provided one. Deliberately NOT a DB enum: the set of
     # reasons is expected to grow as real connectors are built.
     status_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Optional user-facing name; None means "derive it from the folder name"
+    # (`services/sources/resolve.py`).
+    display_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    # JSON text: {"version": 1, "exclude": [gitignore-style patterns],
+    # "include": [...], "ignored_files": [relative paths]}. Per-source
+    # discovery rules layered over the built-in ignore rules and
+    # `.docketignore` (`services/ingestion/ignore.py`). None = no rules.
+    rules_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         default=_utcnow, onupdate=_utcnow, nullable=False
@@ -226,6 +235,10 @@ class EvidenceVersion(Base):
         nullable=False,
         default=VersionStatus.PENDING,
     )
+    # Short plain-language reason, set when the version becomes FAILED.
+    failure_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    # The file's mtime (epoch seconds) when this version was ingested.
+    source_mtime: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     source: Mapped["Source"] = relationship(back_populates="evidence_versions")
     evidence_units: Mapped[list["EvidenceUnit"]] = relationship(
