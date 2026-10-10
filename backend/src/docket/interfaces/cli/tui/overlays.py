@@ -7,6 +7,7 @@ the ``ui`` object (see ``app.DemoUI``). Overlays never touch a backend.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -17,10 +18,14 @@ from docket.interfaces.cli.tui.textfmt import (
     cw,
     fit_row,
     inline_tokens,
+    middle_ellipsis,
+    pad_cell,
     plain,
+    render_grid,
     render_markdown,
     row_width,
     truncate,
+    unique_path_labels,
     wrap_text,
     wrap_tokens,
 )
@@ -52,12 +57,30 @@ class Entry:
     data: Any = None
 
 
+MAX_OVERLAY_WIDTH = 100
+
+
 def overlay_width(cols: int) -> int:
-    if cols >= 100:
-        return min(100, cols - 10)
+    """One rule for every overlay: capped at 100, two columns short of the
+    terminal from 80 up (centred by the float), the whole width below 80."""
     if cols >= 80:
-        return cols - 2
+        return min(MAX_OVERLAY_WIDTH, cols - 2)
     return cols
+
+
+def kv_rows(items: list[tuple[str, str, str]], iw: int, label_w: int | None = None) -> list[Row]:
+    """Two-column label/value rows; values wrap under the value column.
+
+    Items are (label, value, style). An empty label continues the previous value.
+    """
+    if not items:
+        return []
+    lw = label_w if label_w is not None else min(max(cw(k) for k, _v, _s in items) + 2, 20)
+    rows: list[Row] = []
+    for k, v, style in items:
+        label = (k + " " * max(lw - cw(k), 0)) if k else " " * lw
+        rows.extend(wrap_tokens([(MUTED, label)] + inline_tokens(v, style or TEXT), iw, " " * lw, ""))
+    return rows
 
 
 def status_style(status: str) -> str:
@@ -108,7 +131,8 @@ class Overlay:
         tag_w = cw(e.tag) + 2 if e.tag else 0
         room = iw - left_w - tag_w - 2
         if tail and room > 3:
-            row.append((MUTED, "  " + truncate(tail, room)))
+            shown_tail = middle_ellipsis(tail, room) if "/" in tail else truncate(tail, room)
+            row.append((MUTED, "  " + shown_tail))
         used = row_width(row)
         if e.tag:
             row.append(("", " " * max(iw - used - cw(e.tag), 1)))
@@ -356,10 +380,9 @@ class Overlay:
                 style = "class:button.focus"
             else:
                 style = "class:button"
-            mark = ">" if focused else " "
+            # one shape for every state: [ Label ]; a leading arrow marks focus
+            mark = "▸" if focused else " "
             label = f"{mark}[ {b.label} ]"
-            if not b.enabled:
-                label = f"{mark}( {b.label} )"
             toks.append((style, label))
             toks.append(("", " "))
         rows: list[Row] = [[]]
@@ -639,33 +662,47 @@ class SourcesOverlay(Overlay):
         ]
 
     def hint(self) -> str:
-        return "Type to filter · Tab actions · Enter on a source toggles details · Esc close"
+        return "Type to filter · Tab actions · Enter toggles details · Esc close"
+
+    FILE_SHORT = {fd.FILE_READY: "Ready", fd.FILE_FAILED: "Failed", fd.FILE_PENDING: "Pending", fd.FILE_EMPTY: "No text"}
 
     def detail_rows(self, s, iw: int) -> list[Row]:
-        rows: list[Row] = [
-            [("class:title", s.name)],
-            [(MUTED, "Path  "), (TEXT, s.path)],
-            [(MUTED, "State "), (status_style(s.status), fd.STATUS_LABEL[s.status])],
-            [(MUTED, "Last indexed  "), (TEXT, s.last_indexed)],
-            [
-                (MUTED, "Files  "),
-                (TEXT, f"{s.count(fd.FILE_READY)} ready · {s.count(fd.FILE_FAILED)} failed · {s.count(fd.FILE_PENDING)} pending · {s.count(fd.FILE_EMPTY)} no text"),
-            ],
+        counts = (
+            f"{s.count(fd.FILE_READY)} ready · {s.count(fd.FILE_FAILED)} failed · "
+            f"{s.count(fd.FILE_PENDING)} pending · {s.count(fd.FILE_EMPTY)} no text"
+        )
+        lw = 13
+        short = middle_ellipsis(s.path, max(iw - lw, 8))
+        items = [
+            ("Path", short, TEXT),
+            ("State", fd.STATUS_LABEL[s.status], status_style(s.status)),
+            ("Last indexed", s.last_indexed, TEXT),
+            ("Files", counts, TEXT),
         ]
+        if self.expanded and short != s.path:
+            items.insert(1, ("Full path", s.path, TEXT))
+        rows: list[Row] = [[("class:title", s.name)]] + kv_rows(items, iw, lw)
         if s.note:
             rows.extend(wrap_text(s.note, iw, "class:attention"))
         files = s.files if self.expanded else [f for f in s.files if f.status in (fd.FILE_FAILED, fd.FILE_EMPTY)]
         if files:
             rows.append([])
             rows.append([(MUTED, "All files" if self.expanded else "Needs a look")])
+            name_w = max(min(max(cw(f.path) for f in files), max(iw // 2, 14)), 8)
             for f in files:
-                label = fd.FILE_LABEL[f.status]
                 style = "class:failed" if f.status == fd.FILE_FAILED else (MUTED if f.status != fd.FILE_READY else "class:ready")
-                extra = f" — {f.error}" if f.error else (f" · {f.chunks} chunks" if f.status == fd.FILE_READY else "")
+                extra = f.error if f.error else (f"{f.chunks} chunks" if f.status == fd.FILE_READY else "")
                 rows.extend(
                     wrap_tokens(
-                        [(TEXT, f.path), (" ", " "), (style, label), (MUTED, extra)],
+                        [
+                            (TEXT, pad_cell(middle_ellipsis(f.path, name_w), name_w, False)),
+                            ("", "  "),
+                            (style, pad_cell(self.FILE_SHORT[f.status], 8, False)),
+                            ("", "  "),
+                            *inline_tokens(extra, MUTED),
+                        ],
                         iw,
+                        " " * (2 + name_w + 2 + 8 + 2),
                         "  ",
                     )
                 )
@@ -868,14 +905,21 @@ class IndexingOverlay(Overlay):
         filled = int(bar_w * frac)
         bar = [("class:accent", "█" * filled), (MUTED, "░" * (bar_w - filled)), (TEXT, f" {j.file_index}/{j.total} files")]
         if j.active:
-            rows.append([(TEXT, f"File {min(j.file_index + 1, j.total)} of {j.total}: "), ("class:title", j.current_file)])
-            rows.append([(MUTED, "Stage: "), (TEXT, j.stage)])
-            rows.append([(MUTED, "Elapsed: "), (TEXT, j.elapsed_label)])
+            rows.extend(
+                kv_rows(
+                    [
+                        ("File", f"{min(j.file_index + 1, j.total)} of {j.total} · {j.current_file}", TEXT),
+                        ("Stage", j.stage, TEXT),
+                        ("Elapsed", j.elapsed_label, TEXT),
+                        ("So far", f"{j.indexed} indexed · {j.unchanged} unchanged · {j.failed} failed", TEXT),
+                    ],
+                    iw,
+                    10,
+                )
+            )
             rows.append([])
             rows.append(bar)
             rows.append([(MUTED, "Files vary in processing time; this is a file count, not a time estimate.")])
-            rows.append([])
-            rows.append([(TEXT, f"{j.indexed} indexed · {j.unchanged} unchanged · {j.failed} failed")])
             if j.state == "stopping":
                 rows.append([])
                 rows.append([("class:attention", "Stopping after the current operation...")])
@@ -930,6 +974,30 @@ class IndexingOverlay(Overlay):
 # ---------------------------------------------------------------------------
 
 
+def claims_for(text: str, n: int) -> list[str]:
+    """The answer sentences/bullets that cite passage `n` (tables are skipped)."""
+    marker = f"[{n}]"
+    out: list[str] = []
+    for line in text.split("\n"):
+        ln = line.strip()
+        if not ln or ln.startswith("|") or marker not in ln:
+            continue
+        ln = re.sub(r"^([-*]|\d+\.)\s+", "", ln)
+        out.extend(p for p in re.split(r"(?<=[.!?])\s+", ln) if marker in p)
+    return out
+
+
+def compress_cells(cells: tuple[str, ...]) -> str:
+    """('C8','C9','C10') -> 'C8:C10'; anything else is listed."""
+    if len(cells) > 1:
+        col = {"".join(ch for ch in c if ch.isalpha()) for c in cells}
+        nums = sorted(int("".join(ch for ch in c if ch.isdigit())) for c in cells)
+        if len(col) == 1 and nums == list(range(nums[0], nums[0] + len(nums))):
+            letter = next(iter(col))
+            return f"{letter}{nums[0]}:{letter}{nums[-1]}"
+    return ", ".join(cells)
+
+
 class EvidenceOverlay(Overlay):
     name = "evidence"
     has_list = False
@@ -969,23 +1037,52 @@ class EvidenceOverlay(Overlay):
         ]
 
     def hint(self) -> str:
-        return "P previous · N next · O open original · D details · PgUp/PgDn scroll · Esc close"
+        return "P N O D shortcuts · PgUp/PgDn scroll · Esc close"
+
+    def position_text(self) -> str:
+        a = self._answer()
+        n = len(a.citations) if a else 0
+        return f"{self.cit + 1} of {n}" if n else ""
 
     def build_body(self, iw: int):
         c = self._cit()
-        if c is None:
+        a = self._answer()
+        if c is None or a is None:
             return [[(MUTED, "This answer has no citations.")]], None
-        rows: list[Row] = [[("class:title", c.source_name)]]
+        label = unique_path_labels([x.rel_path for x in a.citations])[max(0, min(self.cit, len(a.citations) - 1))]
+        pos = self.position_text()
+        head: Row = [("class:title", truncate(label, max(iw - cw(pos) - 2, 8)))]
+        head.append(("", " " * max(iw - row_width(head) - cw(pos), 1)))
+        head.append((MUTED, pos))
+        rows: list[Row] = [head]
+        items: list[tuple[str, str, str]] = []
+        if c.source:
+            items.append(("Source", c.source, TEXT))
         if not c.available:
-            rows.append([("class:attention", "Unavailable: "), (TEXT, "this evidence can no longer be shown.")])
+            items.append(("Status", "Unavailable: this evidence can no longer be shown.", "class:attention"))
+        else:
+            items.append(("Location", c.location or "Location not extracted for this passage", TEXT if c.location else "class:attention"))
+            items.append(("Indexed", f"{c.indexed} · {c.version_label}", TEXT))
+        claims = claims_for(a.text, self.cit + 1)
+        for i, claim in enumerate(claims):
+            items.append(("Supports" if i == 0 else "", f"\u201c{claim}\u201d", MUTED))
+        rows.extend(kv_rows(items, iw, 10))
+        rows.append([])
+        if not c.available:
             rows.extend(wrap_text(c.reason, iw, MUTED))
             rows.append([])
             rows.extend(wrap_text("The answer text is unchanged; only the passage behind this citation is missing.", iw, MUTED))
+        elif c.table:
+            origin = c.table_origin or "A1"
+            cited = frozenset(self._cited_indexes(c))
+            letters = "".join(ch for ch in origin if ch.isalpha())
+            first_row = int("".join(ch for ch in origin if ch.isdigit()) or "1")
+            note = f"Cells {fd.table_range(origin, c.table)}"
+            if c.cited:
+                note += f" · cited cells shown in [ ]: {compress_cells(c.cited)}"
+            rows.append([(MUTED, note)])
+            rows.extend(render_grid([list(r) for r in c.table], iw, first_row=first_row, first_col=letters, cited=cited, ascii_mode=self.ui.ascii_mode))
         else:
-            loc = c.location or "Location not extracted for this passage"
-            rows.append([(MUTED, "Location  "), (TEXT if c.location else "class:attention", loc)])
-            rows.append([(MUTED, "Indexed   "), (TEXT, f"{c.indexed} · {c.version}")])
-            rows.append([])
             rows.append([(MUTED, "Passage (verbatim)")])
             for para in c.passage.split("\n"):
                 if not para:
@@ -996,11 +1093,22 @@ class EvidenceOverlay(Overlay):
         if self.show_details:
             rows.append([])
             rows.append([("class:title", "Details")])
-            rows.append([(MUTED, "File     "), (TEXT, c.rel_path)])
-            rows.append([(MUTED, "Chunk    "), (TEXT, c.chunk_id)])
-            rows.append([(MUTED, "Version  "), (TEXT, c.version)])
-            rows.append([(MUTED, "Confidence not calibrated; no percentage is shown.")])
+            full = [("File", c.rel_path, TEXT), ("Chunk", c.chunk_id, TEXT), ("Version", c.version_label, TEXT)]
+            if c.source:
+                full.insert(0, ("Source", c.source, TEXT))
+            full.append(("Confidence", "Not calibrated; no percentage is shown.", MUTED))
+            rows.extend(kv_rows(full, iw, 10))
         return rows, None
+
+    @staticmethod
+    def _cited_indexes(c) -> list[tuple[int, int]]:
+        out: list[tuple[int, int]] = []
+        origin = c.table_origin or "A1"
+        for r in range(len(c.table)):
+            for col in range(max(len(x) for x in c.table)):
+                if fd.cell_address(origin, r, col) in c.cited:
+                    out.append((r, col))
+        return out
 
     def press(self, key: str) -> None:
         if key == "prev":
@@ -1041,24 +1149,33 @@ class DetailsOverlay(Overlay):
         a = self._a()
         if a is None:
             return [[(MUTED, "There is no answer yet.")]], None
-        rows: list[Row] = []
-
-        def kv(k: str, v: str, style: str = TEXT) -> None:
-            rows.extend(wrap_tokens([(MUTED, f"{k:<14}"), (style, v)], iw, " " * 14, ""))
-
-        kv("Mode", a.mode_label)
-        kv("Elapsed", f"{a.elapsed:.1f}s")
-        kv("Scope", a.scope_label)
-        kv("Follow-up", a.rewrite or "Not rewritten")
-        kv("Period", a.ambiguity or "No ambiguity noticed")
-        kv("Computation", a.compute)
-        kv("Citations", f"{len(a.citations)} (syntax valid; meaning not machine-verified)")
-        kv("Confidence", "Not calibrated")
+        avail = [c for c in a.citations if c.available]
+        files = len({c.rel_path for c in avail})
+        if a.searched == 0:
+            passages = "None (no search was made)"
+        elif not avail:
+            passages = f"None used, {a.searched} searched"
+        else:
+            passages = f"{len(avail)} passage{'s' if len(avail) != 1 else ''} from {files} file{'s' if files != 1 else ''}, {a.searched} searched"
+        cits = f"{len(a.citations)} · syntax valid; meaning not machine-verified" if a.citations else "None"
+        items: list[tuple[str, str, str]] = [
+            ("Status", a.status, TEXT),
+            ("Mode", a.mode_label, TEXT),
+            ("Model", a.model, TEXT),
+            ("Scope", a.scope_label, TEXT),
+            ("Elapsed", f"{a.elapsed:.1f} s", TEXT),
+            ("Passages used", passages, TEXT),
+            ("Follow-up", a.rewrite or "Not rewritten", TEXT),
+            ("Period", a.ambiguity or "None noticed", TEXT),
+            ("Computation", a.compute, TEXT),
+            ("Citations", cits, TEXT),
+            ("Confidence", "Not calibrated", TEXT),
+        ]
         if a.abstained:
-            kv("Why no answer", a.abstain_reason, "class:attention")
+            items.append(("Why no answer", a.abstain_reason, "class:attention"))
         for w in a.warnings:
-            kv("Warning", w, "class:attention")
-        return rows, None
+            items.append(("Warning", w, "class:attention"))
+        return kv_rows(items, iw, 15), None
 
     def press(self, key: str) -> None:
         if key == "evidence":
@@ -1132,7 +1249,8 @@ class SettingsOverlay(Overlay):
         mark = "▸ " if selected else "  "
         label = f"{e.label:<18}"
         style = TEXT if e.enabled else MUTED
-        row: Row = [(style, mark + label), (style if e.enabled else MUTED, e.sub)]
+        value = middle_ellipsis(e.sub, max(iw - 2 - 18, 8)) if "/" in e.sub else e.sub
+        row: Row = [(style, mark + label), (style if e.enabled else MUTED, value)]
         row = fit_row(row, iw)
         if selected:
             row = [(SEL, t) for _s, t in row]
@@ -1277,9 +1395,12 @@ class WelcomeOverlay(Overlay):
         rows = wrap_text("Ask questions about documents stored on this PC.", iw, TEXT)
         rows.append([])
         items = fd.READINESS_BLOCKED if self.blocked else fd.READINESS_OK
-        for k, v in items:
-            bad = self.blocked and ("not" in v.lower())
-            rows.append([(MUTED, f"{k:<22}"), ("class:attention" if bad else TEXT, v)])
+        rows.extend(
+            kv_rows(
+                [(k, v, "class:attention" if self.blocked and "not" in v.lower() else TEXT) for k, v in items],
+                iw,
+            )
+        )
         if self.blocked:
             rows.append([])
             rows.extend(wrap_text(fd.BLOCKED_HELP, iw, "class:attention"))
@@ -1333,16 +1454,52 @@ class JobsOverlay(Overlay):
     name = "jobs"
     title = "Jobs"
 
+    STATE_STYLE = {
+        "Completed": "class:ready",
+        "Running": "class:accent",
+        "Stopping": "class:attention",
+        "Partial": "class:attention",
+        "Interrupted": "class:attention",
+        "Failed": "class:failed",
+    }
+    NAME_W, STATE_W, WHEN_W = 14, 12, 19
+
     def entries(self) -> list[Entry]:
         out: list[Entry] = []
         j = self.ui.job
         if j is not None:
             state = {"running": "Running", "stopping": "Stopping", "done": "Completed", "stopped": "Cancelled", "failed": "Failed"}[j.state]
-            out.append(Entry("current", j.source_name, f"{j.file_index}/{j.total} files", state, "class:accent", data="current"))
+            out.append(Entry("current", j.source_name, f"{j.file_index}/{j.total} files", state, self.STATE_STYLE.get(state, MUTED), data="current", hint="Now"))
         for name, state, when, summary in fd.JOB_HISTORY:
-            style = {"Completed": "class:ready", "Partial": "class:attention", "Interrupted": "class:attention"}.get(state, MUTED)
-            out.append(Entry(name, name, when, state, style, data=summary))
+            out.append(Entry(name, name, summary, state, self.STATE_STYLE.get(state, MUTED), data=summary, hint=when))
         return out
+
+    def preface(self, iw: int) -> list[Row]:
+        head = "  " + pad_cell("Source", self.NAME_W, False) + pad_cell("Result", self.STATE_W, False) + "When"
+        if iw >= 78:
+            head = "  " + pad_cell("Source", self.NAME_W, False) + pad_cell("Result", self.STATE_W, False) + pad_cell("When", self.WHEN_W, False) + "Summary"
+        return [[(MUTED, head)], [(MUTED, "─" * iw)]]
+
+    def entry_row(self, e: Entry, selected: bool, iw: int) -> Row:
+        mark = "▸ " if selected else "  "
+        row: Row = [
+            (TEXT, mark + pad_cell(truncate(e.label, self.NAME_W - 1), self.NAME_W, False)),
+            (e.tag_style, pad_cell(e.tag, self.STATE_W, False)),
+            (TEXT, e.hint),
+        ]
+        if iw >= 78:  # the summary column; below that it is shown under the table
+            row = [*row[:2], (TEXT, pad_cell(e.hint, self.WHEN_W, False)), (MUTED, e.sub)]
+        row = fit_row(row, iw)
+        if selected:
+            row = [(SEL, t) for _s, t in row]
+        return row
+
+    def postface(self, iw: int) -> list[Row]:
+        es = self.entries()
+        if not es:
+            return []
+        e = es[min(self.sel, len(es) - 1)]
+        return [[], *kv_rows([("Summary", f"{e.label}: {e.sub}", TEXT)], iw, 9)]
 
     def buttons(self) -> list[Btn]:
         return [Btn("results", "Results", hot="r"), Btn("close", "Close")]

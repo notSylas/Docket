@@ -1,6 +1,6 @@
 # Screen A prototype review (stage 4a: navigable shell, fake data)
 
-Status: **Ready for visual review.** Nothing here is connected to a backend.
+Status: **Ready for visual review (polish pass applied after the first screenshot review).** Nothing here is connected to a backend. Section 1.1 lists what the polish pass changed; the screenshots below are regenerated from the current code.
 
 Date: 10 October 2026. Implements stage 4a of [the Screen A design](13-terminal-ui-screen-a-design.md) section 9. Read it with [the checkpoint 1 note](14-terminal-ui-checkpoint-1.md) and [the handoff](13-codex-handoff.md). Its job is to let you judge appearance, navigation and wording before any wiring (stage 4b).
 
@@ -23,6 +23,30 @@ Code lives in `backend/src/docket/interfaces/cli/tui/`:
 | `headless.py` | Pipe-input driver used by the tests and to produce the screenshots below |
 
 The plain interactive session (`interactive/`) is untouched. The prototype reuses its command registry (`default_registry()`), so names, aliases, prefix resolution and typo suggestions are the existing ones; `/scope`, `/jobs`, `/settings`, `/details`, `/rechunk` and `/reindex` are the proposed additions from section 4.4.
+
+### 1.1 What changed in the polish pass
+
+Driven by your review of the first screenshots. Fake data only; no service, retrieval, config, migration or eval code was touched.
+
+Transcript
+
+- The amber citation warning is separated from the Sources list by a blank line, so it cannot read as another source.
+- Tables right-align numeric columns (header included) and keep a rule with column joints. Result words get a glyph and keep the text: `✓ Met`, `✗ Missed`; the ASCII fallback is `OK Met`, `X Missed`.
+- Number-based shortcuts sit next to the F5/F6 hints: `[Evidence F5] [Ctrl+E] [Details F6]`, then `Open a source: /show 1 to /show 6`. The footer repeats them (`Ctrl+E evidence · /show N`) when there is room.
+- A greeting such as "Hey" gets a short friendly reply with no citations, no sourced claims and a pointer to `/help`. Answer details then says "None (no search was made)".
+- Duplicate file names in the Sources list show the shortest unique parent path (`policies/handbook.pdf` and `2023/handbook.pdf`). The demo answer now cites two files both named `handbook.pdf` (citations 5 and 6).
+- The selected-answer marker `›` is explained: a line under the answer and the footer say "Enter opens evidence, Esc clears". Enter on an empty composer opens that answer's evidence; Esc clears the selection.
+
+Overlays
+
+- Evidence: spreadsheet passages render as a real grid with column letters, row numbers, a header rule and right-aligned numbers. The fake data now says `Sheet Summary · B7:D10` and has four rows (header plus three), which matches the grid; the old `B8:F8` with four rows was inconsistent. The cells the answer cited (`C8:C10`) are shown in `[ ]` and highlighted. Prose passages stay verbatim with their breaks.
+- Evidence has a `Supports` line quoting the answer claim(s) that cite the passage, `Indexed 10 Oct 2026 10:42 · version 3 of 3 (current)` instead of "stored version 3", and a single `1 of 6` position text on the title row.
+- One button shape everywhere: `[ Label ]`; focus adds a leading `▸` (and the reverse/colour style); a disabled button keeps its shape and is muted/italic. The mixed `>( )` and `[ ]` forms are gone. The duplicated key legend is reduced to one line.
+- Answer details keeps the two-column layout and adds Status ("Not verified (prototype)"), Model and Passages used ("5 passages from 5 files, 14 searched"); wording is short and parallel ("Computation: Not used"). The honest "syntax valid; meaning not machine-verified" note and "Confidence: Not calibrated" remain.
+- One width rule for every overlay: capped at 100 columns, two columns narrower than the terminal from 80 to 100, the whole width below 80; always centred.
+- The transcript area behind a modal is cleared, so no cut-off transcript fragments appear beside or above it. The header, composer and footer stay.
+- Long paths use a middle ellipsis; Sources shows the full path under its details toggle ("Full path").
+- Sources details, Indexing and Welcome use labelled, aligned rows; the failed/no-text file list is an aligned table; Jobs is a table (Source, Result, When, Summary) with the selected row's summary shown in full below it. Dates and times use one format: `10 Oct 2026 10:42`.
 
 ## 2. How to run
 
@@ -59,11 +83,13 @@ Try these paths; each exercises a different part of the design:
 | F1, or `/` on an empty composer | Command palette |
 | F2 / F3 / F4 | Sources / Scope picker / Mode picker |
 | F5 / F6 | Evidence / Answer details for the selected answer |
+| Ctrl+E | Evidence (same as F5); `/show N` opens citation N of the latest answer |
+| Enter on an empty composer | With an answer selected (`›`): open its evidence |
 | F7 / F8 | Jobs / Settings |
 | Page Up / Page Down | Scroll the transcript (overlay: scroll the panel) |
 | Ctrl+End | Jump to the latest message |
-| Alt+Up / Alt+Down | Select an earlier / later answer (marked with `>`), then F5/F6 act on it |
-| Esc | Close the top overlay; a confirmation returns to its parent |
+| Alt+Up / Alt+Down | Select an earlier / later answer (marked with `›`), then F5/F6, Ctrl+E and Enter act on it |
+| Esc | Close the top overlay; a confirmation returns to its parent. With no overlay: clear the selected-answer marker |
 | Ctrl+C | Overlay open: dismiss it (never cancels indexing). Work active, no overlay: request a cooperative stop. Idle with a draft: clear it. Idle and empty: show the exit hint |
 | Ctrl+D | Exit; with work active, a confirmation offers Keep running / Stop and exit |
 | Up / Down | Move selection in a list |
@@ -77,7 +103,7 @@ Slash commands also work typed (for example `/show 4`, `/ls`, `/mode fast`). Bec
 
 ## 4. Screens as text
 
-These are real renderings of the prototype to a plain-text buffer (`headless.py`), at the size shown. Colour is not visible in text; the labels (Ready, Failed, Disconnected, unavailable, current) and the `>` / `▸` markers carry the meaning without it. The transcript is bottom-anchored, so older messages scroll up under the header.
+These are real renderings of the prototype to a plain-text buffer (`headless.py`), at the size shown. Colour is not visible in text; the labels (Ready, Failed, Disconnected, unavailable, current) and the `›` (selected answer) / `▸` (selected row, focused button) markers carry the meaning without it. Every overlay follows one width rule (100 columns at most, centred, two columns short of the terminal from 80 up, full width below 80) and sits on a cleared backdrop. The transcript is bottom-anchored, so older messages scroll up under the header.
 
 ### 4.1 Welcome and readiness
 
@@ -86,23 +112,23 @@ These are real renderings of the prototype to a plain-text buffer (`headless.py`
 ```text
  DOCKET · All ready sources · Auto · demo-model-14b                                       DEMO DATA
  Nothing searchable yet. Press F2 for Sources, then Add folder.
-    Notice: This is a design prototype. Every answer, source and number is invented demo data.
-    Type a question, or press F1 for commands.
 
 
 
 
-     ┌─ Welcome to Docket ────────────────────────────────────────────────────────────────────┐
-     │  Ask questions about documents stored on this PC.                                      │
-     │                                                                                        │
-     │  Ollama                Available                                                       │
-     │  Answer model          demo-model-14b — installed                                      │
-     │  Embedding model       installed                                                       │
-     │  Searchable documents  None yet                                                        │
-     │                                                                                        │
-     │  >[ Add a folder ]  [ Check again ]  [ Settings ]  [ Close ]                           │
-     │  Tab move · Enter activate · Esc close                                                 │
-     └────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+ ┌─ Welcome to Docket ────────────────────────────────────────────────────────────────────────────┐
+ │  Ask questions about documents stored on this PC.                                              │
+ │                                                                                                │
+ │  Ollama              Available                                                                 │
+ │  Answer model        demo-model-14b — installed                                                │
+ │  Embedding model     installed                                                                 │
+ │  Searchable documentsNone yet                                                                  │
+ │                                                                                                │
+ │  ▸[ Add a folder ]  [ Check again ]  [ Settings ]  [ Close ]                                   │
+ │  Tab move · Enter activate · Esc close                                                         │
+ └────────────────────────────────────────────────────────────────────────────────────────────────┘
 
 
 
@@ -123,24 +149,24 @@ Blocked prerequisite (the source would still be kept; indexing then fails with a
 ```text
  DOCKET · All ready sources · Auto · demo-model-14b                                       DEMO DATA
  Not ready: the answer model is missing. Open Settings (F8) for details.
-    Notice: This is a design prototype. Every answer, source and number is invented demo data.
-    Type a question, or press F1 for commands.
 
 
-     ┌─ Welcome to Docket ────────────────────────────────────────────────────────────────────┐
-     │  Ask questions about documents stored on this PC.                                      │
-     │                                                                                        │
-     │  Ollama                Not reachable at the configured address                         │
-     │  Answer model          demo-model-32b — not installed                                  │
-     │  Embedding model       installed                                                       │
-     │  Searchable documents  None yet                                                        │
-     │                                                                                        │
-     │  Start Ollama, then run: ollama pull demo-model-32b                                    │
-     │  Docket never installs models or starts services for you.                              │
-     │                                                                                        │
-     │  >[ Add a folder ]  [ Check again ]  [ Settings ]  [ Close ]                           │
-     │  Tab move · Enter activate · Esc close                                                 │
-     └────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+ ┌─ Welcome to Docket ────────────────────────────────────────────────────────────────────────────┐
+ │  Ask questions about documents stored on this PC.                                              │
+ │                                                                                                │
+ │  Ollama              Not reachable at the configured address                                   │
+ │  Answer model        demo-model-32b — not installed                                            │
+ │  Embedding model     installed                                                                 │
+ │  Searchable documentsNone yet                                                                  │
+ │                                                                                                │
+ │  Start Ollama, then run: ollama pull demo-model-32b                                            │
+ │  Docket never installs models or starts services for you.                                      │
+ │                                                                                                │
+ │  ▸[ Add a folder ]  [ Check again ]  [ Settings ]  [ Close ]                                   │
+ │  Tab move · Enter activate · Esc close                                                         │
+ └────────────────────────────────────────────────────────────────────────────────────────────────┘
 
 
 
@@ -160,23 +186,23 @@ Blocked prerequisite (the source would still be kept; indexing then fails with a
 ```text
  DOCKET · All ready sources · Auto · demo-model-14b                                       DEMO DATA
  Nothing searchable yet. Press F2 for Sources, then Add folder.
-    Notice: This is a design prototype. Every answer, source and number is invented demo data.
-    Type a question, or press F1 for commands.
 
 
 
-     ┌─ Add folder ───────────────────────────────────────────────────────────────────────────┐
-     │  Folder: /demo/work/re▏                                                                │
-     │                                                                                        │
-     │  Docket reads PDF, Word, Excel, PowerPoint, text and Markdown in this folder and its   │
-     │  subfolders, then starts indexing right away. Original files are never changed.        │
-     │                                                                                        │
-     │  Suggestions (Enter fills the path):                                                   │
-     │  ▸ /demo/work/reports                                                                  │
-     │                                                                                        │
-     │   [ Add and index ]  [ Cancel ]                                                        │
-     │  Paste or type a path (quotes and spaces are fine) · Enter add · Esc cancel            │
-     └────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+
+ ┌─ Add folder ───────────────────────────────────────────────────────────────────────────────────┐
+ │  Folder: /path/to/folder▏                                                                      │
+ │                                                                                                │
+ │  Docket reads PDF, Word, Excel, PowerPoint, text and Markdown in this folder and its           │
+ │  subfolders, then starts indexing right away. Original files are never changed.                │
+ │                                                                                                │
+ │                                                                                                │
+ │   [ Add and index ]  [ Cancel ]                                                                │
+ │  Paste or type a path (quotes and spaces are fine) · Enter add · Esc cancel                    │
+ └────────────────────────────────────────────────────────────────────────────────────────────────┘
+
 
 
 
@@ -192,7 +218,7 @@ Blocked prerequisite (the source would still be kept; indexing then fails with a
 
 ### 4.3 Main chat
 
-*Chat with answer (table, bullets, chips, Sources, meta line)* (120x40)
+*Chat with answer (table, bullets, chips, Sources, meta line)* (120x46)
 
 ```text
  DOCKET · All ready sources · Auto · demo-model-14b                                                           DEMO DATA
@@ -209,23 +235,29 @@ Blocked prerequisite (the source would still be kept; indexing then fails with a
     • Revenue rose 12% on the prior quarter [1]
     • The southern region missed its target because renewals slipped [2]
     • Hiring is paused until the next financial year [3]
+    • Travel above the limit needs a manager sign-off [5], unchanged from the older handbook [6]
 
     Region │ Revenue │ Target │ Result
-    ──────────────────────────────────
-    North  │ 4.2     │ 4.0    │ Met
-    South  │ 3.1     │ 3.4    │ Missed
-    West   │ 2.8     │ 2.5    │ Met
+    ───────┼─────────┼────────┼─────────
+    North  │     4.2 │    4.0 │ ✓ Met
+    South  │     3.1 │    3.4 │ ✗ Missed
+    West   │     2.8 │    2.5 │ ✓ Met
 
     One related figure [4] could not be checked.
 
     Sources:
-      [1] q3-summary.xlsx
+      [1] q3-summary-2025.xlsx
       [2] regional-review.pdf
       [3] hiring.docx
       [4] forecast-draft.xlsx  (unavailable)
+      [5] policies/handbook.pdf
+      [6] 2023/handbook.pdf
+
     Warning: Citation [4] refers to a version that is no longer available.
 
-    Quick search · 8.2s   [Evidence F5] [Details F6]
+    Quick search · 8.2s   [Evidence F5] [Ctrl+E] [Details F6]
+    Open a source: /show 1 to /show 6
+
 
 
 
@@ -234,7 +266,7 @@ Blocked prerequisite (the source would still be kept; indexing then fails with a
 ┌─ Ask ────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │ Ask about your documents...                                                                                          │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- 24 files ready · 3 need attention                                                                        F1 / Commands
+ 24 files ready · 3 need attention · Ctrl+E evidence · /show N                                            F1 / Commands
 ```
 
 At 80x24 and 60x20:
@@ -243,54 +275,142 @@ At 80x24 and 60x20:
 
 ```text
  DOCKET · All ready sources · Auto · demo-model-14b                   DEMO DATA
-    • Hiring is paused until the next financial year [3]
-
-    Region │ Revenue │ Target │ Result
-    ──────────────────────────────────
-    North  │ 4.2     │ 4.0    │ Met
-    South  │ 3.1     │ 3.4    │ Missed
-    West   │ 2.8     │ 2.5    │ Met
+    North  │     4.2 │    4.0 │ ✓ Met
+    South  │     3.1 │    3.4 │ ✗ Missed
+    West   │     2.8 │    2.5 │ ✓ Met
 
     One related figure [4] could not be checked.
 
     Sources:
-      [1] q3-summary.xlsx
+      [1] q3-summary-2025.xlsx
       [2] regional-review.pdf
       [3] hiring.docx
       [4] forecast-draft.xlsx  (unavailable)
+      [5] policies/handbook.pdf
+      [6] 2023/handbook.pdf
+
     Warning: Citation [4] refers to a version that is no longer available.
 
-    Quick search · 8.2s   [Evidence F5] [Details F6]
+    Quick search · 8.2s   [Evidence F5] [Ctrl+E] [Details F6]
+    Open a source: /show 1 to /show 6
 
 ┌─ Ask ────────────────────────────────────────────────────────────────────────┐
 │ Ask about your documents...                                                  │
 └──────────────────────────────────────────────────────────────────────────────┘
- 24 files ready · 3 need attention                                F1 / Commands
+ 24 files ready · 3 need attention · Ctrl+E evidence · /show N    F1 / Commands
 ```
 
 *Chat at 60x20* (60x20)
 
 ```text
  DOCKET · All ready sources · Auto                DEMO DATA
-    South  │ 3.1     │ 3.4    │ Missed
-    West   │ 2.8     │ 2.5    │ Met
-
-    One related figure [4] could not be checked.
-
     Sources:
-      [1] q3-summary.xlsx
+      [1] q3-summary-2025.xlsx
       [2] regional-review.pdf
       [3] hiring.docx
       [4] forecast-draft.xlsx  (unavailable)
+      [5] policies/handbook.pdf
+      [6] 2023/handbook.pdf
+
     Warning: Citation [4] refers to a version that is no
     longer available.
 
-    Quick search · 8.2s   [Evidence F5] [Details F6]
+    Quick search · 8.2s   [Evidence F5] [Ctrl+E]
+    [Details F6]
+    Open a source: /show 1 to /show 6
 
 ┌─ Ask ────────────────────────────────────────────────────┐
 │ Ask about your documents...                              │
 └──────────────────────────────────────────────────────────┘
  24 files ready · 3 need attention            F1 / Commands
+```
+
+A greeting gets a short reply with no citations or sourced claims, and the new answer is the selected one (marker explained in the footer):
+
+*Chat after a greeting (no citations)* (100x34)
+
+```text
+ DOCKET · All ready sources · Auto · demo-model-14b                                       DEMO DATA
+    North  │     4.2 │    4.0 │ ✓ Met
+    South  │     3.1 │    3.4 │ ✗ Missed
+    West   │     2.8 │    2.5 │ ✓ Met
+
+    One related figure [4] could not be checked.
+
+    Sources:
+      [1] q3-summary-2025.xlsx
+      [2] regional-review.pdf
+      [3] hiring.docx
+      [4] forecast-draft.xlsx  (unavailable)
+      [5] policies/handbook.pdf
+      [6] 2023/handbook.pdf
+
+    Warning: Citation [4] refers to a version that is no longer available.
+
+    Quick search · 8.2s   [Evidence F5] [Ctrl+E] [Details F6]
+    Open a source: /show 1 to /show 6
+
+  You
+    Hey
+
+  › Docket
+    Hello. I answer questions about the documents in your sources, with a citation for every
+    claim. Ask about a topic or a file, or type /help to see what else I can do.
+
+    Auto · 0.4s   [Details F6]
+    Selected answer: Esc clears
+
+┌─ Ask ────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Ask about your documents...                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ 24 files ready · 3 need attention · Esc clears the selection                         F1 / Commands
+```
+
+A second sourced answer shows the selected-answer marker, its hint line, the shortcuts, and the disambiguated duplicate names:
+
+*Chat with a selected answer (marker explained)* (100x40)
+
+```text
+ DOCKET · All ready sources · Auto · demo-model-14b                                       DEMO DATA
+
+  You
+    compare each region with its target
+
+  › Docket
+    The demo quarterly report shows revenue growing in most regions [1].
+
+    Key points:
+    • Revenue rose 12% on the prior quarter [1]
+    • The southern region missed its target because renewals slipped [2]
+    • Hiring is paused until the next financial year [3]
+    • Travel above the limit needs a manager sign-off [5], unchanged from the older handbook [6]
+
+    Region │ Revenue │ Target │ Result
+    ───────┼─────────┼────────┼─────────
+    North  │     4.2 │    4.0 │ ✓ Met
+    South  │     3.1 │    3.4 │ ✗ Missed
+    West   │     2.8 │    2.5 │ ✓ Met
+
+    One related figure [4] could not be checked.
+
+    Sources:
+      [1] q3-summary-2025.xlsx
+      [2] regional-review.pdf
+      [3] hiring.docx
+      [4] forecast-draft.xlsx  (unavailable)
+      [5] policies/handbook.pdf
+      [6] 2023/handbook.pdf
+
+    Warning: Citation [4] refers to a version that is no longer available.
+
+    Auto · 6.1s   [Evidence F5] [Ctrl+E] [Details F6]
+    Open a source: /show 1 to /show 6
+    Selected answer: Enter opens evidence, Esc clears
+
+┌─ Ask ────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Ask about your documents...                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ 24 files ready · 3 need attention · Enter opens evidence, Esc clears                 F1 / Commands
 ```
 
 ### 4.4 Command palette
@@ -300,33 +420,33 @@ At 80x24 and 60x20:
 ```text
  DOCKET · All ready sources · Auto · demo-model-14b                                       DEMO DATA
 
-  You
-    H┌─ Commands ─────────────────────────────────────────────────────────────────────────────┐
-     │  Find: type a command or description▏                                                  │
-  Doc│                                                                                        │
-    T│  ▸ /help  show this help                                                               │
-     │    /sources  list registered sources                                                   │
-    K│    /add <folder>  register a folder as a source                                        │
-    •│    /ingest [<source-id>|all]  index a source (default: active and missing sources)     │
-    •│    /mode [auto|fast|agent]  show or set the query mode (default: auto)                 │
-    •│    /remove <source-id>  stop searching a source (asks first)                           │
-     │    /reconnect <source-id>  reconnect a disconnected local folder and index it          │
-    R│    /show <n>  read the evidence behind citation n                                      │
-    ─│    /retry  re-ask the previous question in the current mode                            │
-    N│    /status  show data dir, models, sources and mode                                    │
-    S│    /clear  forget the conversation so far                                              │
-    W│    /exit  leave (Ctrl-D works too)                                                     │
-     │    /scope  choose what to search                                                       │
-    O│    /jobs  show indexing jobs and results                                               │
-     │    /settings  answering, appearance, history, system                                   │
-    S│    /details  details of the latest answer                                              │
-     │    /rechunk  update stored chunks                                         unavailable  │
-     │    /reindex  rebuild the search index                                     unavailable  │
-     │                                                                                        │
-     │   [ Close ]                                                                            │
-    W│  Type to filter · Up/Down select · Enter run · Esc close                               │
-     └────────────────────────────────────────────────────────────────────────────────────────┘
-    Quick search · 8.2s   [Evidence F5] [Details F6]
+
+ ┌─ Commands ─────────────────────────────────────────────────────────────────────────────────────┐
+ │  Find: type a command or description▏                                                          │
+ │                                                                                                │
+ │  ▸ /help  show this help                                                                       │
+ │    /sources  list registered sources                                                           │
+ │    /add <folder>  register a folder as a source                                                │
+ │    /ingest [<source-id>|all]  index a source (default: active and missing sources)             │
+ │    /mode [auto|fast|agent]  show or set the query mode (default: auto)                         │
+ │    /remove <source-id>  stop searching a source (asks first)                                   │
+ │    /reconnect <source-id>  reconnect a disconnected local folder and index it                  │
+ │    /show <n>  read the evidence behind citation n                                              │
+ │    /retry  re-ask the previous question in the current mode                                    │
+ │    /status  show data dir, models, sources and mode                                            │
+ │    /clear  forget the conversation so far                                                      │
+ │    /exit  leave (Ctrl-D works too)                                                             │
+ │    /scope  choose what to search                                                               │
+ │    /jobs  show indexing jobs and results                                                       │
+ │    /settings  answering, appearance, history, system                                           │
+ │    /details  details of the latest answer                                                      │
+ │    /rechunk  update stored chunks                                                 unavailable  │
+ │    /reindex  rebuild the search index                                             unavailable  │
+ │                                                                                                │
+ │   [ Close ]                                                                                    │
+ │  Type to filter · Up/Down select · Enter run · Esc close                                       │
+ └────────────────────────────────────────────────────────────────────────────────────────────────┘
+
 
 ┌─ Ask ────────────────────────────────────────────────────────────────────────────────────────────┐
 │ Ask about your documents...                                                                      │
@@ -340,24 +460,24 @@ Filtering, and an unavailable command with its reason:
 
 ```text
  DOCKET · All ready sources · Auto · demo-model-14b                                       DEMO DATA
-    • Hiring is paused until the next financial year [3]
 
-    Region │ Revenue │ Target │ Result
-    ──────────────────────────────────
-    North  │ 4.2     │ 4.0    │ Met
-    S┌─ Commands ─────────────────────────────────────────────────────────────────────────────┐
-    W│  Find: recon▏                                                                          │
-     │                                                                                        │
-    O│  ▸ /reconnect <source-id>  reconnect a disconnected local folder and index it          │
-     │                                                                                        │
-    S│   [ Close ]                                                                            │
-     │  Type to filter · Up/Down select · Enter run · Esc close                               │
-     └────────────────────────────────────────────────────────────────────────────────────────┘
-      [3] hiring.docx
-      [4] forecast-draft.xlsx  (unavailable)
-    Warning: Citation [4] refers to a version that is no longer available.
 
-    Quick search · 8.2s   [Evidence F5] [Details F6]
+
+
+
+ ┌─ Commands ─────────────────────────────────────────────────────────────────────────────────────┐
+ │  Find: recon▏                                                                                  │
+ │                                                                                                │
+ │  ▸ /reconnect <source-id>  reconnect a disconnected local folder and index it                  │
+ │                                                                                                │
+ │   [ Close ]                                                                                    │
+ │  Type to filter · Up/Down select · Enter run · Esc close                                       │
+ └────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+
+
+
 
 ┌─ Ask ────────────────────────────────────────────────────────────────────────────────────────────┐
 │ Ask about your documents...                                                                      │
@@ -369,24 +489,24 @@ Filtering, and an unavailable command with its reason:
 
 ```text
  DOCKET · All ready sources · Auto · demo-model-14b                                       DEMO DATA
-    • Hiring is paused until the next financial year [3]
 
-    Region │ Revenue │ Target │ Result
-    ──────────────────────────────────
-    N┌─ Commands ─────────────────────────────────────────────────────────────────────────────┐
-    S│  Find: reindex▏                                                                        │
-    W│                                                                                        │
-     │  ▸ /reindex  rebuild the search index                                     unavailable  │
-    O│                                                                                        │
-     │  Unavailable: Maintenance arrives in a later stage; not wired in this prototype.       │
-    S│                                                                                        │
-     │   [ Close ]                                                                            │
-     │  Type to filter · Up/Down select · Enter run · Esc close                               │
-     └────────────────────────────────────────────────────────────────────────────────────────┘
-      [4] forecast-draft.xlsx  (unavailable)
-    Warning: Citation [4] refers to a version that is no longer available.
 
-    Quick search · 8.2s   [Evidence F5] [Details F6]
+
+
+ ┌─ Commands ─────────────────────────────────────────────────────────────────────────────────────┐
+ │  Find: rech▏                                                                                   │
+ │                                                                                                │
+ │  ▸ /rechunk  update stored chunks                                                 unavailable  │
+ │                                                                                                │
+ │  Unavailable: Maintenance arrives in a later stage; not wired in this prototype.               │
+ │                                                                                                │
+ │   [ Close ]                                                                                    │
+ │  Type to filter · Up/Down select · Enter run · Esc close                                       │
+ └────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+
+
 
 ┌─ Ask ────────────────────────────────────────────────────────────────────────────────────────────┐
 │ Ask about your documents...                                                                      │
@@ -400,24 +520,24 @@ Filtering, and an unavailable command with its reason:
 
 ```text
  DOCKET · All ready sources · Auto · demo-model-14b                                       DEMO DATA
-    • Hiring is paused until the next financial year [3]
 
-    Region │ Revenue │ Target │ Result
-    ─┌─ Search scope ─────────────────────────────────────────────────────────────────────────┐
-    N│  Find: filter sources▏                                                                 │
-    S│                                                                                        │
-    W│  ▸ All ready sources  everything searchable                                   current  │
-     │    Finance  /demo/work/finance                                                         │
-    O│    Handbook  /demo/work/handbook                                                       │
-     │    Contracts  Failed — not searchable                                                  │
-    S│    Old project  Disconnected — not searchable                                          │
-     │                                                                                        │
-     │   [ Find a file ]  [ Close ]                                                           │
-     │  Type to filter · Up/Down select · Enter select · Tab actions · Esc close              │
-     └────────────────────────────────────────────────────────────────────────────────────────┘
-    Warning: Citation [4] refers to a version that is no longer available.
 
-    Quick search · 8.2s   [Evidence F5] [Details F6]
+
+ ┌─ Search scope ─────────────────────────────────────────────────────────────────────────────────┐
+ │  Find: filter sources▏                                                                         │
+ │                                                                                                │
+ │  ▸ All ready sources  everything searchable                                           current  │
+ │    Finance  /demo/work/finance                                                                 │
+ │    Handbook  /demo/work/handbook                                                               │
+ │    Contracts  Failed — not searchable                                                          │
+ │    Old project  Disconnected — not searchable                                                  │
+ │                                                                                                │
+ │   [ Find a file ]  [ Close ]                                                                   │
+ │  Type to filter · Up/Down select · Enter select · Tab actions · Esc close                      │
+ └────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+
 
 ┌─ Ask ────────────────────────────────────────────────────────────────────────────────────────────┐
 │ Ask about your documents...                                                                      │
@@ -431,24 +551,24 @@ File search (the path is shown instead of the source name when basenames collide
 
 ```text
  DOCKET · All ready sources · Auto · demo-model-14b                                       DEMO DATA
-    • Hiring is paused until the next financial year [3]
 
-    Region │ Revenue │ Target │ Result
-    ─┌─ Search scope ─────────────────────────────────────────────────────────────────────────┐
-    N│  Find: minutes▏                                                                        │
-    S│                                                                                        │
-    W│  ▸ board/minutes-01.pdf  Finance                                                       │
-     │    board/minutes-02.pdf  Finance                                                       │
-    O│    board/minutes-03.pdf  Finance                                                       │
-     │    board/minutes-04.pdf  Finance                                                       │
-    S│    board/minutes-05.pdf  Finance                                                       │
-     │    board/minutes-06.pdf  Finance                                                       │
-     │                                                                                        │
-     │   [ Back to sources ]  [ Close ]                                                       │
-     │  Type to search files · Enter select · Esc close                                       │
-    W└────────────────────────────────────────────────────────────────────────────────────────┘
 
-    Quick search · 8.2s   [Evidence F5] [Details F6]
+
+ ┌─ Search scope ─────────────────────────────────────────────────────────────────────────────────┐
+ │  Find: minutes▏                                                                                │
+ │                                                                                                │
+ │  ▸ board/minutes-01.pdf  Finance                                                               │
+ │    board/minutes-02.pdf  Finance                                                               │
+ │    board/minutes-03.pdf  Finance                                                               │
+ │    board/minutes-04.pdf  Finance                                                               │
+ │    board/minutes-05.pdf  Finance                                                               │
+ │    board/minutes-06.pdf  Finance                                                               │
+ │                                                                                                │
+ │   [ Back to sources ]  [ Close ]                                                               │
+ │  Type to search files · Enter select · Esc close                                               │
+ └────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
 
 ┌─ Ask ────────────────────────────────────────────────────────────────────────────────────────────┐
 │ Ask about your documents...                                                                      │
@@ -460,24 +580,24 @@ File search (the path is shown instead of the source name when basenames collide
 
 ```text
  DOCKET · All ready sources · Auto · demo-model-14b                                       DEMO DATA
-    • Hiring is paused until the next financial year [3]
 
-    Region │ Revenue │ Target │ Result
-    ──────────────────────────────────
-    N┌─ Answering mode ───────────────────────────────────────────────────────────────────────┐
-    S│    Auto  Docket chooses the route. Recommended.                               current  │
-    W│    Quick search  Search and answer directly from retrieved passages.                   │
-     │  ▸ Plan  Plan steps and ask you to approve them first.                    unavailable  │
-    O│                                                                                        │
-     │  Unavailable: Not available yet: planning is not implemented in the backend.           │
-    S│                                                                                        │
-     │   [ Close ]                                                                            │
-     │  Up/Down select · Enter accept · Esc close                                             │
-     └────────────────────────────────────────────────────────────────────────────────────────┘
-      [4] forecast-draft.xlsx  (unavailable)
-    Warning: Citation [4] refers to a version that is no longer available.
 
-    Quick search · 8.2s   [Evidence F5] [Details F6]
+
+
+
+ ┌─ Answering mode ───────────────────────────────────────────────────────────────────────────────┐
+ │  ▸ Auto  Docket chooses the route. Recommended.                                       current  │
+ │    Quick search  Search and answer directly from retrieved passages.                           │
+ │    Plan  Plan steps and ask you to approve them first.                            unavailable  │
+ │                                                                                                │
+ │   [ Close ]                                                                                    │
+ │  Up/Down select · Enter accept · Esc close                                                     │
+ └────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+
+
+
 
 ┌─ Ask ────────────────────────────────────────────────────────────────────────────────────────────┐
 │ Ask about your documents...                                                                      │
@@ -491,30 +611,30 @@ File search (the path is shown instead of the source name when basenames collide
 
 ```text
  DOCKET · All ready sources · Auto · demo-model-14b                                       DEMO DATA
-  Docket
-    The demo quarterly report shows revenue growing in most regions [1].
-     ┌─ Sources ──────────────────────────────────────────────────────────────────────────────┐
-    K│  Find: filter sources▏                                                                 │
-    •│                                                                                        │
-    •│  ▸ Finance                    Ready │ Finance                                          │
-    •│      18 searchable · 2 failed       │ Path  /demo/work/finance                         │
-     │    Handbook                   Ready │ State Ready                                      │
-    R│      6 searchable                   │ Last indexed  demo time 10:42                    │
-    ─│    Contracts                 Failed │ Files  18 ready · 2 failed · 0 pending · 1 no …  │
-    N│    Old project         Disconnected │                                                  │
-    S│                                     │ Needs a look                                     │
-    W│                                     │   budget/legacy-plan.xls Failed                  │
-     │                                     │    — Unsupported legacy format .xls              │
-    O│                                     │   budget/forecast.xlsx Failed                    │
-     │                                     │    — Workbook is corrupt (demo)                  │
-    S│                                     │   scans/cover-page.pdf                           │
-     │                                     │   Processed — no searchable text                 │
-     │                                                                                        │
-     │   [ Add folder ]  [ Refresh ]  ( Retry )  ( Reconnect )  [ Disconnect ]  [ Details ]   │
-     │   [ Close ]                                                                            │
-    W│  Type to filter · Tab actions · Enter on a source toggles details · Esc close          │
-     └────────────────────────────────────────────────────────────────────────────────────────┘
-    Quick search · 8.2s   [Evidence F5] [Details F6]
+
+
+ ┌─ Sources ──────────────────────────────────────────────────────────────────────────────────────┐
+ │  Find: filter sources▏                                                                         │
+ │                                                                                                │
+ │  ▸ Finance                    Ready │ Finance                                                  │
+ │      18 searchable · 2 failed       │ Path         /demo/work/finance                          │
+ │    Handbook                   Ready │ State        Ready                                       │
+ │      6 searchable                   │ Last indexed 10 Oct 2026 10:42                           │
+ │    Contracts                 Failed │ Files        18 ready · 2 failed · 0 pending · 1 no      │
+ │    Old project         Disconnected │              text                                        │
+ │                                     │                                                          │
+ │                                     │ Needs a look                                             │
+ │                                     │   budget/legacy-plan.xls  Failed    Unsupported legacy   │
+ │                                     │                                     format .xls          │
+ │                                     │   budget/forecast.xlsx    Failed    Workbook is corrupt  │
+ │                                     │                                     (demo)               │
+ │                                     │   scans/cover-page.pdf    No text                        │
+ │                                                                                                │
+ │   [ Add folder ]  [ Refresh ]  [ Retry ]  [ Reconnect ]  [ Disconnect ]  [ Details ]           │
+ │   [ Close ]                                                                                    │
+ │  Type to filter · Tab actions · Enter toggles details · Esc close                              │
+ └────────────────────────────────────────────────────────────────────────────────────────────────┘
+
 
 ┌─ Ask ────────────────────────────────────────────────────────────────────────────────────────────┐
 │ Ask about your documents...                                                                      │
@@ -526,30 +646,30 @@ File search (the path is shown instead of the source name when basenames collide
 
 ```text
  DOCKET · All ready sources · Auto · demo-model-14b                                       DEMO DATA
-  Docket
-    The demo quarterly report shows revenue growing in most regions [1].
 
-    Key points:
-    • Revenue rose 12% on the prior quarter [1]
-    •┌─ Sources ──────────────────────────────────────────────────────────────────────────────┐
-    •│  Find: filter sources▏                                                                 │
-     │                                                                                        │
-    R│    Finance                    Ready │ Contracts                                        │
-    ─│      18 searchable · 2 failed       │ Path  /demo/work/contracts                       │
-    N│    Handbook                   Ready │ State Failed                                     │
-    S│      6 searchable                   │ Last indexed  demo time yesterday 17:20          │
-    W│  ▸ Contracts                 Failed │ Files  4 ready · 0 failed · 0 pending · 0 no t…  │
-     │    Old project         Disconnected │ The folder cannot be reached at                  │
-    O│                                     │ /demo/work/contracts. Restore it, then retry.    │
-     │                                                                                        │
-    S│   [ Add folder ]  ( Refresh )  [ Retry ]  ( Reconnect )  [ Disconnect ]  [ Details ]   │
-     │   [ Close ]                                                                            │
-     │  Type to filter · Tab actions · Enter on a source toggles details · Esc close          │
-     └────────────────────────────────────────────────────────────────────────────────────────┘
-      [4] forecast-draft.xlsx  (unavailable)
-    Warning: Citation [4] refers to a version that is no longer available.
 
-    Quick search · 8.2s   [Evidence F5] [Details F6]
+
+
+
+ ┌─ Sources ──────────────────────────────────────────────────────────────────────────────────────┐
+ │  Find: filter sources▏                                                                         │
+ │                                                                                                │
+ │    Finance                    Ready │ Contracts                                                │
+ │      18 searchable · 2 failed       │ Path         /demo/work/contracts                        │
+ │    Handbook                   Ready │ State        Failed                                      │
+ │      6 searchable                   │ Last indexed 9 Oct 2026 17:20                            │
+ │  ▸ Contracts                 Failed │ Files        4 ready · 0 failed · 0 pending · 0 no text  │
+ │    Old project         Disconnected │ The folder cannot be reached at /demo/work/contracts.    │
+ │                                     │ Restore it, then retry.                                  │
+ │                                                                                                │
+ │   [ Add folder ]  [ Refresh ]  [ Retry ]  [ Reconnect ]  [ Disconnect ]  [ Details ]           │
+ │   [ Close ]                                                                                    │
+ │  Type to filter · Tab actions · Enter toggles details · Esc close                              │
+ └────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+
+
 
 ┌─ Ask ────────────────────────────────────────────────────────────────────────────────────────────┐
 │ Ask about your documents...                                                                      │
@@ -561,30 +681,30 @@ File search (the path is shown instead of the source name when basenames collide
 
 ```text
  DOCKET · All ready sources · Auto · demo-model-14b                                       DEMO DATA
-  Docket
-    The demo quarterly report shows revenue growing in most regions [1].
 
-    Key points:
-    • Revenue rose 12% on the prior quarter [1]
-    •┌─ Sources ──────────────────────────────────────────────────────────────────────────────┐
-    •│  Find: filter sources▏                                                                 │
-     │                                                                                        │
-    R│    Finance                    Ready │ Old project                                      │
-    ─│      18 searchable · 2 failed       │ Path  /demo/archive/old-project                  │
-    N│    Handbook                   Ready │ State Disconnected                               │
-    S│      6 searchable                   │ Last indexed  demo time last week                │
-    W│    Contracts                 Failed │ Files  5 ready · 0 failed · 0 pending · 0 no t…  │
-     │  ▸ Old project         Disconnected │ Disconnected by you. Stored originals are kept;  │
-    O│                                     │ it is not searched.                              │
-     │                                                                                        │
-    S│   [ Add folder ]  ( Refresh )  ( Retry )  [ Reconnect ]  ( Disconnect )  [ Details ]   │
-     │   [ Close ]                                                                            │
-     │  Type to filter · Tab actions · Enter on a source toggles details · Esc close          │
-     └────────────────────────────────────────────────────────────────────────────────────────┘
-      [4] forecast-draft.xlsx  (unavailable)
-    Warning: Citation [4] refers to a version that is no longer available.
 
-    Quick search · 8.2s   [Evidence F5] [Details F6]
+
+
+
+ ┌─ Sources ──────────────────────────────────────────────────────────────────────────────────────┐
+ │  Find: filter sources▏                                                                         │
+ │                                                                                                │
+ │    Finance                    Ready │ Old project                                              │
+ │      18 searchable · 2 failed       │ Path         /demo/archive/old-project                   │
+ │    Handbook                   Ready │ State        Disconnected                                │
+ │      6 searchable                   │ Last indexed 3 Oct 2026 14:05                            │
+ │    Contracts                 Failed │ Files        5 ready · 0 failed · 0 pending · 0 no text  │
+ │  ▸ Old project         Disconnected │ Disconnected by you. Stored originals are kept; it is    │
+ │                                     │ not searched.                                            │
+ │                                                                                                │
+ │   [ Add folder ]  [ Refresh ]  [ Retry ]  [ Reconnect ]  [ Disconnect ]  [ Details ]           │
+ │   [ Close ]                                                                                    │
+ │  Type to filter · Tab actions · Enter toggles details · Esc close                              │
+ └────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+
+
 
 ┌─ Ask ────────────────────────────────────────────────────────────────────────────────────────────┐
 │ Ask about your documents...                                                                      │
@@ -598,30 +718,30 @@ Disconnect asks first; the safe choice is focused by default:
 
 ```text
  DOCKET · All ready sources · Auto · demo-model-14b                                       DEMO DATA
-  Docket
-    The demo quarterly report shows revenue growing in most regions [1].
 
-    Key points:
-    • Revenue rose 12% on the prior quarter [1]
-    • The southern region missed its target because renewals slipped [2]
-    • Hiring is paused until the next financial year [3]
 
-    Region │ Revenue │ Target │ Result
-    ─┌─ Disconnect Finance? ──────────────────────────────────────────────────────────────────┐
-    N│  Finance will stop being searched. Your original files and Docket's stored copies are  │
-    S│  kept, and you can reconnect later. (Demo: nothing is changed on disk.)                │
-    W│                                                                                        │
-     │   [ Disconnect ] >[ Keep connected ]                                                   │
-    O│  Left/Right choose · Enter confirm · Esc go back                                       │
-     └────────────────────────────────────────────────────────────────────────────────────────┘
-    Sources:
-      [1] q3-summary.xlsx
-      [2] regional-review.pdf
-      [3] hiring.docx
-      [4] forecast-draft.xlsx  (unavailable)
-    Warning: Citation [4] refers to a version that is no longer available.
 
-    Quick search · 8.2s   [Evidence F5] [Details F6]
+
+
+
+
+
+
+ ┌─ Disconnect Finance? ──────────────────────────────────────────────────────────────────────────┐
+ │  Finance will stop being searched. Your original files and Docket's stored copies are kept,    │
+ │  and you can reconnect later. (Demo: nothing is changed on disk.)                              │
+ │                                                                                                │
+ │   [ Disconnect ] ▸[ Keep connected ]                                                           │
+ │  Left/Right choose · Enter confirm · Esc go back                                               │
+ └────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+
+
+
+
+
+
 
 ┌─ Ask ────────────────────────────────────────────────────────────────────────────────────────────┐
 │ Ask about your documents...                                                                      │
@@ -648,10 +768,10 @@ Below 80 columns the details go under the list:
 │ Finance                                                  │
 │ 0 above · 11 below · PgUp/PgDn to scroll                 │
 │                                                          │
-│  [ Add folder ]  [ Refresh ]  ( Retry )  ( Reconnect )   │
+│  [ Add folder ]  [ Refresh ]  [ Retry ]  [ Reconnect ]   │
 │  [ Disconnect ]  [ Details ]  [ Close ]                  │
-│ Type to filter · Tab actions · Enter on a source toggles │
-│ details · Esc close                                      │
+│ Type to filter · Tab actions · Enter toggles details ·   │
+│ Esc close                                                │
 └──────────────────────────────────────────────────────────┘
  24 files ready · 3 need attention            F1 / Commands
 ```
@@ -662,30 +782,30 @@ Below 80 columns the details go under the list:
 
 ```text
  DOCKET · All ready sources · Auto · demo-model-14b                                       DEMO DATA
-  Docket
-    The demo quarterly report shows revenue growing in most regions [1].
 
-    Key points:
-    • Revenue rose 12% on the prior quarter [1]
-    • The southern region missed its target because renewals slipped [2]
-    •┌─ Indexing Finance ─────────────────────────────────────────────────────────────────────┐
-     │  File 7 of 24: file-07.pdf                                                             │
-    R│  Stage: Creating search embeddings                                                     │
-    ─│  Elapsed: 00:42                                                                        │
-    N│                                                                                        │
-    S│  ██████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 6/24 files                                   │
-    W│  Files vary in processing time; this is a file count, not a time estimate.             │
-     │                                                                                        │
-    O│  5 indexed · 1 unchanged · 0 failed                                                    │
-     │                                                                                        │
-    S│  >[ Hide progress ]  [ Stop indexing ]                                                 │
-     │  Hide returns to chat; work continues · N advance (reduced motion) · Esc hides         │
-     └────────────────────────────────────────────────────────────────────────────────────────┘
-      [3] hiring.docx
-      [4] forecast-draft.xlsx  (unavailable)
-    Warning: Citation [4] refers to a version that is no longer available.
 
-    Quick search · 8.2s   [Evidence F5] [Details F6]
+
+
+
+
+ ┌─ Indexing Finance ─────────────────────────────────────────────────────────────────────────────┐
+ │  File      7 of 24 · file-07.pdf                                                               │
+ │  Stage     Creating search embeddings                                                          │
+ │  Elapsed   00:42                                                                               │
+ │  So far    5 indexed · 1 unchanged · 0 failed                                                  │
+ │                                                                                                │
+ │  ██████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 6/24 files                                           │
+ │  Files vary in processing time; this is a file count, not a time estimate.                     │
+ │                                                                                                │
+ │  ▸[ Hide progress ]  [ Stop indexing ]                                                         │
+ │  Hide returns to chat; work continues · N advance (reduced motion) · Esc hides                 │
+ └────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+
+
+
+
 
 ┌─ Ask (sending is paused while indexing) ─────────────────────────────────────────────────────────┐
 │ Ask about your documents...                                                                      │
@@ -697,24 +817,24 @@ Below 80 columns the details go under the list:
 
 ```text
  DOCKET · All ready sources · Auto · demo-model-14b                                       DEMO DATA
-    • Hiring is paused until the next financial year [3]
-     ┌─ Indexing Finance ─────────────────────────────────────────────────────────────────────┐
-    R│  File 7 of 24: file-07.pdf                                                             │
-    ─│  Stage: Creating search embeddings                                                     │
-    N│  Elapsed: 00:42                                                                        │
-    S│                                                                                        │
-    W│  ██████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 6/24 files                                   │
-     │  Files vary in processing time; this is a file count, not a time estimate.             │
-    O│                                                                                        │
-     │  5 indexed · 1 unchanged · 0 failed                                                    │
-    S│                                                                                        │
-     │  Stopping after the current operation...                                               │
-     │  Completed files are kept. Unfinished files stay unavailable and can be retried.       │
-     │                                                                                        │
-     │   [ Hide progress ] >( Stop indexing )                                                 │
-    W│  Hide returns to chat; work continues · N advance (reduced motion) · Esc hides         │
-     └────────────────────────────────────────────────────────────────────────────────────────┘
-    Quick search · 8.2s   [Evidence F5] [Details F6]
+
+
+ ┌─ Indexing Finance ─────────────────────────────────────────────────────────────────────────────┐
+ │  File      7 of 24 · file-07.pdf                                                               │
+ │  Stage     Creating search embeddings                                                          │
+ │  Elapsed   00:42                                                                               │
+ │  So far    5 indexed · 1 unchanged · 0 failed                                                  │
+ │                                                                                                │
+ │  ██████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 6/24 files                                           │
+ │  Files vary in processing time; this is a file count, not a time estimate.                     │
+ │                                                                                                │
+ │  Stopping after the current operation...                                                       │
+ │  Completed files are kept. Unfinished files stay unavailable and can be retried.               │
+ │                                                                                                │
+ │  ▸[ Hide progress ]  [ Stop indexing ]                                                         │
+ │  Hide returns to chat; work continues · N advance (reduced motion) · Esc hides                 │
+ └────────────────────────────────────────────────────────────────────────────────────────────────┘
+
 
 ┌─ Ask (sending is paused while indexing) ─────────────────────────────────────────────────────────┐
 │ Ask about your documents...                                                                      │
@@ -728,24 +848,24 @@ After the worker stops (the state is not "stopped" until then):
 
 ```text
  DOCKET · All ready sources · Auto · demo-model-14b                                       DEMO DATA
-    Region │ Revenue │ Target │ Result
-    ──────────────────────────────────
-    North  │ 4.2     │ 4.0    │ Met
-    South  │ 3.1     │ 3.4    │ Missed
-    West   │ 2.8     │ 2.5    │ Met
-     ┌─ Indexing Finance ─────────────────────────────────────────────────────────────────────┐
-    O│  Cancelled: Stopped before finishing                                                   │
-     │  5 indexed · 1 unchanged · 0 failed                                                    │
-    S│  6 of 24 files processed in 00:44                                                      │
-     │  Completed files were kept; the rest are unavailable until you retry.                  │
-     │                                                                                        │
-     │   [ Start asking ] >[ Retry indexing ]  [ Close ]                                      │
-     │  Esc close                                                                             │
-    W└────────────────────────────────────────────────────────────────────────────────────────┘
 
-    Quick search · 8.2s   [Evidence F5] [Details F6]
 
-    Attention: Indexing Finance stopped after 6 of 24 files. Completed files were kept.
+
+
+
+ ┌─ Indexing Finance ─────────────────────────────────────────────────────────────────────────────┐
+ │  Cancelled: Stopped before finishing                                                           │
+ │  5 indexed · 1 unchanged · 0 failed                                                            │
+ │  6 of 24 files processed in 00:44                                                              │
+ │  Completed files were kept; the rest are unavailable until you retry.                          │
+ │                                                                                                │
+ │  ▸[ Start asking ]  [ Retry indexing ]  [ Close ]                                              │
+ │  Esc close                                                                                     │
+ └────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+
+
 
 ┌─ Ask ────────────────────────────────────────────────────────────────────────────────────────────┐
 │ Ask about your documents...                                                                      │
@@ -758,29 +878,29 @@ After the worker stops (the state is not "stopped" until then):
 ```text
  DOCKET · All ready sources · Auto · demo-model-14b                                       DEMO DATA
 
-    Key points:
-    • Revenue rose 12% on the prior quarter [1]
-    • The southern region missed its target because renewals slipped [2]
-    • Hiring is paused until the next financial year [3]
 
-    R┌─ Indexing Finance ─────────────────────────────────────────────────────────────────────┐
-    ─│  Partial: Indexing finished                                                            │
-    N│  19 indexed · 3 unchanged · 2 failed                                                   │
-    S│  24 of 24 files processed in 02:26                                                     │
-    W│                                                                                        │
-     │  Failures                                                                              │
-    O│    file-12.pdf Failed — Document is corrupt (demo)                                     │
-     │    file-18.pdf Failed — Document is corrupt (demo)                                     │
-    S│  Recovery: fix or replace the file, then Retry indexing.                               │
-     │                                                                                        │
-     │  >[ Start asking ]  [ Retry indexing ]  [ Close ]                                      │
-     │  Esc close                                                                             │
-     └────────────────────────────────────────────────────────────────────────────────────────┘
-    Warning: Citation [4] refers to a version that is no longer available.
 
-    Quick search · 8.2s   [Evidence F5] [Details F6]
 
-    Attention: Indexing Finance finished: 19 indexed, 3 unchanged, 2 failed.
+
+
+ ┌─ Indexing Finance ─────────────────────────────────────────────────────────────────────────────┐
+ │  Partial: Indexing finished                                                                    │
+ │  19 indexed · 3 unchanged · 2 failed                                                           │
+ │  24 of 24 files processed in 02:26                                                             │
+ │                                                                                                │
+ │  Failures                                                                                      │
+ │    file-12.pdf Failed — Document is corrupt (demo)                                             │
+ │    file-18.pdf Failed — Document is corrupt (demo)                                             │
+ │  Recovery: fix or replace the file, then Retry indexing.                                       │
+ │                                                                                                │
+ │  ▸[ Start asking ]  [ Retry indexing ]  [ Close ]                                              │
+ │  Esc close                                                                                     │
+ └────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+
+
+
 
 ┌─ Ask ────────────────────────────────────────────────────────────────────────────────────────────┐
 │ Ask about your documents...                                                                      │
@@ -794,30 +914,30 @@ Hidden: the job keeps running, the footer shows it, and the composer says why se
 
 ```text
  DOCKET · All ready sources · Auto · demo-model-14b                                       DEMO DATA
-  Docket
-    The demo quarterly report shows revenue growing in most regions [1].
-
-    Key points:
-    • Revenue rose 12% on the prior quarter [1]
     • The southern region missed its target because renewals slipped [2]
     • Hiring is paused until the next financial year [3]
+    • Travel above the limit needs a manager sign-off [5], unchanged from the older handbook [6]
 
     Region │ Revenue │ Target │ Result
-    ──────────────────────────────────
-    North  │ 4.2     │ 4.0    │ Met
-    South  │ 3.1     │ 3.4    │ Missed
-    West   │ 2.8     │ 2.5    │ Met
+    ───────┼─────────┼────────┼─────────
+    North  │     4.2 │    4.0 │ ✓ Met
+    South  │     3.1 │    3.4 │ ✗ Missed
+    West   │     2.8 │    2.5 │ ✓ Met
 
     One related figure [4] could not be checked.
 
     Sources:
-      [1] q3-summary.xlsx
+      [1] q3-summary-2025.xlsx
       [2] regional-review.pdf
       [3] hiring.docx
       [4] forecast-draft.xlsx  (unavailable)
+      [5] policies/handbook.pdf
+      [6] 2023/handbook.pdf
+
     Warning: Citation [4] refers to a version that is no longer available.
 
-    Quick search · 8.2s   [Evidence F5] [Details F6]
+    Quick search · 8.2s   [Evidence F5] [Ctrl+E] [Details F6]
+    Open a source: /show 1 to /show 6
 
 ┌─ Ask (sending is paused while indexing) ─────────────────────────────────────────────────────────┐
 │ Ask about your documents...                                                                      │
@@ -831,30 +951,30 @@ Hidden: the job keeps running, the footer shows it, and the composer says why se
 
 ```text
  DOCKET · All ready sources · Auto · demo-model-14b                                       DEMO DATA
-  Docket
-    The demo quarterly report shows revenue growing in most regions [1].
 
-    Key points:
-    • Revenue rose 12% on the prior quarter [1]
-    •┌─ Evidence [1] of 4 ────────────────────────────────────────────────────────────────────┐
-    •│  q3-summary.xlsx                                                                       │
-     │  Location  Sheet Summary · B8:F8                                                       │
-    R│  Indexed   demo time 10:42 · stored version 3 (demo)                                   │
-    ─│                                                                                        │
-    N│  Passage (verbatim)                                                                    │
-    S│  │ Region | Revenue | Target                                                           │
-    W│  │ North | 4.2 | 4.0                                                                   │
-     │  │ South | 3.1 | 3.4                                                                   │
-    O│  │ West | 2.8 | 2.5                                                                    │
-     │  │ (sample figures for the demo)                                                       │
-    S│                                                                                        │
-     │  >( Previous )  [ Next ]  [ Open original ]  [ Details ]  [ Close ]                    │
-     │  P previous · N next · O open original · D details · PgUp/PgDn scroll · Esc close      │
-     └────────────────────────────────────────────────────────────────────────────────────────┘
-      [4] forecast-draft.xlsx  (unavailable)
-    Warning: Citation [4] refers to a version that is no longer available.
 
-    Quick search · 8.2s   [Evidence F5] [Details F6]
+
+ ┌─ Evidence [1] of 6 ────────────────────────────────────────────────────────────────────────────┐
+ │  q3-summary-2025.xlsx                                                                  1 of 6  │
+ │  Source    Finance                                                                             │
+ │  Location  Sheet Summary · B7:D10                                                              │
+ │  Indexed   10 Oct 2026 10:42 · version 3 of 3 (current)                                        │
+ │  Supports  “The demo quarterly report shows revenue growing in most regions [1].”              │
+ │            “Revenue rose 12% on the prior quarter [1]”                                         │
+ │                                                                                                │
+ │  Cells B7:D10 · cited cells shown in [ ]: C8:C10                                               │
+ │      B        C           D                                                                    │
+ │   7  Region │  Revenue  │ Target                                                               │
+ │      ───────┼───────────┼───────                                                               │
+ │   8  North  │     [4.2] │    4.0                                                               │
+ │   9  South  │     [3.1] │    3.4                                                               │
+ │  10  West   │     [2.8] │    2.5                                                               │
+ │                                                                                                │
+ │  ▸[ Previous ]  [ Next ]  [ Open original ]  [ Details ]  [ Close ]                            │
+ │  P N O D shortcuts · PgUp/PgDn scroll · Esc close                                              │
+ └────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
 
 ┌─ Ask ────────────────────────────────────────────────────────────────────────────────────────────┐
 │ Ask about your documents...                                                                      │
@@ -862,36 +982,36 @@ Hidden: the job keeps running, the footer shows it, and the composer says why se
  24 files ready · 3 need attention                                                    F1 / Commands
 ```
 
-A citation with no extracted location says so:
+Position text (`1 of 6`) sits on the title row and changes with Previous/Next. The cited cells `C8:C10` are in `[ ]` (and highlighted in colour); the `Supports` lines quote the answer claims that cite this passage. A citation with no extracted location says so:
 
 *Evidence [3]: location not extracted* (100x30)
 
 ```text
  DOCKET · All ready sources · Auto · demo-model-14b                                       DEMO DATA
-  Docket
-    The demo quarterly report shows revenue growing in most regions [1].
 
-    Key points:
-    • Revenue rose 12% on the prior quarter [1]
-    • The southern region missed its target because renewals slipped [2]
-    •┌─ Evidence [3] of 4 ────────────────────────────────────────────────────────────────────┐
-     │  hiring.docx                                                                           │
-    R│  Location  Location not extracted for this passage                                     │
-    ─│  Indexed   demo time 10:42 · stored version 3 (demo)                                   │
-    N│                                                                                        │
-    S│  Passage (verbatim)                                                                    │
-    W│  │ New hires are paused until the start of the next financial year unless a role is    │
-     │  │ explicitly approved by the executive team.                                          │
-    O│                                                                                        │
-     │  >[ Previous ]  [ Next ]  [ Open original ]  [ Details ]  [ Close ]                    │
-    S│  P previous · N next · O open original · D details · PgUp/PgDn scroll · Esc close      │
-     └────────────────────────────────────────────────────────────────────────────────────────┘
-      [2] regional-review.pdf
-      [3] hiring.docx
-      [4] forecast-draft.xlsx  (unavailable)
-    Warning: Citation [4] refers to a version that is no longer available.
 
-    Quick search · 8.2s   [Evidence F5] [Details F6]
+
+
+
+ ┌─ Evidence [3] of 6 ────────────────────────────────────────────────────────────────────────────┐
+ │  hiring.docx                                                                           3 of 6  │
+ │  Source    Handbook                                                                            │
+ │  Location  Location not extracted for this passage                                             │
+ │  Indexed   10 Oct 2026 09:15 · version 3 of 3 (current)                                        │
+ │  Supports  “Hiring is paused until the next financial year [3]”                                │
+ │                                                                                                │
+ │  Passage (verbatim)                                                                            │
+ │  │ New hires are paused until the start of the next financial year unless a role is            │
+ │  │ explicitly approved by the executive team.                                                  │
+ │                                                                                                │
+ │  ▸[ Previous ]  [ Next ]  [ Open original ]  [ Details ]  [ Close ]                            │
+ │  P N O D shortcuts · PgUp/PgDn scroll · Esc close                                              │
+ └────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+
+
+
 
 ┌─ Ask ────────────────────────────────────────────────────────────────────────────────────────────┐
 │ Ask about your documents...                                                                      │
@@ -905,30 +1025,30 @@ An unavailable citation explains and disables Open original:
 
 ```text
  DOCKET · All ready sources · Auto · demo-model-14b                                       DEMO DATA
-  Docket
-    The demo quarterly report shows revenue growing in most regions [1].
 
-    Key points:
-    • Revenue rose 12% on the prior quarter [1]
-    • The southern region missed its target because renewals slipped [2]
-    • Hiring is paused until the next financial year [3]
-     ┌─ Evidence [4] of 4 ────────────────────────────────────────────────────────────────────┐
-    R│  forecast-draft.xlsx                                                                   │
-    ─│  Unavailable: this evidence can no longer be shown.                                    │
-    N│  Its stored version was superseded after this answer was written, so the original      │
-    S│  passage can no longer be shown.                                                       │
-    W│                                                                                        │
-     │  The answer text is unchanged; only the passage behind this citation is missing.       │
-    O│                                                                                        │
-     │  >[ Previous ]  ( Next )  ( Open original )  [ Details ]  [ Close ]                    │
-    S│  P previous · N next · O open original · D details · PgUp/PgDn scroll · Esc close      │
-     └────────────────────────────────────────────────────────────────────────────────────────┘
-      [2] regional-review.pdf
-      [3] hiring.docx
-      [4] forecast-draft.xlsx  (unavailable)
-    Warning: Citation [4] refers to a version that is no longer available.
 
-    Quick search · 8.2s   [Evidence F5] [Details F6]
+
+
+
+ ┌─ Evidence [4] of 6 ────────────────────────────────────────────────────────────────────────────┐
+ │  forecast-draft.xlsx                                                                   4 of 6  │
+ │  Source    Finance                                                                             │
+ │  Status    Unavailable: this evidence can no longer be shown.                                  │
+ │  Supports  “One related figure [4] could not be checked.”                                      │
+ │                                                                                                │
+ │  Its stored version was superseded after this answer was written, so the original passage can  │
+ │  no longer be shown.                                                                           │
+ │                                                                                                │
+ │  The answer text is unchanged; only the passage behind this citation is missing.               │
+ │                                                                                                │
+ │  ▸[ Previous ]  [ Next ]  [ Open original ]  [ Details ]  [ Close ]                            │
+ │  P N O D shortcuts · PgUp/PgDn scroll · Esc close                                              │
+ └────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+
+
+
 
 ┌─ Ask ────────────────────────────────────────────────────────────────────────────────────────────┐
 │ Ask about your documents...                                                                      │
@@ -942,31 +1062,31 @@ With the Details toggle, and at 60x20:
 
 ```text
  DOCKET · All ready sources · Auto · demo-model-14b                                       DEMO DATA
-  Docket
-    The demo quarterly report shows revenue growing in most regions [1].
-     ┌─ Evidence [1] of 4 ────────────────────────────────────────────────────────────────────┐
-    K│  q3-summary.xlsx                                                                       │
-    •│  Location  Sheet Summary · B8:F8                                                       │
-    •│  Indexed   demo time 10:42 · stored version 3 (demo)                                   │
-    •│                                                                                        │
-     │  Passage (verbatim)                                                                    │
-    R│  │ Region | Revenue | Target                                                           │
-    ─│  │ North | 4.2 | 4.0                                                                   │
-    N│  │ South | 3.1 | 3.4                                                                   │
-    S│  │ West | 2.8 | 2.5                                                                    │
-    W│  │ (sample figures for the demo)                                                       │
-     │                                                                                        │
-    O│  Details                                                                               │
-     │  File     reports/q3-summary-2025.xlsx                                                 │
-    S│  Chunk    chunk-demo-0001                                                              │
-     │  Version  stored version 3 (demo)                                                      │
-     │  Confidence not calibrated; no percentage is shown.                                    │
-     │                                                                                        │
-     │  >( Previous )  [ Next ]  [ Open original ]  [ Hide details ]  [ Close ]               │
-    W│  P previous · N next · O open original · D details · PgUp/PgDn scroll · Esc close      │
-     └────────────────────────────────────────────────────────────────────────────────────────┘
-    Quick search · 8.2s   [Evidence F5] [Details F6]
-
+ ┌─ Evidence [1] of 6 ────────────────────────────────────────────────────────────────────────────┐
+ │  q3-summary-2025.xlsx                                                                  1 of 6  │
+ │  Source    Finance                                                                             │
+ │  Location  Sheet Summary · B7:D10                                                              │
+ │  Indexed   10 Oct 2026 10:42 · version 3 of 3 (current)                                        │
+ │  Supports  “The demo quarterly report shows revenue growing in most regions [1].”              │
+ │            “Revenue rose 12% on the prior quarter [1]”                                         │
+ │                                                                                                │
+ │  Cells B7:D10 · cited cells shown in [ ]: C8:C10                                               │
+ │      B        C           D                                                                    │
+ │   7  Region │  Revenue  │ Target                                                               │
+ │      ───────┼───────────┼───────                                                               │
+ │   8  North  │     [4.2] │    4.0                                                               │
+ │   9  South  │     [3.1] │    3.4                                                               │
+ │  10  West   │     [2.8] │    2.5                                                               │
+ │                                                                                                │
+ │  Details                                                                                       │
+ │  Source    Finance                                                                             │
+ │  File      reports/q3-summary-2025.xlsx                                                        │
+ │  Chunk     chunk-demo-0101                                                                     │
+ │  0 above · 2 below · PgUp/PgDn to scroll                                                       │
+ │                                                                                                │
+ │  ▸[ Previous ]  [ Next ]  [ Open original ]  [ Hide details ]  [ Close ]                       │
+ │  P N O D shortcuts · PgUp/PgDn scroll · Esc close                                              │
+ └────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌─ Ask ────────────────────────────────────────────────────────────────────────────────────────────┐
 │ Ask about your documents...                                                                      │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
@@ -977,55 +1097,86 @@ With the Details toggle, and at 60x20:
 
 ```text
  DOCKET · All ready sources · Auto                DEMO DATA
-┌─ Evidence [1] of 4 ──────────────────────────────────────┐
-│ q3-summary.xlsx                                          │
-│ Location  Sheet Summary · B8:F8                          │
-│ Indexed   demo time 10:42 · stored version 3 (demo)      │
+┌─ Evidence [1] of 6 ──────────────────────────────────────┐
+│ q3-summary-2025.xlsx                              1 of 6 │
+│ Source    Finance                                        │
+│ Location  Sheet Summary · B7:D10                         │
+│ Indexed   10 Oct 2026 10:42 · version 3 of 3 (current)   │
+│ Supports  “The demo quarterly report shows revenue       │
+│           growing in most regions [1].”                  │
+│           “Revenue rose 12% on the prior quarter [1]”    │
 │                                                          │
-│ Passage (verbatim)                                       │
-│ │ Region | Revenue | Target                              │
-│ │ North | 4.2 | 4.0                                      │
-│ │ South | 3.1 | 3.4                                      │
-│ │ West | 2.8 | 2.5                                       │
-│ │ (sample figures for the demo)                          │
+│ Cells B7:D10 · cited cells shown in [ ]: C8:C10          │
+│     B        C           D                               │
+│  7  Region │  Revenue  │ Target                          │
+│ 0 above · 4 below · PgUp/PgDn to scroll                  │
 │                                                          │
-│                                                          │
-│ >( Previous )  [ Next ]  [ Open original ]  [ Details ]  │
+│ ▸[ Previous ]  [ Next ]  [ Open original ]  [ Details ]  │
 │  [ Close ]                                               │
-│ P previous · N next · O open original · D details ·      │
-│ PgUp/PgDn scroll · Esc close                             │
+│ P N O D shortcuts · PgUp/PgDn scroll · Esc close         │
 └──────────────────────────────────────────────────────────┘
  24 files ready · 3 need attention            F1 / Commands
+```
+
+Answer details is a two-column label/value list; at 80x24 it looks like this:
+
+*Overlays at 80x24: Answer details* (80x24)
+
+```text
+ DOCKET · All ready sources · Auto · demo-model-14b                   DEMO DATA
+ ┌─ Answer details ───────────────────────────────────────────────────────────┐
+ │ Status         Not verified (prototype)                                    │
+ │ Mode           Quick search                                                │
+ │ Model          demo-model-14b                                              │
+ │ Scope          All ready sources                                           │
+ │ Elapsed        8.2 s                                                       │
+ │ Passages used  5 passages from 5 files, 14 searched                        │
+ │ Follow-up      Rewritten as "quarterly revenue by region against target"   │
+ │ Period         Not stated; the most recent quarter was used                │
+ │ Computation    Not used                                                    │
+ │ Citations      6 · syntax valid; meaning not machine-verified              │
+ │ Confidence     Not calibrated                                              │
+ │ Warning        Citation [4] refers to a version that is no longer          │
+ │                available.                                                  │
+ │                                                                            │
+ │ ▸[ Evidence ]  [ Close ]                                                   │
+ │ Esc close                                                                  │
+ └────────────────────────────────────────────────────────────────────────────┘
+
+┌─ Ask ────────────────────────────────────────────────────────────────────────┐
+│ Ask about your documents...                                                  │
+└──────────────────────────────────────────────────────────────────────────────┘
+ 24 files ready · 3 need attention                                F1 / Commands
 ```
 
 *Answer details* (100x30)
 
 ```text
  DOCKET · All ready sources · Auto · demo-model-14b                                       DEMO DATA
-  Docket
-    The demo quarterly report shows revenue growing in most regions [1].
 
-    Key points:
-    • Revenue rose 12% on the prior quarter [1]
-    •┌─ Answer details ───────────────────────────────────────────────────────────────────────┐
-    •│  Mode          Quick search                                                            │
-     │  Elapsed       8.2s                                                                    │
-    R│  Scope         All ready sources                                                       │
-    ─│  Follow-up     Follow-up rewritten as: "quarterly revenue by region against target"    │
-    N│  Period        Period not stated; the most recent quarter in the sources was used.     │
-    S│  Computation   Deterministic computation was not used.                                 │
-    W│  Citations     4 (syntax valid; meaning not machine-verified)                          │
-     │  Confidence    Not calibrated                                                          │
-    O│  Warning       Citation [4] refers to a version that is no longer available.           │
-     │                                                                                        │
-    S│  >[ Evidence ]  [ Close ]                                                              │
-     │  Esc close                                                                             │
-     └────────────────────────────────────────────────────────────────────────────────────────┘
-      [3] hiring.docx
-      [4] forecast-draft.xlsx  (unavailable)
-    Warning: Citation [4] refers to a version that is no longer available.
 
-    Quick search · 8.2s   [Evidence F5] [Details F6]
+
+
+ ┌─ Answer details ───────────────────────────────────────────────────────────────────────────────┐
+ │  Status         Not verified (prototype)                                                       │
+ │  Mode           Quick search                                                                   │
+ │  Model          demo-model-14b                                                                 │
+ │  Scope          All ready sources                                                              │
+ │  Elapsed        8.2 s                                                                          │
+ │  Passages used  5 passages from 5 files, 14 searched                                           │
+ │  Follow-up      Rewritten as "quarterly revenue by region against target"                      │
+ │  Period         Not stated; the most recent quarter was used                                   │
+ │  Computation    Not used                                                                       │
+ │  Citations      6 · syntax valid; meaning not machine-verified                                 │
+ │  Confidence     Not calibrated                                                                 │
+ │  Warning        Citation [4] refers to a version that is no longer available.                  │
+ │                                                                                                │
+ │  ▸[ Evidence ]  [ Close ]                                                                      │
+ │  Esc close                                                                                     │
+ └────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+
 
 ┌─ Ask ────────────────────────────────────────────────────────────────────────────────────────────┐
 │ Ask about your documents...                                                                      │
@@ -1039,24 +1190,24 @@ With the Details toggle, and at 60x20:
 
 ```text
  DOCKET · All ready sources · Auto · demo-model-14b                                       DEMO DATA
-    • Hiring is paused until the next financial year [3]
 
-    Region │ Revenue │ Target │ Result
-    ─┌─ Settings ─────────────────────────────────────────────────────────────────────────────┐
-    N│   Answering   Appearance   History   System                                            │
-    S│                                                                                        │
-    W│  ▸ Answer model      ‹ demo-model-14b ›                                                │
-     │    Answering mode    ‹ Auto ›                                                          │
-    O│    Answer thinking   ‹ Balanced ›                                                      │
-     │    Embedding model   demo-embed-small (read-only)                                      │
-    S│  demo-model-32b: not installed — run: ollama pull demo-model-32b                       │
-     │                                                                                        │
-     │   ( Save )  [ Check readiness ]  [ Cancel ]                                            │
-     │  Tab move · Left/Right change · Enter activate · Esc cancel                            │
-     └────────────────────────────────────────────────────────────────────────────────────────┘
-    Warning: Citation [4] refers to a version that is no longer available.
 
-    Quick search · 8.2s   [Evidence F5] [Details F6]
+
+ ┌─ Settings ─────────────────────────────────────────────────────────────────────────────────────┐
+ │   Answering   Appearance   History   System                                                    │
+ │                                                                                                │
+ │  ▸ Answer model      ‹ demo-model-14b ›                                                        │
+ │    Answering mode    ‹ Auto ›                                                                  │
+ │    Answer thinking   ‹ Balanced ›                                                              │
+ │    Embedding model   demo-embed-small (read-only)                                              │
+ │  demo-model-32b: not installed — run: ollama pull demo-model-32b                               │
+ │                                                                                                │
+ │   [ Save ]  [ Check readiness ]  [ Cancel ]                                                    │
+ │  Tab move · Left/Right change · Enter activate · Esc cancel                                    │
+ └────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+
 
 ┌─ Ask ────────────────────────────────────────────────────────────────────────────────────────────┐
 │ Ask about your documents...                                                                      │
@@ -1068,24 +1219,24 @@ With the Details toggle, and at 60x20:
 
 ```text
  DOCKET · All ready sources · Auto · demo-model-14b                                       DEMO DATA
-    • Hiring is paused until the next financial year [3]
 
-    Region │ Revenue │ Target │ Result
-    ─┌─ Settings ─────────────────────────────────────────────────────────────────────────────┐
-    N│   Answering   Appearance   History   System                                            │
-    S│                                                                                        │
-    W│  ▸ Appearance        ‹ Light ›                                                         │
-     │    Density           Comfortable (read-only)                                           │
-    O│                                                                                        │
-     │  The terminal font and size are set by your terminal, not by Docket.                   │
-    S│                                                                                        │
-     │  Unsaved changes                                                                       │
-     │                                                                                        │
-     │   [ Save ]  [ Check readiness ]  [ Cancel ]                                            │
-     │  Tab move · Left/Right change · Enter activate · Esc cancel                            │
-    W└────────────────────────────────────────────────────────────────────────────────────────┘
 
-    Quick search · 8.2s   [Evidence F5] [Details F6]
+
+ ┌─ Settings ─────────────────────────────────────────────────────────────────────────────────────┐
+ │   Answering   Appearance   History   System                                                    │
+ │                                                                                                │
+ │  ▸ Appearance        ‹ Light ›                                                                 │
+ │    Density           Comfortable (read-only)                                                   │
+ │                                                                                                │
+ │  The terminal font and size are set by your terminal, not by Docket.                           │
+ │                                                                                                │
+ │  Unsaved changes                                                                               │
+ │                                                                                                │
+ │   [ Save ]  [ Check readiness ]  [ Cancel ]                                                    │
+ │  Tab move · Left/Right change · Enter activate · Esc cancel                                    │
+ └────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
 
 ┌─ Ask ────────────────────────────────────────────────────────────────────────────────────────────┐
 │ Ask about your documents...                                                                      │
@@ -1097,24 +1248,24 @@ With the Details toggle, and at 60x20:
 
 ```text
  DOCKET · All ready sources · Auto · demo-model-14b                                       DEMO DATA
-    • Hiring is paused until the next financial year [3]
 
-    Region │ Revenue │ Target │ Result
-    ─┌─ Settings ─────────────────────────────────────────────────────────────────────────────┐
-    N│   Answering   Appearance   History   System                                            │
-    S│                                                                                        │
-    W│    Data folder       /demo/data (not a real directory)                                 │
-     │    Ollama            Available (demo)                                                  │
-    O│    Answer model      demo-model-14b                                                    │
-     │    Embedding         demo-embed-small                                                  │
-    S│    Index             Compatible with the embedding model (demo)                        │
-     │    Coverage          24 files searchable                                               │
-     │                                                                                        │
-     │   ( Save )  [ Check readiness ]  [ Cancel ]                                            │
-     │  Tab move · Left/Right change · Enter activate · Esc cancel                            │
-    W└────────────────────────────────────────────────────────────────────────────────────────┘
 
-    Quick search · 8.2s   [Evidence F5] [Details F6]
+
+ ┌─ Settings ─────────────────────────────────────────────────────────────────────────────────────┐
+ │   Answering   Appearance   History   System                                                    │
+ │                                                                                                │
+ │    Data folder       /demo/data (not a real directory)                                         │
+ │    Ollama            Available (demo)                                                          │
+ │    Answer model      demo-model-14b                                                            │
+ │    Embedding         demo-embed-small                                                          │
+ │    Index             Compatible with the embedding model (demo)                                │
+ │    Coverage          24 files searchable                                                       │
+ │                                                                                                │
+ │   [ Save ]  [ Check readiness ]  [ Cancel ]                                                    │
+ │  Tab move · Left/Right change · Enter activate · Esc cancel                                    │
+ └────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
 
 ┌─ Ask ────────────────────────────────────────────────────────────────────────────────────────────┐
 │ Ask about your documents...                                                                      │
@@ -1128,24 +1279,24 @@ Unsaved changes ask before closing:
 
 ```text
  DOCKET · All ready sources · Auto · demo-model-14b                                       DEMO DATA
-    • Hiring is paused until the next financial year [3]
 
-    Region │ Revenue │ Target │ Result
-    ──────────────────────────────────
-    North  │ 4.2     │ 4.0    │ Met
-    South  │ 3.1     │ 3.4    │ Missed
-    W┌─ Discard changes? ─────────────────────────────────────────────────────────────────────┐
-     │  You have unsaved settings. Discard them and close?                                    │
-    O│                                                                                        │
-     │   [ Discard changes ] >[ Keep editing ]                                                │
-    S│  Left/Right choose · Enter confirm · Esc go back                                       │
-     └────────────────────────────────────────────────────────────────────────────────────────┘
-      [2] regional-review.pdf
-      [3] hiring.docx
-      [4] forecast-draft.xlsx  (unavailable)
-    Warning: Citation [4] refers to a version that is no longer available.
 
-    Quick search · 8.2s   [Evidence F5] [Details F6]
+
+
+
+
+ ┌─ Discard changes? ─────────────────────────────────────────────────────────────────────────────┐
+ │  You have unsaved settings. Discard them and close?                                            │
+ │                                                                                                │
+ │   [ Discard changes ] ▸[ Keep editing ]                                                        │
+ │  Left/Right choose · Enter confirm · Esc go back                                               │
+ └────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+
+
+
+
 
 ┌─ Ask ────────────────────────────────────────────────────────────────────────────────────────────┐
 │ Ask about your documents...                                                                      │
@@ -1157,24 +1308,24 @@ Unsaved changes ask before closing:
 
 ```text
  DOCKET · All ready sources · Auto · demo-model-14b                                       DEMO DATA
-    • Hiring is paused until the next financial year [3]
 
-    Region │ Revenue │ Target │ Result
-    ──────────────────────────────────
-    North  │ 4.2     │ 4.0    │ Met
-    S┌─ Jobs ─────────────────────────────────────────────────────────────────────────────────┐
-    W│  ▸ Finance  demo time 10:42                                                   Partial  │
-     │    Handbook  demo time 09:15                                                Completed  │
-    O│    Old project  demo time last week                                       Interrupted  │
-     │                                                                                        │
-    S│   [ Results ]  [ Close ]                                                               │
-     │  Up/Down select · Enter results · Esc close (history is demo data)                     │
-     └────────────────────────────────────────────────────────────────────────────────────────┘
-      [3] hiring.docx
-      [4] forecast-draft.xlsx  (unavailable)
-    Warning: Citation [4] refers to a version that is no longer available.
 
-    Quick search · 8.2s   [Evidence F5] [Details F6]
+
+ ┌─ Jobs ─────────────────────────────────────────────────────────────────────────────────────────┐
+ │    Source        Result      When               Summary                                        │
+ │  ────────────────────────────────────────────────────────────────────────────────────────────  │
+ │  ▸ Finance       Partial     10 Oct 2026 10:42  18 indexed · 0 unchanged · 2 failed            │
+ │    Handbook      Completed   10 Oct 2026 09:15  6 indexed · 0 unchanged · 0 failed             │
+ │    Old project   Interrupted 3 Oct 2026 14:05   Stopped when the process exited; retry to fi…  │
+ │                                                                                                │
+ │  Summary  Finance: 18 indexed · 0 unchanged · 2 failed                                         │
+ │                                                                                                │
+ │   [ Results ]  [ Close ]                                                                       │
+ │  Up/Down select · Enter results · Esc close (history is demo data)                             │
+ └────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+
 
 ┌─ Ask ────────────────────────────────────────────────────────────────────────────────────────────┐
 │ Ask about your documents...                                                                      │
@@ -1182,28 +1333,55 @@ Unsaved changes ask before closing:
  24 files ready · 3 need attention                                                    F1 / Commands
 ```
 
+Jobs at 60x20 drops the summary column and shows the selected row's summary below the table:
+
+*Jobs at 60x20 (summary moves below the table)* (60x20)
+
+```text
+ DOCKET · All ready sources · Auto                DEMO DATA
+┌─ Jobs ───────────────────────────────────────────────────┐
+│   Source        Result      When                         │
+│ ──────────────────────────────────────────────────────── │
+│ ▸ Finance       Partial     10 Oct 2026 10:42            │
+│   Handbook      Completed   10 Oct 2026 09:15            │
+│   Old project   Interrupted 3 Oct 2026 14:05             │
+│                                                          │
+│ Summary  Finance: 18 indexed · 0 unchanged · 2 failed    │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│  [ Results ]  [ Close ]                                  │
+│ Up/Down select · Enter results · Esc close (history is   │
+│ demo data)                                               │
+└──────────────────────────────────────────────────────────┘
+ 24 files ready · 3 need attention            F1 / Commands
+```
+
 *Exit confirmation while indexing* (100x24)
 
 ```text
  DOCKET · All ready sources · Auto · demo-model-14b                                       DEMO DATA
-    • Hiring is paused until the next financial year [3]
 
-    Region │ Revenue │ Target │ Result
-    ──────────────────────────────────
-    North  │ 4.2     │ 4.0    │ Met
-    South  │ 3.1     │ 3.4    │ Missed
-    W┌─ Exit while work is running? ──────────────────────────────────────────────────────────┐
-     │  Indexing or an answer is still in progress. Docket does not keep running after it     │
-    O│  exits.                                                                                │
-     │                                                                                        │
-    S│   [ Stop and exit ] >[ Keep running ]                                                  │
-     │  Left/Right choose · Enter confirm · Esc go back                                       │
-     └────────────────────────────────────────────────────────────────────────────────────────┘
-      [3] hiring.docx
-      [4] forecast-draft.xlsx  (unavailable)
-    Warning: Citation [4] refers to a version that is no longer available.
 
-    Quick search · 8.2s   [Evidence F5] [Details F6]
+
+
+
+
+ ┌─ Exit while work is running? ──────────────────────────────────────────────────────────────────┐
+ │  Indexing or an answer is still in progress. Docket does not keep running after it exits.      │
+ │                                                                                                │
+ │   [ Stop and exit ] ▸[ Keep running ]                                                          │
+ │  Left/Right choose · Enter confirm · Esc go back                                               │
+ └────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+
+
+
+
 
 ┌─ Ask (sending is paused while indexing) ─────────────────────────────────────────────────────────┐
 │ Ask about your documents...                                                                      │
@@ -1230,20 +1408,20 @@ Or run `docket chat --plain`.
  | Find: filter sources|                                                      |
  |                                                                            |
  | > Finance                    Ready | Finance                               |
- |     18 searchable | 2 failed       | Path  /demo/work/finance              |
- |   Handbook                   Ready | State Ready                           |
- |     6 searchable                   | Last indexed  demo time 10:42         |
- |   Contracts                 Failed | Files  18 ready | 2 failed | 0 pendi. |
- |   Old project         Disconnected |                                       |
+ |     18 searchable | 2 failed       | Path         /demo/work/finance       |
+ |   Handbook                   Ready | State        Ready                    |
+ |     6 searchable                   | Last indexed 10 Oct 2026 10:42        |
+ |   Contracts                 Failed | Files        18 ready | 2 failed | 0  |
+ |   Old project         Disconnected |              pending | 1 no text      |
+ |                                    |                                       |
  |                                    | Needs a look                          |
- |                                    |   budget/legacy-plan.xls Failed       |
- |                                    |    - Unsupported legacy format .xls   |
- | 0 above | 4 below | PgUp/PgDn to scroll                                    |
+ |                                    |   budget/le.plan.xls  Failed          |
+ |                                    |                                 Unsup |
+ | 0 above | 16 below | PgUp/PgDn to scroll                                   |
  |                                                                            |
- |  [ Add folder ]  [ Refresh ]  ( Retry )  ( Reconnect )  [ Disconnect ]     |
+ |  [ Add folder ]  [ Refresh ]  [ Retry ]  [ Reconnect ]  [ Disconnect ]     |
  |  [ Details ]  [ Close ]                                                    |
- | Type to filter | Tab actions | Enter on a source toggles details | Esc     |
- | close                                                                      |
+ | Type to filter | Tab actions | Enter toggles details | Esc close           |
  +----------------------------------------------------------------------------+
 +- Ask ------------------------------------------------------------------------+
 | Ask about your documents...                                                  |
@@ -1255,29 +1433,29 @@ Or run `docket chat --plain`.
 
 ```text
  DOCKET | All ready sources | Auto | demo-model-14b                   DEMO DATA
-    * Hiring is paused until the next financial year [3]
-
-    Region | Revenue | Target | Result
-    ----------------------------------
-    North  | 4.2     | 4.0    | Met
-    South  | 3.1     | 3.4    | Missed
-    West   | 2.8     | 2.5    | Met
+    North  |     4.2 |    4.0 | OK Met
+    South  |     3.1 |    3.4 | X Missed
+    West   |     2.8 |    2.5 | OK Met
 
     One related figure [4] could not be checked.
 
     Sources:
-      [1] q3-summary.xlsx
+      [1] q3-summary-2025.xlsx
       [2] regional-review.pdf
       [3] hiring.docx
       [4] forecast-draft.xlsx  (unavailable)
+      [5] policies/handbook.pdf
+      [6] 2023/handbook.pdf
+
     Warning: Citation [4] refers to a version that is no longer available.
 
-    Quick search | 8.2s   [Evidence F5] [Details F6]
+    Quick search | 8.2s   [Evidence F5] [Ctrl+E] [Details F6]
+    Open a source: /show 1 to /show 6
 
 +- Ask ------------------------------------------------------------------------+
 | Ask about your documents...                                                  |
 +------------------------------------------------------------------------------+
- 24 files ready | 3 need attention                                F1 / Commands
+ 24 files ready | 3 need attention | Ctrl+E evidence | /show N    F1 / Commands
 ```
 
 ## 5. Review checklist
@@ -1285,9 +1463,11 @@ Or run `docket chat --plain`.
 Appearance
 
 - [ ] Dark theme tokens (section 4.1) read well in your real terminal; accent, attention and error colours are distinguishable. Try Light and Terminal default under Settings > Appearance.
-- [ ] Panel padding, titles, button rows and the `>` focus marker are clear enough without colour.
+- [ ] Panel padding, titles and button rows are clear enough without colour: every button is `[ Label ]`, focus adds `▸`, disabled keeps its shape (muted/italic).
+- [ ] The overlay width rule (100 max, centred, full width below 80) and the cleared backdrop look intentional at 120x40, 100x30, 80x24 and 60x20.
 - [ ] The persistent header (scope, mode, model, `DEMO DATA`) carries the right information, and its priority order when narrow (model drops first, then scope is truncated) is acceptable.
-- [ ] The footer (ready count, "need attention", running job, `F1 / Commands`) is the right amount.
+- [ ] The footer (ready count, "need attention", running job, `F1 / Commands`) is the right amount, including the shortcut hints (`Ctrl+E evidence · /show N`, `Enter opens evidence, Esc clears`).
+- [ ] Result glyphs (`✓ Met`, `✗ Missed`; ASCII `OK`/`X`) and right-aligned numbers read well in the answer table.
 
 Navigation
 
@@ -1303,8 +1483,12 @@ Content and wording
 - [ ] Source states Ready / Failed / Disconnected, file states (including "Processed - no searchable text") and the action labels read correctly.
 - [ ] Mode names: Auto, Quick search, Plan (unavailable). The registry still lists `auto|fast|agent`; decide whether `agent` should be shown as a legacy path.
 - [ ] Indexing copy: file-count bar with "not a time estimate", "Stopping after the current operation", partial and failed results with a recovery line.
-- [ ] Evidence layout: location line, verbatim passage with a quote bar, unavailable variant, details toggle.
-- [ ] Answer details: no confidence percentage ("Not calibrated"), Part 07 vocabulary deferred until the backend produces it.
+- [ ] Evidence layout: Source/Location/Indexed/Supports rows, spreadsheet grid with column letters, row numbers, cited cells in `[ ]`, and a location that matches the grid (B7:D10); prose passage verbatim with a quote bar; unavailable variant; details toggle; one `n of N` position text.
+- [ ] Duplicate file names show a parent folder (`policies/handbook.pdf` vs `2023/handbook.pdf`); long paths use a middle ellipsis with the full path under Details.
+- [ ] A greeting is answered without citations and points to `/help`.
+- [ ] Selected-answer marker `›`: the hint, Enter opens evidence, Esc clears.
+- [ ] Sources, Jobs, Indexing and Settings use aligned labelled rows or tables; dates read `10 Oct 2026 10:42` everywhere.
+- [ ] Answer details: Status, Mode, Model, Scope, Elapsed, Passages used, Follow-up, Period, Computation, Citations, Confidence; no confidence percentage ("Not calibrated"); Part 07 vocabulary deferred until the backend produces it. Is "Not verified (prototype)" the right placeholder for Status?
 
 Layout
 
@@ -1314,13 +1498,13 @@ Layout
 
 ## 6. What is intentionally fake
 
-- Every source, file, answer, citation, passage, model name, job and time. "Ask" picks one of a few canned answers by keyword (`table`/`region`/`target`, `list`/`policy`, an abstention for `nothing`/`weather`, otherwise a default).
+- Every source, file, answer, citation, passage, model name, job and time. "Ask" picks one of a few canned answers by keyword (`table`/`region`/`target`, `list`/`policy`, an abstention for `nothing`/`weather`, a short no-citation reply for a greeting such as `hey`, otherwise a default).
 - Indexing progress is a timer (or N in reduced motion); failures at files 12 and 18 are scripted. In `welcome-blocked` indexing fails immediately, to show the recovery state.
 - Add folder never reads the path; "suggestions" are a fixed list; `/demo/...` paths are not checked.
 - Refresh, Retry, Reconnect and Disconnect only change the in-memory demo world. Open original only prints what it would do.
 - Settings Save changes the running demo (theme, model label, mode) and persists nothing. Embedding model and density are read-only on purpose.
 - Plan is shown as unavailable. `/rechunk` and `/reindex` are listed as unavailable with a reason.
-- Job history, "Indexed" times and the data folder label.
+- Job history, "Indexed" times (all 10 Oct 2026 or a few days earlier), version numbers ("version 3 of 3"), passage counts ("14 searched"), cited cells and the data folder label.
 
 Not built in this stage (still in the design): copy/plain-text view and a Copy action (section 4.5), a per-file detail view with diagnostics, Save stored copy, stored-data deletion, a real folder chooser with path completion, input history and Tab completion in the composer, token streaming, clarification and Plan review screens, mouse support (kept off, as designed).
 
@@ -1356,9 +1540,15 @@ Adaptation seam: replace `fake_data.World`, `answer_for`, and the `IndexJob`/`Qu
 
 `backend/tests/unit/tui/test_tui_prototype.py` drives the real application headlessly (pipe input plus a sized dummy output, each scenario under a hard timeout). It covers: opening and closing every overlay with draft, scroll and focus restoration; the Esc stack; Ctrl+C semantics; palette filtering and unavailable commands; typed slash commands and typo hints; scope and mode selection updating the header; Plan refusal; Sources actions and confirmations; add-and-auto-index; indexing stop, hide, completion and blocked states; sending blocked while indexing with the draft kept; newline bindings; evidence navigation and the unavailable variant; no confidence percentage; Settings save and discard; exit confirmation; layout at 120x40, 100x30, 80x24, 60x20, the too-small notice and reflow with draft and selection preserved; ASCII fallback on every main screen; and that product-like strings are not hard-coded in views.
 
+`backend/tests/unit/tui/test_tui_polish.py` covers the polish pass: right-aligned table columns, result glyphs and the ASCII fallback, greeting replies without citations, the blank line before the warning, number shortcuts, duplicate-name disambiguation, the selected-answer marker with Enter/Esc, spreadsheet location/range consistency and the cited-cell grid, position text, a single key legend, one button shape with arrow focus marker, the Answer details rows, overlay width and centring at 120x40, 100x30, 80x24 and 60x20, a clean backdrop beside and around the modal, middle ellipsis, and consistent dates and labelled rows in Sources, Jobs and Indexing.
+
 No test opens a terminal, a database or the home directory; `DOCKET_DATA_DIR` is a scratch directory.
 
 ## 9. Caveats: what was not verified visually
+
+- Polish pass: the cited-cell highlight (`selected` style, bold) and the result-glyph colours were verified only structurally and in text (the `[ ]` brackets and glyphs carry the meaning without colour); how they look in your terminal and theme is unverified.
+- Ctrl+E replaces the emacs "end of line" binding in the composer; check it does not clash with a terminal or multiplexer shortcut. A bare Esc that clears the selected answer waits for the key timeout (about 0.3 s) because Alt+Up/Down are also Esc sequences.
+- The cleared backdrop hides the transcript while an overlay is open; if you prefer a dimmed transcript, that is a style change, not a layout change.
 
 - Only a pseudo-terminal smoke test (start, F2, Esc, type, Ctrl+C, Ctrl+D; alternate screen entered and left, clean exit status 0) was run against a real terminal stack. Colours, bold/reverse and the exact look in your emulator are unverified; the screenshots above are text only.
 - The terminal-default theme and Light theme are styled by token but only structurally tested.
