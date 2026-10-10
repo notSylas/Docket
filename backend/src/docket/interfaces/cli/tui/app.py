@@ -1,9 +1,11 @@
 """Screen A prototype: one prompt_toolkit Application, fake data only.
 
 Structure (spec section 6.2): views are the ``*_fragments`` methods and the
-overlay classes; this class is the interaction controller (commands, overlay
-stack, drafts, operation ownership); the "application/services" layer is
-``fake_data`` and nothing else.
+overlay classes; ``TuiApp`` is the interaction controller (commands, overlay
+stack, drafts, operation ownership, worker threads); the "application/services"
+layer is a ``TuiBackend`` (``backend.py``): ``FakeBackend`` for the demo,
+``RealBackend`` for ``docket ui``. ``DemoUI`` is the demo wiring of the same
+controller (fake backend, scripted starting states).
 """
 
 from __future__ import annotations
@@ -11,7 +13,9 @@ from __future__ import annotations
 import asyncio
 import math
 import sys
-from dataclasses import dataclass
+import threading
+import time
+from dataclasses import dataclass, replace
 from typing import Any, Callable
 
 from prompt_toolkit.application import Application
@@ -40,8 +44,23 @@ from docket.interfaces.cli.interactive.commands import (
     SlashCommand,
     default_registry,
 )
+from docket.interfaces.cli.interactive.query_flow import shell_command_hint
 from docket.interfaces.cli.tui import fake_data as fd
 from docket.interfaces.cli.tui import overlays as ov
+from docket.interfaces.cli.tui.backend import (
+    AskOutcome,
+    AskRequest,
+    BackendError,
+    FakeBackend,
+    IndexOutcome,
+    IndexProgress,
+    ReadinessItem,
+    ReadinessReport,
+    SourceView,
+    TuiBackend,
+    Turn,
+    describe_error,
+)
 from docket.interfaces.cli.tui.model import IndexJob, Message, QueryOp, Scope
 from docket.interfaces.cli.tui.textfmt import (
     Row,
@@ -113,18 +132,18 @@ def _call(method: str) -> Callable[[Any, str], bool | None]:
     return handler
 
 
-def build_registry() -> CommandRegistry:
+def build_registry(extras: tuple[tuple[str, str, str], ...] = fd.COMMAND_EXTRAS) -> CommandRegistry:
     """The existing registry (same names, aliases, prefix rules) plus Screen A additions."""
     reg = default_registry()
-    for name, summary, _why in fd.COMMAND_EXTRAS:
+    for name, summary, _why in extras:
         reg.register(SlashCommand(name, summary, _call("cmd_" + name)))
     return reg
 
 
-class DemoUI:
+class TuiApp:
     def __init__(
         self,
-        state: str = "chat",
+        backend: TuiBackend,
         *,
         ascii_mode: bool | None = None,
         reduced_motion: bool = False,
@@ -133,9 +152,7 @@ class DemoUI:
         output: Any = None,
         tick_interval: float = 0.5,
     ) -> None:
-        if state not in STATES:
-            raise ValueError(f"unknown state {state!r}; choose from {', '.join(STATES)}")
-        self.state_name = state
+        self.backend = backend
         self.ascii_mode = (
             detect_ascii(encoding=getattr(sys.stdout, "encoding", None)) if ascii_mode is None else ascii_mode
         )
@@ -143,12 +160,16 @@ class DemoUI:
         self.theme = theme
         self.tick_interval = tick_interval
         self.glyphs = ASCII if self.ascii_mode else UNICODE
-        self.blocked = state == "welcome-blocked"
 
-        self.world = fd.World.fresh(empty=state.startswith("welcome"))
+        self.world = backend.load_world()
+        self.readiness: ReadinessReport = (
+            backend.readiness()
+            if backend.demo
+            else ReadinessReport((ReadinessItem("Status", "Checking..."),), checking=True)
+        )
         self.scope = Scope()
         self.mode = "auto"
-        self.model = fd.DEFAULT_MODEL
+        self.model = backend.default_model
         self.thinking = 1
         self.history_enabled = True
         self.messages: list[Message] = []
@@ -157,15 +178,24 @@ class DemoUI:
         self.job: IndexJob | None = None
         self.query_op: QueryOp | None = None
         self.last_question = ""
+        self.history: list[Turn] = []
+        self.retry_turn_index: int | None = None
         self.scroll = 0  # lines above the bottom of the transcript
         self.unread = False
         self.focus_answer = -1
         self.hint_text = ""
-        self.registry = build_registry()
+        self.registry = build_registry(backend.command_extras)
         self._style_cache: dict[str, Any] = {}
         self._line_cache: dict[tuple, list[Row]] = {}
+        # worker plumbing (real backends only)
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._closed = False
+        self._threads: list[threading.Thread] = []
+        self._job_stop = threading.Event()
+        self._readiness_running = False
+        self._announced_blocked = False
 
-        self._seed_state(state)
+        self._seed()
         self.composer = Buffer(multiline=True, name="composer", on_text_changed=lambda _b: self._clear_hint())
         self._build_application(input, output)
         self._sync_focus()
@@ -173,28 +203,15 @@ class DemoUI:
     # ------------------------------------------------------------------
     # seeding
     # ------------------------------------------------------------------
-    def _seed_state(self, state: str) -> None:
-        self.add_message(Message("system", fd.INTRO_NOTICE))
-        if state in ("chat", "indexing", "sources", "evidence", "settings"):
-            self.add_message(Message("user", fd.initial_question()))
-            a = fd.initial_answer()
-            self.add_message(Message("assistant", a.text, answer=a, mode_label=a.mode_label, elapsed=a.elapsed, scope_label=a.scope_label))
-            self.last_question = fd.initial_question()
-            self.focus_answer = 0
-        if state == "welcome":
+    def _seed(self) -> None:
+        self.add_message(Message("system", self.backend.intro_notice))
+        if not self.world.sources:
             self.overlays.append(ov.WelcomeOverlay(self))
-        elif state == "welcome-blocked":
-            self.overlays.append(ov.WelcomeOverlay(self, blocked=True))
-        elif state == "indexing":
-            fin = self.world.sources[0]
-            self.job = IndexJob(fin.id, fin.name, "Indexing", total=fd.INDEX_TOTAL_FILES, file_index=6, stage_index=5, ticks=21, indexed=5, unchanged=1)
-            self.overlays.append(ov.IndexingOverlay(self))
-        elif state == "sources":
-            self.overlays.append(ov.SourcesOverlay(self))
-        elif state == "evidence":
-            self.overlays.append(ov.EvidenceOverlay(self, 0, 0))
-        elif state == "settings":
-            self.overlays.append(ov.SettingsOverlay(self))
+
+    @property
+    def blocked(self) -> bool:
+        return self.readiness.blocked
+
 
     # ------------------------------------------------------------------
     # messages / transcript
@@ -284,11 +301,15 @@ class DemoUI:
         out: list[Row] = []
         for m in self.messages:
             out.extend(self._render_message(m, width, m.uid == focus_uid))
-        if self.query_op and self.query_op.active:
-            if self.query_op.state == "stopping":
+        q = self.query_op
+        if q and q.active:
+            if q.state == "stopping" and q.real:
+                out.append([("class:attention", "Cancelling: the model call cannot be interrupted; its answer will be discarded when it finishes.")])
+            elif q.state == "stopping":
                 out.append([("class:attention", "Stopping after the current operation...")])
             else:
-                out.append([("class:accent", f"{self.query_op.stage}..."), ("class:muted", "  Ctrl+C to cancel")])
+                tail = f"  {q.elapsed_secs}s" if q.real else ""
+                out.append([("class:accent", f"{q.stage}..."), ("class:muted", f"{tail}  Ctrl+C to cancel")])
         return out
 
     # ------------------------------------------------------------------
@@ -332,11 +353,11 @@ class DemoUI:
         return self.scope.label(self.world)
 
     def mode_label(self) -> str:
-        return next(lbl for k, lbl, *_ in fd.MODES if k == self.mode)
+        return next(lbl for k, lbl, *_ in self.backend.modes if k == self.mode)
 
     def header_rows(self, cols: int) -> Row:
         scope, mode, model = self.scope_label(), self.mode_label(), self.model
-        tag = fd.DEMO_TAG
+        tag = fd.DEMO_TAG if self.backend.demo else ""
         sep = " · "
         fixed = cw("DOCKET") + cw(sep) * 2 + cw(mode) + cw(tag) + 3
         show_model = cols >= 80
@@ -559,22 +580,37 @@ class DemoUI:
 
     def _key_bindings(self, has_overlay: Condition) -> KeyBindings:
         kb = KeyBindings()
+
+        def add(*keys: Any, **kw: Any):
+            """kb.add, but a failing handler becomes a notice instead of a crash."""
+
+            def deco(fn):
+                def guarded(event):
+                    try:
+                        fn(event)
+                    except Exception as exc:  # noqa: BLE001
+                        self._internal_error(exc)
+                        self.invalidate()
+
+                return kb.add(*keys, **kw)(guarded)
+
+            return deco
         no_overlay = ~has_overlay
         composer_empty = Condition(lambda: not self.composer.text)
 
-        @kb.add("c-c", eager=True)
+        @add("c-c", eager=True)
         def _ctrl_c(event):
             self.on_ctrl_c()
 
-        @kb.add("c-d", eager=True)
+        @add("c-d", eager=True)
         def _ctrl_d(event):
             self.request_exit()
 
-        @kb.add("f1", eager=True)
+        @add("f1", eager=True)
         def _f1(event):
             self.open_palette()
 
-        @kb.add("/", filter=no_overlay & composer_empty)
+        @add("/", filter=no_overlay & composer_empty)
         def _slash(event):
             self.open_palette()
 
@@ -587,55 +623,55 @@ class DemoUI:
             ("f7", lambda: self.cmd_jobs("")),
             ("f8", lambda: self.push(ov.SettingsOverlay(self))),
         ):
-            kb.add(key, eager=True)(lambda event, fn=fn: fn())
+            add(key, eager=True)(lambda event, fn=fn: fn())
 
         # composer
-        @kb.add("enter", filter=no_overlay)
+        @add("enter", filter=no_overlay)
         def _enter(event):
             self.submit()
 
-        @kb.add("escape", "enter", filter=no_overlay)
-        @kb.add("c-j", filter=no_overlay)
+        @add("escape", "enter", filter=no_overlay)
+        @add("c-j", filter=no_overlay)
         def _newline(event):
             self.composer.insert_text("\n")
 
-        @kb.add("pageup", filter=no_overlay)
+        @add("pageup", filter=no_overlay)
         def _pgup(event):
             self.scroll += max(self.metrics().transcript_h - 2, 1)
             self.invalidate()
 
-        @kb.add("pagedown", filter=no_overlay)
+        @add("pagedown", filter=no_overlay)
         def _pgdn(event):
             self.scroll = max(self.scroll - max(self.metrics().transcript_h - 2, 1), 0)
             self.invalidate()
 
-        @kb.add("c-end", filter=no_overlay)
+        @add("c-end", filter=no_overlay)
         def _latest(event):
             self.scroll = 0
             self.unread = False
             self.invalidate()
 
-        @kb.add("c-e", filter=no_overlay)
+        @add("c-e", filter=no_overlay)
         def _ctrl_e(event):
             self.open_evidence(None, 0)
 
         marker_on = Condition(self.marker_visible)
 
-        @kb.add("escape", filter=no_overlay & marker_on)
+        @add("escape", filter=no_overlay & marker_on)
         def _clear_marker(event):
             self.focus_answer = -1
             self.invalidate()
 
-        @kb.add("escape", "up", filter=no_overlay)
+        @add("escape", "up", filter=no_overlay)
         def _prev_answer(event):
             self._move_focus_answer(-1)
 
-        @kb.add("escape", "down", filter=no_overlay)
+        @add("escape", "down", filter=no_overlay)
         def _next_answer(event):
             self._move_focus_answer(1)
 
         # overlays
-        @kb.add("escape", filter=has_overlay, eager=True)
+        @add("escape", filter=has_overlay, eager=True)
         def _esc(event):
             self.close_top()
 
@@ -648,15 +684,15 @@ class DemoUI:
             return handler
 
         for k in ("up", "down", "left", "right", "pageup", "pagedown", "home", "end", "tab", "s-tab", "enter", "backspace", "c-u"):
-            kb.add(k, filter=has_overlay)(overlay_key(k))
+            add(k, filter=has_overlay)(overlay_key(k))
 
-        @kb.add(Keys.BracketedPaste, filter=has_overlay)
+        @add(Keys.BracketedPaste, filter=has_overlay)
         def _paste(event):
             if self.overlays:
                 self.overlays[-1].text(event.data)
                 self.invalidate()
 
-        @kb.add(Keys.Any, filter=has_overlay)
+        @add(Keys.Any, filter=has_overlay)
         def _any(event):
             data = event.data
             if self.overlays and len(data) == 1 and data.isprintable():
@@ -730,47 +766,194 @@ class DemoUI:
             self.invalidate()
 
     # ------------------------------------------------------------------
-    # operations (fake)
+    # operations
+    #
+    # Demo backend: simulated by the timer (``tick``). Real backend: one
+    # worker thread per expensive operation; workers never touch the UI, they
+    # publish immutable snapshots through ``_post`` (call_soon_threadsafe).
     # ------------------------------------------------------------------
     @property
     def busy(self) -> bool:
         return bool((self.job and self.job.active) or (self.query_op and self.query_op.active))
 
-    def start_job(self, src: fd.FakeSource, verb: str, on_done: str) -> None:
+    def _post(self, fn: Callable[[], None]) -> None:
+        """Run ``fn`` on the UI loop. Safe from any thread; dropped once the UI is gone."""
+        loop = self._loop
+        if loop is None or self._closed:
+            return
+
+        def run() -> None:
+            if self._closed:
+                return
+            try:
+                fn()
+            except Exception as exc:  # a UI-side callback must never take the app down
+                self._internal_error(exc)
+            self.invalidate()
+
+        try:
+            loop.call_soon_threadsafe(run)
+        except RuntimeError:  # loop already closed
+            pass
+
+    def _spawn(self, name: str, target: Callable[[], None]) -> None:
+        self._threads = [t for t in self._threads if t.is_alive()]
+        t = threading.Thread(target=target, name=f"docket-ui-{name}", daemon=True)
+        self._threads.append(t)
+        t.start()
+
+    def _internal_error(self, exc: BaseException) -> None:
+        self.notice(f"Unexpected error ({type(exc).__name__}): {exc}", "error")
+
+    def active_workers(self) -> list[threading.Thread]:
+        """Indexing workers still running (an answer in flight is abandoned on exit)."""
+        return [t for t in self._threads if t.is_alive() and t.name == "docket-ui-index"]
+
+    def wait_for_workers(self, timeout: float | None = None) -> bool:
+        """Join indexing workers after the UI exits (they stop after the current file)."""
+        for t in self.active_workers():
+            t.join(timeout)
+        return not self.active_workers()
+
+    def refresh_world(self) -> None:
+        self.world = self.backend.load_world()
+        self.invalidate()
+
+    # ---- readiness --------------------------------------------------------
+    def refresh_readiness(self) -> None:
+        if self.backend.demo:
+            self.readiness = self.backend.readiness()
+            self.invalidate()
+            return
+        if self._readiness_running:
+            return
+        self._readiness_running = True
+        self.readiness = replace(self.readiness, checking=True, message="Checking...")
+
+        def work() -> None:
+            try:
+                report = self.backend.readiness()
+            except Exception as exc:  # noqa: BLE001 -- a check must not crash the UI
+                text = (str(exc) or type(exc).__name__).splitlines()[0][:120]
+                report = ReadinessReport((ReadinessItem("Status", f"Could not check: {text}", True),), message="The readiness check failed.")
+            self._post(lambda: self._readiness_arrived(report))
+
+        self._spawn("readiness", work)
+
+    def _readiness_arrived(self, report: ReadinessReport) -> None:
+        self._readiness_running = False
+        self.readiness = report
+        if report.blocked and not self._announced_blocked:
+            self._announced_blocked = True
+            self.notice(f"Not ready: {report.help or 'a required service or model is missing.'} Open Settings (F8) for details.", "attention")
+
+    # ---- indexing ---------------------------------------------------------
+    def start_job(self, src: SourceView, verb: str, on_done: str) -> None:
         if self.busy:
             self.notice("Another operation is running. Wait for it, or press Ctrl+C to stop it.", "attention")
             return
-        self.job = IndexJob(src.id, src.name, verb, total=max(len(src.files), 1), on_done=on_done)
+        if self.backend.demo:
+            self.job = IndexJob(src.id, src.name, verb, total=max(len(src.files), 1), on_done=on_done)
+        else:
+            self._start_real_job(src, verb, on_done)
         self.push(ov.IndexingOverlay(self))
 
+    def _start_real_job(self, src: SourceView, verb: str, on_done: str) -> None:
+        job = IndexJob(src.id, src.name, verb, total=0, on_done=on_done, real=True, started=time.monotonic())
+        self.job = job
+        stop = threading.Event()
+        self._job_stop = stop
+
+        def on_progress(p: IndexProgress) -> None:
+            self._post(lambda: self._apply_progress(job, p))
+
+        def work() -> None:
+            try:
+                outcome = self.backend.run_index(src.id, on_progress, stop.is_set)
+            except Exception as exc:  # noqa: BLE001 -- surfaced as a failed job
+                outcome = IndexOutcome("failed", IndexProgress(), reason=describe_error(exc))
+            self._post(lambda: self._real_job_done(job, outcome))
+
+        self._spawn("index", work)
+
+    def _apply_progress(self, job: IndexJob, p: IndexProgress) -> None:
+        if job is not self.job or not job.active:
+            return
+        job.file_index, job.total, job.current_name = p.index, p.total, p.current
+        job.indexed, job.unchanged, job.failed = p.indexed, p.unchanged, p.failed
+        job.failures = list(p.failures)
+
+    def _real_job_done(self, job: IndexJob, outcome: IndexOutcome) -> None:
+        if job is not self.job:
+            return
+        p = outcome.progress
+        job.file_index, job.total = p.index, max(p.total, p.index)
+        job.indexed, job.unchanged, job.failed = p.indexed, p.unchanged, p.failed
+        job.failures = list(p.failures)
+        job.state, job.reason, job.ended = outcome.state, outcome.reason, time.monotonic()
+        job.notices = outcome.notices
+        self._job_finished(job)
+
     def add_folder(self, path: str) -> None:
-        src = self.world.new_source_from_path(path)
+        try:
+            src = self.backend.add_source(path)
+        except BackendError as exc:
+            self.notice(str(exc), "error")
+            return
+        self.refresh_world()
+        src = self.world.find(src.id) or src
+        self.overlays = [o for o in self.overlays if o.name != "welcome"]  # it is stale once a folder exists
         self.notice(f"Added {src.name}. Indexing started.")
         self.start_job(src, "Indexing", "")
 
+    def reconnect_source(self, src: SourceView) -> None:
+        if self.busy:
+            self.notice("Another operation is running. Wait for it, or press Ctrl+C to stop it.", "attention")
+            return
+        try:
+            self.backend.reconnect_source(src.id)
+        except BackendError as exc:
+            self.notice(str(exc), "error")
+            return
+        self.refresh_world()
+        self.start_job(self.world.find(src.id) or src, "Reconnecting", "ready")
+
     def disconnect_source(self, source_id: str) -> None:
         s = self.world.find(source_id)
-        if s:
-            s.status = fd.DISCONNECTED
-            s.note = "Disconnected by you. Stored originals are kept; it is not searched."
-            if self.scope.source_id == source_id:
-                self.notice(f"The selected scope {s.name} is disconnected. It stays selected; change scope to search elsewhere.", "attention")
-            self.notice(f"{s.name} disconnected (demo). Its files are kept.")
+        if s is None:
+            return
+        if self.job and self.job.active and self.job.source_id == source_id:
+            self.notice(f"{s.name} is being indexed. Stop indexing first, then disconnect it.", "attention")
+            return
+        try:
+            self.backend.disconnect_source(source_id)
+        except BackendError as exc:
+            self.notice(str(exc), "error")
+            return
+        self.refresh_world()
+        if self.scope.source_id == source_id:
+            self.notice(f"The selected scope {s.name} is disconnected. It stays selected; change scope to search elsewhere.", "attention")
+        self.notice(f"{s.name} disconnected{' (demo)' if self.backend.demo else ''}. Its files are kept.")
 
     def stop_job(self) -> None:
         if self.job and self.job.active:
             self.job.request_stop()
+            self._job_stop.set()
             self.invalidate()
 
     def tick(self) -> None:
-        """Advance fake operations by one step (timer, or `N` in reduced motion)."""
+        """Advance simulated operations by one step (timer, or `N` in reduced motion).
+
+        Real operations are driven by their worker; for them a tick only
+        redraws (so the elapsed time moves).
+        """
         j = self.job
-        if j and j.active:
+        if j and j.active and not j.real:
             j.advance(blocked=self.blocked)
             if not j.active:
                 self._job_finished(j)
         q = self.query_op
-        if q and q.active:
+        if q and q.active and not q.real:
             q.advance()
             if q.state == "done":
                 self._finish_query(q)
@@ -780,9 +963,9 @@ class DemoUI:
         self.invalidate()
 
     def _job_finished(self, j: IndexJob) -> None:
-        src = self.world.find(j.source_id)
-        if j.state == "done" and src and j.on_done == "ready":
-            src.status, src.note = fd.READY, ""
+        if j.state == "done":
+            self.backend.job_finished(j.source_id, j.on_done)
+        self.refresh_world()
         if j.state == "done":
             level = "attention" if j.failed else "info"
             self.notice(f"Indexing {j.source_name} finished: {j.indexed} indexed, {j.unchanged} unchanged, {j.failed} failed.", level)
@@ -790,15 +973,49 @@ class DemoUI:
             self.notice(f"Indexing {j.source_name} stopped after {j.file_index} of {j.total} files. Completed files were kept.", "attention")
         else:
             self.notice(f"Indexing {j.source_name} failed: {j.reason} The folder stays registered; retry after repair.", "error")
+        for line in j.notices:
+            self.notice(line)
 
-    def _finish_query(self, q: QueryOp) -> None:
-        a = fd.answer_for(q.question, q.scope_label, q.mode_label)
+    # ---- asking -----------------------------------------------------------
+    def _history_for(self, q: QueryOp) -> tuple[Turn, ...]:
+        if q.retry and self.retry_turn_index is not None:
+            return tuple(self.history[: self.retry_turn_index])
+        return tuple(self.history)
+
+    def _set_stage(self, q: QueryOp, label: str) -> None:
+        if q is self.query_op and q.active:
+            q.stage_name = label
+
+    def _finish_query(self, q: QueryOp, outcome: AskOutcome | None = None) -> None:
+        if outcome is None:  # the demo: answer synchronously when its simulated stages end
+            outcome = self.backend.ask(AskRequest(q.question, self.mode, self._history_for(q)), lambda _s: None, q.scope_label, q.mode_label)
+        if q is not self.query_op and not self.backend.demo:
+            return
+        cancelled = q.state == "stopping" and q.real
         self.query_op = None
-        self.add_message(Message("assistant", a.text, answer=a, mode_label=a.mode_label, elapsed=a.elapsed, scope_label=a.scope_label))
+        if cancelled:
+            self.notice("Question cancelled. Its answer was discarded and nothing was added to the conversation. Use /retry to ask again.", "attention")
+            return
+        if outcome.error or outcome.answer is None:
+            self.notice(f"{outcome.error or 'No answer was produced.'} Your question is kept; use /retry to ask again.", "error")
+            return
+        a = outcome.answer
+        self.add_message(Message("assistant", a.text, answer=a, mode_label=a.mode_label, elapsed=a.elapsed, scope_label=a.scope_label, history_answer=outcome.history_answer))
+        turn = Turn(q.question, outcome.history_answer or a.text)
+        idx = self.retry_turn_index
+        if q.retry and idx is not None and idx < len(self.history):
+            self.history[idx] = turn
+        else:
+            self.retry_turn_index = len(self.history)
+            self.history.append(turn)
         self.focus_answer = len(self.answers()) - 1
         self.invalidate()
 
-    def ask(self, question: str) -> bool:
+    def ask(self, question: str, retry: bool = False) -> bool:
+        hint = None if retry else shell_command_hint(question)
+        if hint is not None:
+            self.notice(hint, "attention")
+            return False
         if self.busy:
             what = "indexing" if self.job and self.job.active else "answering"
             self.notice(f"Sending is unavailable while {what}. Your draft is kept; press Ctrl+C to stop, or wait.", "attention")
@@ -807,15 +1024,44 @@ class DemoUI:
             self.notice("Nothing is searchable yet. Add a folder first (F2).", "attention")
             return False
         self.last_question = question
+        if not retry:
+            self.retry_turn_index = None
         self.add_message(Message("user", question))
-        op = QueryOp(question, scope_label=self.scope_label(), mode_label=self.mode_label())
-        if self.reduced_motion:
+        real = not self.backend.demo
+        op = QueryOp(
+            question,
+            scope_label=self.scope_label(),
+            mode_label=self.mode_label(),
+            real=real,
+            started=time.monotonic() if real else None,
+            stage_name=self.backend.stage_search if real else "",
+            retry=retry,
+        )
+        if real:
+            self.query_op = op
+            self._start_real_ask(op)
+        elif self.reduced_motion:
             self._finish_query(op)
         else:
             self.query_op = op
         self.scroll = 0
         self.invalidate()
         return True
+
+    def _start_real_ask(self, op: QueryOp) -> None:
+        request = AskRequest(op.question, self.mode, self._history_for(op))
+
+        def on_stage(label: str) -> None:
+            self._post(lambda: self._set_stage(op, label))
+
+        def work() -> None:
+            try:
+                outcome = self.backend.ask(request, on_stage, op.scope_label, op.mode_label)
+            except Exception as exc:  # noqa: BLE001 -- surfaced as a failed question
+                outcome = AskOutcome(error=describe_error(exc))
+            self._post(lambda: self._finish_query(op, outcome))
+
+        self._spawn("ask", work)
 
     # ------------------------------------------------------------------
     # input handling
@@ -855,6 +1101,10 @@ class DemoUI:
             self.application.exit()
 
     def _stop_and_exit(self) -> None:
+        # A real indexing run stops after its current file; the entry point
+        # waits for that before returning to the shell (see run_ui).
+        if self.job and self.job.active:
+            self.stop_job()
         self.application.exit()
 
     def submit(self) -> None:
@@ -909,25 +1159,26 @@ class DemoUI:
         if not path:
             self.push(ov.AddFolderOverlay(self))
             return
-        match = next((s for s in self.world.sources if s.path == path), None)
-        if match and match.status == fd.DISCONNECTED:
-            self.notice(f"{match.name} is disconnected. Use /reconnect {match.id} instead of adding it again.", "attention")
-        elif match:
-            self.notice(f"{match.name} is already registered.", "attention")
+        check = self.backend.check_folder(path)
+        if not check.ok:
+            self.notice(check.message, "attention")
         else:
-            self.add_folder(path)
+            self.add_folder(check.path)
 
-    def _find_source(self, token: str) -> fd.FakeSource | None:
+    def _find_source(self, token: str) -> SourceView | None:
         t = token.strip().lower()
         return next((s for s in self.world.sources if t and (s.id.lower() == t or s.name.lower() == t or s.id.lower().endswith(t))), None)
 
     def cmd_ingest(self, arg: str) -> None:
         if arg.strip() in ("", "all"):
-            target = next((s for s in self.world.sources if s.status != fd.DISCONNECTED), None)
+            target = next((s for s in self.world.sources if s.status in (fd.READY, fd.FAILED)), None)
         else:
             target = self._find_source(arg)
         if target is None:
             self.notice("No source to index. Use /add <folder> first.", "attention")
+            return
+        if target.status not in (fd.READY, fd.FAILED):
+            self.notice(f"{target.name} is {fd.STATUS_LABEL[target.status].lower()}; it cannot be indexed. See Sources (F2).", "attention")
             return
         self.start_job(target, "Refreshing", "ready" if target.status == fd.FAILED else "")
 
@@ -936,10 +1187,11 @@ class DemoUI:
         if not token:
             self.push(ov.ModeOverlay(self))
             return
-        alias = {"auto": "auto", "fast": "fast", "quick": "fast", "plan": "plan", "agent": "plan"}
+        keys = {k for k, *_ in self.backend.modes}
+        alias = {"auto": "auto", "fast": "fast", "quick": "fast", "plan": "plan", "agent": "agent" if "agent" in keys else "plan"}
         key = alias.get(token)
         if key is None:
-            self.notice(f"Unknown mode {token!r}. Choose auto, fast or plan.", "attention")
+            self.notice(f"Unknown mode {token!r}. Choose {', '.join(sorted(keys))}.", "attention")
         elif key == "plan":
             self.notice("Plan mode is not available yet: planning is not implemented in the backend.", "attention")
         else:
@@ -954,7 +1206,7 @@ class DemoUI:
             ov.ConfirmOverlay(
                 self,
                 f"Disconnect {s.name}?",
-                f"{s.name} will stop being searched. Originals and stored copies are kept. (Demo: nothing changes on disk.)",
+                f"{s.name} will stop being searched. Originals and stored copies are kept." + (" (Demo: nothing changes on disk.)" if self.backend.demo else ""),
                 [("Disconnect", lambda: self.disconnect_source(s.id)), ("Keep connected", None)],
                 default=1,
             )
@@ -967,7 +1219,7 @@ class DemoUI:
             if s is None:
                 self.push(ov.SourcesOverlay(self))
             return
-        self.start_job(s, "Reconnecting", "ready")
+        self.reconnect_source(s)
 
     def cmd_show(self, arg: str) -> None:
         answers = self.answers()
@@ -995,6 +1247,11 @@ class DemoUI:
         self.push(ov.SettingsOverlay(self, "system"))
 
     def cmd_clear(self, arg: str) -> None:
+        if self.query_op and self.query_op.active:
+            self.notice("An answer is being written. Wait for it, or press Ctrl+C, then clear.", "attention")
+            return
+        self.history = []
+        self.retry_turn_index = None
         self.messages = []
         self._line_cache.clear()
         self.scroll, self.unread, self.focus_answer, self.last_question = 0, False, -1, ""
@@ -1021,16 +1278,28 @@ class DemoUI:
         self.push(ov.DetailsOverlay(self, pos))
 
     def cmd_rechunk(self, arg: str) -> None:
-        self.notice("Updating stored chunks arrives with the maintenance stage; it is not wired in this prototype.", "attention")
+        self.notice(self._maintenance_note("Updating stored chunks"), "attention")
 
     def cmd_reindex(self, arg: str) -> None:
-        self.notice("Rebuilding the index arrives with the maintenance stage; it is not wired in this prototype.", "attention")
+        self.notice(self._maintenance_note("Rebuilding the index"), "attention")
+
+    def _maintenance_note(self, what: str) -> str:
+        if self.backend.demo:
+            return f"{what} arrives with the maintenance stage; it is not wired in this prototype."
+        return f"{what} is not available in this screen yet. Use the command line: docket ingest --all --rechunk, or docket reindex."
 
     # ------------------------------------------------------------------
     # state changes used by overlays
     # ------------------------------------------------------------------
     def set_scope(self, scope: Scope) -> None:
         if scope == self.scope:
+            return
+        if not self.backend.scope_enforced:
+            self.notice(
+                "Choosing a scope is not connected to search yet: questions still search all ready sources. "
+                "The selection was not changed.",
+                "attention",
+            )
             return
         self.scope = scope
         self.notice(
@@ -1057,10 +1326,10 @@ class DemoUI:
         self.set_theme(values["theme"])
         if values["mode"] != self.mode:
             self.set_mode(values["mode"])
-        self.notice("Settings saved for this demo session (nothing is written to disk).")
+        self.notice(self.backend.settings_note)
 
     def palette_entries(self) -> list[ov.Entry]:
-        extras = {n: why for n, _s, why in fd.COMMAND_EXTRAS}
+        extras = {n: why for n, _s, why in self.backend.command_extras}
         out: list[ov.Entry] = []
         for c in self.registry.all():
             why = extras.get(c.name, "")
@@ -1072,7 +1341,10 @@ class DemoUI:
     # running
     # ------------------------------------------------------------------
     def _start_ticker(self) -> None:
+        self._loop = asyncio.get_running_loop()
         self.application.create_background_task(self._ticker())
+        if not self.backend.demo:
+            self.refresh_readiness()
 
     async def _ticker(self) -> None:
         while True:
@@ -1083,7 +1355,47 @@ class DemoUI:
                 self.tick()
 
     async def run_async(self) -> None:
-        await self.application.run_async(pre_run=self._start_ticker, handle_sigint=False)
+        try:
+            await self.application.run_async(pre_run=self._start_ticker, handle_sigint=False)
+        finally:
+            self._closed = True
 
     def run(self) -> None:
-        self.application.run(pre_run=self._start_ticker)
+        try:
+            self.application.run(pre_run=self._start_ticker)
+        finally:
+            self._closed = True
+
+
+class DemoUI(TuiApp):
+    """The prototype: fake backend plus the scripted starting states."""
+
+    def __init__(self, state: str = "chat", **kw: Any) -> None:
+        if state not in STATES:
+            raise ValueError(f"unknown state {state!r}; choose from {', '.join(STATES)}")
+        self.state_name = state
+        super().__init__(FakeBackend(empty=state.startswith("welcome"), blocked=state == "welcome-blocked"), **kw)
+
+    def _seed(self) -> None:
+        state = self.state_name
+        self.add_message(Message("system", self.backend.intro_notice))
+        if state in ("chat", "indexing", "sources", "evidence", "settings"):
+            self.add_message(Message("user", fd.initial_question()))
+            a = fd.initial_answer()
+            self.add_message(Message("assistant", a.text, answer=a, mode_label=a.mode_label, elapsed=a.elapsed, scope_label=a.scope_label))
+            self.last_question = fd.initial_question()
+            self.focus_answer = 0
+        if state == "welcome":
+            self.overlays.append(ov.WelcomeOverlay(self))
+        elif state == "welcome-blocked":
+            self.overlays.append(ov.WelcomeOverlay(self))
+        elif state == "indexing":
+            fin = self.world.sources[0]
+            self.job = IndexJob(fin.id, fin.name, "Indexing", total=fd.INDEX_TOTAL_FILES, file_index=6, stage_index=5, ticks=21, indexed=5, unchanged=1)
+            self.overlays.append(ov.IndexingOverlay(self))
+        elif state == "sources":
+            self.overlays.append(ov.SourcesOverlay(self))
+        elif state == "evidence":
+            self.overlays.append(ov.EvidenceOverlay(self, 0, 0))
+        elif state == "settings":
+            self.overlays.append(ov.SettingsOverlay(self))

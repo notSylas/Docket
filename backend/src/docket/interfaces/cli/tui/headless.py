@@ -13,7 +13,7 @@ from prompt_toolkit.data_structures import Size
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 
-from docket.interfaces.cli.tui.app import DemoUI
+from docket.interfaces.cli.tui.app import DemoUI, TuiApp
 
 KEYS = {
     "enter": "\r",
@@ -65,7 +65,7 @@ class Harness:
         self.kw = kw
         self.state = state
         self.renders = 0
-        self.ui: DemoUI | None = None
+        self.ui: TuiApp | None = None
 
     async def __aenter__(self) -> "Harness":
         self._cm = create_pipe_input()
@@ -74,7 +74,11 @@ class Harness:
         kw = dict(self.kw)
         kw.setdefault("reduced_motion", True)
         kw.setdefault("ascii_mode", False)
-        self.ui = DemoUI(self.state, input=self._pipe, output=self.output, **kw)
+        backend = kw.pop("backend", None)
+        if backend is not None:
+            self.ui = TuiApp(backend, input=self._pipe, output=self.output, **kw)
+        else:
+            self.ui = DemoUI(self.state, input=self._pipe, output=self.output, **kw)
         self.ui.application.after_render.add_handler(lambda _a: self._bump())
         self._task = asyncio.ensure_future(self.ui.run_async())
         await self.settle()
@@ -106,6 +110,16 @@ class Harness:
                 stable += 1
             else:
                 stable, last = 0, self.renders
+
+    async def wait_for(self, predicate: Any, timeout: float | None = None) -> None:
+        """Wait (bounded) until ``predicate()`` is true, e.g. for a worker thread's result."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + (timeout or self.timeout)
+        while not predicate():
+            if loop.time() > deadline:
+                raise TimeoutError("condition not met in time")
+            await asyncio.sleep(0.02)
+        await self.settle()
 
     async def send(self, raw: str) -> None:
         self._pipe.send_text(raw)

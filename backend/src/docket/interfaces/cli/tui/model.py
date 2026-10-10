@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 
 from docket.interfaces.cli.tui import fake_data as fd
@@ -33,6 +34,7 @@ class Message:
     elapsed: float | None = None
     scope_label: str = ""
     uid: int = 0
+    history_answer: str = ""  # tagged answer text kept for follow-up context
 
 
 @dataclass
@@ -51,6 +53,12 @@ class IndexJob:
     reason: str = ""
     failures: list[tuple[str, str]] = field(default_factory=list)
     on_done: str = ""  # "ready" -> mark source ready on completion
+    # Real runs (a worker thread feeds snapshots in; nothing is simulated).
+    real: bool = False
+    current_name: str = ""
+    started: float | None = None
+    ended: float | None = None
+    notices: tuple[str, ...] = ()
 
     @property
     def active(self) -> bool:
@@ -58,16 +66,24 @@ class IndexJob:
 
     @property
     def current_file(self) -> str:
+        if self.real:
+            return self.current_name
         n = min(self.file_index + 1, self.total)
         return f"file-{n:02d}.pdf"
 
     @property
     def elapsed_label(self) -> str:
-        secs = self.ticks * 2
+        if self.real:
+            secs = int(((self.ended if self.ended is not None else time.monotonic()) - (self.started or time.monotonic())))
+        else:
+            secs = self.ticks * 2
         return f"{secs // 60:02d}:{secs % 60:02d}"
 
     @property
     def stage(self) -> str:
+        """Simulated jobs report a stage; real ones only know file events."""
+        if self.real:
+            return ""
         return fd.INDEX_STAGES[self.stage_index % len(fd.INDEX_STAGES)]
 
     def advance(self, *, blocked: bool = False) -> None:
@@ -108,10 +124,20 @@ class QueryOp:
     state: str = "running"  # running | stopping | cancelled | done
     scope_label: str = ""
     mode_label: str = ""
+    real: bool = False
+    stage_name: str = ""
+    started: float | None = None
+    retry: bool = False
 
     @property
     def stage(self) -> str:
+        if self.real:
+            return self.stage_name
         return fd.QUERY_STAGES[min(self.stage_index, len(fd.QUERY_STAGES) - 1)]
+
+    @property
+    def elapsed_secs(self) -> int:
+        return int(time.monotonic() - self.started) if self.started is not None else 0
 
     @property
     def active(self) -> bool:

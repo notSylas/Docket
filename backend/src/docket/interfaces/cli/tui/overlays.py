@@ -2,7 +2,9 @@
 
 Every overlay renders itself into a list of fixed-width rows (a bordered box),
 handles a small set of abstract keys, and talks to the application only through
-the ``ui`` object (see ``app.DemoUI``). Overlays never touch a backend.
+the ``ui`` object (see ``app.TuiApp``). Overlays never touch a backend directly:
+what they show comes from ``ui`` (world, readiness, job, answers) and the
+backend protocol attributes (modes, models, labels).
 """
 
 from __future__ import annotations
@@ -580,7 +582,7 @@ class ModeOverlay(Overlay):
 
     def entries(self) -> list[Entry]:
         out = []
-        for key, label, desc, ok, why in fd.MODES:
+        for key, label, desc, ok, why in self.ui.backend.modes:
             out.append(
                 Entry(
                     key,
@@ -656,7 +658,13 @@ class SourcesOverlay(Overlay):
             Btn("refresh", "Refresh", s is not None and s.status == fd.READY, none if s is None else "Only a Ready source can be refreshed.", "r"),
             Btn("retry", "Retry", s is not None and s.status == fd.FAILED, none if s is None else "Retry applies to a Failed source.", "t"),
             Btn("reconnect", "Reconnect", s is not None and s.status == fd.DISCONNECTED, none if s is None else "Reconnect applies to a Disconnected source.", "c"),
-            Btn("disconnect", "Disconnect", s is not None and s.status != fd.DISCONNECTED, none if s is None else "This source is already disconnected.", "d"),
+            Btn(
+                "disconnect",
+                "Disconnect",
+                s is not None and s.status in (fd.READY, fd.FAILED),
+                none if s is None else ("This source is already disconnected." if s.status == fd.DISCONNECTED else "This source cannot be disconnected from here."),
+                "d",
+            ),
             Btn("details", "Hide details" if self.expanded else "Details", s is not None, none, "i"),
             Btn("close", "Close"),
         ]
@@ -752,13 +760,14 @@ class SourcesOverlay(Overlay):
         elif key == "retry" and s:
             self.ui.start_job(s, "Retrying", "ready")
         elif key == "reconnect" and s:
-            self.ui.start_job(s, "Reconnecting", "ready")
+            self.ui.reconnect_source(s)
         elif key == "disconnect" and s:
             self.ui.push(
                 ConfirmOverlay(
                     self.ui,
                     f"Disconnect {s.name}?",
-                    f"{s.name} will stop being searched. Your original files and Docket's stored copies are kept, and you can reconnect later. (Demo: nothing is changed on disk.)",
+                    f"{s.name} will stop being searched. Your original files and Docket's stored copies are kept, and you can reconnect later."
+                    + (" (Demo: nothing is changed on disk.)" if self.ui.backend.demo else ""),
                     [("Disconnect", lambda: self.ui.disconnect_source(s.id)), ("Keep connected", None)],
                     default=1,
                 )
@@ -789,7 +798,7 @@ class AddFolderOverlay(Overlay):
         t = self._path()
         if not t:
             return []
-        return [Entry(p, p, "", "", MUTED, True, "", p) for p in fd.FOLDER_SUGGESTIONS if p.lower().startswith(t.lower()) and p != t]
+        return [Entry(p, p, "", "", MUTED, True, "", p) for p in self.ui.backend.folder_suggestions(t)]
 
     def _path(self) -> str:
         t = self.filter_text.strip()
@@ -806,7 +815,7 @@ class AddFolderOverlay(Overlay):
 
     def preface(self, iw: int) -> list[Row]:
         rows = wrap_text(
-            f"Docket reads {fd.SUPPORTED_FORMATS} in this folder and its subfolders, then starts indexing right away. Original files are never changed.",
+            f"Docket reads {self.ui.backend.supported_formats} in this folder and its subfolders, then starts indexing right away. Original files are never changed.",
             iw,
             MUTED,
         )
@@ -847,19 +856,16 @@ class AddFolderOverlay(Overlay):
         if not path:
             self.msg = "Enter a folder path first."
             return
-        if path in (".", "~", "/") and not self.broad_ok:
+        if self.ui.backend.is_broad_location(path) and not self.broad_ok:
             self.broad_ok = True
             self.msg = "That is a very broad location. Press Enter again to add it anyway."
             return
-        for s in self.ui.world.sources:
-            if s.path == path:
-                if s.status == fd.DISCONNECTED:
-                    self.msg = f"{s.name} is disconnected. Use Reconnect in Sources instead of adding it again."
-                else:
-                    self.msg = f"{s.name} is already registered at that path."
-                return
+        check = self.ui.backend.check_folder(path)
+        if not check.ok:
+            self.msg = check.message
+            return
         self.ui.close_top()
-        self.ui.add_folder(path)
+        self.ui.add_folder(check.path)
 
 
 # ---------------------------------------------------------------------------
@@ -905,25 +911,28 @@ class IndexingOverlay(Overlay):
         filled = int(bar_w * frac)
         bar = [("class:accent", "█" * filled), (MUTED, "░" * (bar_w - filled)), (TEXT, f" {j.file_index}/{j.total} files")]
         if j.active:
-            rows.extend(
-                kv_rows(
-                    [
-                        ("File", f"{min(j.file_index + 1, j.total)} of {j.total} · {j.current_file}", TEXT),
-                        ("Stage", j.stage, TEXT),
-                        ("Elapsed", j.elapsed_label, TEXT),
-                        ("So far", f"{j.indexed} indexed · {j.unchanged} unchanged · {j.failed} failed", TEXT),
-                    ],
-                    iw,
-                    10,
-                )
+            file_text = (
+                f"{min(j.file_index + 1, j.total)} of {j.total} · {j.current_file}"
+                if j.total
+                else (j.current_file or "Looking for supported files") + "..."
             )
+            items = [("File", file_text, TEXT)]
+            if j.stage:  # a real run only knows file events, so it shows no stage
+                items.append(("Stage", j.stage, TEXT))
+            items.append(("Elapsed", j.elapsed_label, TEXT))
+            items.append(("So far", f"{j.indexed} indexed · {j.unchanged} unchanged · {j.failed} failed", TEXT))
+            rows.extend(kv_rows(items, iw, 10))
             rows.append([])
             rows.append(bar)
             rows.append([(MUTED, "Files vary in processing time; this is a file count, not a time estimate.")])
             if j.state == "stopping":
                 rows.append([])
-                rows.append([("class:attention", "Stopping after the current operation...")])
-                rows.append([(MUTED, "Completed files are kept. Unfinished files stay unavailable and can be retried.")])
+                if j.real:
+                    rows.append([("class:attention", "Stopping after the current file finishes...")])
+                    rows.append([(MUTED, "A large file can take a while. Completed files are kept; the rest can be retried.")])
+                else:
+                    rows.append([("class:attention", "Stopping after the current operation...")])
+                    rows.append([(MUTED, "Completed files are kept. Unfinished files stay unavailable and can be retried.")])
             return rows, None
         if j.state == "failed":
             rows.append([("class:failed", "Failed: "), (TEXT, j.reason or "Indexing could not start.")])
@@ -1031,7 +1040,15 @@ class EvidenceOverlay(Overlay):
         return [
             Btn("prev", "Previous", self.cit > 0, "This is the first citation.", "p"),
             Btn("next", "Next", self.cit < n - 1, "This is the last citation.", "n"),
-            Btn("open", "Open original", bool(c and c.available), "Unavailable: this citation's stored version cannot be resolved.", "o"),
+            Btn(
+                "open",
+                "Open original",
+                bool(c and c.available and self.ui.backend.can_open_original),
+                "Unavailable: this citation's stored version cannot be resolved."
+                if self.ui.backend.can_open_original
+                else "Opening the original file is not available in this screen yet.",
+                "o",
+            ),
             Btn("details", "Hide details" if self.show_details else "Details", c is not None, "", "d"),
             Btn("close", "Close"),
         ]
@@ -1121,7 +1138,7 @@ class EvidenceOverlay(Overlay):
         elif key == "open":
             c = self._cit()
             self.msg_style = "class:accent"
-            self.msg = f"Demo: Docket would confirm {c.rel_path if c else 'the file'} still matches the stored version, then open it with your system opener."
+            self.msg = self.ui.backend.open_original_note(c) if c else ""
         elif key == "details":
             self.show_details = not self.show_details
         else:
@@ -1151,12 +1168,14 @@ class DetailsOverlay(Overlay):
             return [[(MUTED, "There is no answer yet.")]], None
         avail = [c for c in a.citations if c.available]
         files = len({c.rel_path for c in avail})
-        if a.searched == 0:
+        known = a.searched >= 0  # a backend that cannot count what it searched reports -1
+        tail = f", {a.searched} searched" if known else ""
+        if known and a.searched == 0:
             passages = "None (no search was made)"
         elif not avail:
-            passages = f"None used, {a.searched} searched"
+            passages = "None used" + tail
         else:
-            passages = f"{len(avail)} passage{'s' if len(avail) != 1 else ''} from {files} file{'s' if files != 1 else ''}, {a.searched} searched"
+            passages = f"{len(avail)} passage{'s' if len(avail) != 1 else ''} from {files} file{'s' if files != 1 else ''}{tail}"
         cits = f"{len(a.citations)} · syntax valid; meaning not machine-verified" if a.citations else "None"
         items: list[tuple[str, str, str]] = [
             ("Status", a.status, TEXT),
@@ -1191,7 +1210,6 @@ class DetailsOverlay(Overlay):
 
 SETTINGS_TABS = ("answering", "appearance", "history", "system")
 TAB_LABELS = {"answering": "Answering", "appearance": "Appearance", "history": "History", "system": "System"}
-THINK = fd.THINKING_LEVELS
 
 
 class SettingsOverlay(Overlay):
@@ -1222,26 +1240,20 @@ class SettingsOverlay(Overlay):
         p = self.pending
         e: list[Entry] = []
         if self.tab == "answering":
-            model_note = next((n for m, ok, n in fd.ANSWER_MODELS if m == p["model"]), "")
+            think = self.ui.backend.thinking_levels
+            model_note = next((n for m, ok, n in self.ui.backend.answer_models if m == p["model"]), "")
             e.append(Entry("model", "Answer model", f"‹ {p['model']} ›", "", MUTED, True, model_note))
-            mode_label = next(lbl for k, lbl, *_ in fd.MODES if k == p["mode"])
+            mode_label = next((lbl for k, lbl, *_ in self.ui.backend.modes if k == p["mode"]), p["mode"])
             e.append(Entry("mode", "Answering mode", f"‹ {mode_label} ›"))
-            e.append(Entry("thinking", "Answer thinking", f"‹ {THINK[p['thinking']]} ›", hint="Slower and more careful as you move right."))
-            e.append(Entry("embed", "Embedding model", f"{fd.EMBED_MODEL} (read-only)", enabled=False, hint="Read-only here. Changing it needs a rebuild of the search index, offered under Maintenance."))
+            e.append(Entry("thinking", "Answer thinking", f"‹ {think[p['thinking']]} ›", hint="Slower and more careful as you move right."))
+            e.append(Entry("embed", "Embedding model", f"{self.ui.backend.embed_model} (read-only)", enabled=False, hint="Read-only here. Changing it needs a rebuild of the search index, offered under Maintenance."))
         elif self.tab == "appearance":
             e.append(Entry("theme", "Appearance", f"‹ {THEME_LABELS[p['theme']]} ›"))
             e.append(Entry("density", "Density", "Comfortable (read-only)", enabled=False, hint="Density and animation preferences arrive in a later release."))
         elif self.tab == "history":
             e.append(Entry("history", "Input history", f"‹ {'On' if p['history'] else 'Off'} ›", hint="Stores what you type, not answers. DOCKET_NO_HISTORY turns it off for the whole process."))
         else:
-            for k, v in (
-                ("Data folder", fd.DATA_DIR_LABEL),
-                ("Ollama", "Available (demo)"),
-                ("Answer model", p["model"]),
-                ("Embedding", fd.EMBED_MODEL),
-                ("Index", "Compatible with the embedding model (demo)"),
-                ("Coverage", f"{self.ui.world.ready_files()} files searchable"),
-            ):
+            for k, v in self.ui.backend.system_rows(self.ui.world, self.ui.readiness):
                 e.append(Entry(k, k, v, enabled=False, hint="Read-only information."))
         return e
 
@@ -1271,12 +1283,15 @@ class SettingsOverlay(Overlay):
         es = self.entries()
         rows: list[Row] = []
         if self.tab == "answering":
-            for m, ok, note in fd.ANSWER_MODELS:
+            for m, ok, note in self.ui.backend.answer_models:
                 if not ok:
                     rows.append([(MUTED, f"{m}: {note}")])
         if es and self.zone == "list" and es[min(self.sel, len(es) - 1)].hint:
             rows.append([])
             rows.extend(wrap_text(es[min(self.sel, len(es) - 1)].hint, iw, MUTED))
+        if self.tab == "system" and self.ui.readiness.message:
+            rows.append([])
+            rows.append([(MUTED, self.ui.readiness.message)])
         if self.tab == "history":
             rows.append([])
             rows.extend(wrap_text("Conversation memory is kept in this session only; it is not saved when you exit.", iw, MUTED))
@@ -1343,13 +1358,14 @@ class SettingsOverlay(Overlay):
             return
         p = self.pending
         if e.key == "model":
-            installed = [m for m, ok, _ in fd.ANSWER_MODELS if ok]
-            p["model"] = installed[(installed.index(p["model"]) + delta) % len(installed)]
+            installed = [m for m, ok, _ in self.ui.backend.answer_models if ok]
+            if p["model"] in installed:
+                p["model"] = installed[(installed.index(p["model"]) + delta) % len(installed)]
         elif e.key == "mode":
-            avail = [k for k, _l, _d, ok, _w in fd.MODES if ok]
+            avail = [k for k, _l, _d, ok, _w in self.ui.backend.modes if ok]
             p["mode"] = avail[(avail.index(p["mode"]) + delta) % len(avail)]
         elif e.key == "thinking":
-            p["thinking"] = (p["thinking"] + delta) % len(THINK)
+            p["thinking"] = (p["thinking"] + delta) % len(self.ui.backend.thinking_levels)
         elif e.key == "theme":
             p["theme"] = THEMES[(THEMES.index(p["theme"]) + delta) % len(THEMES)]
         elif e.key == "history":
@@ -1360,8 +1376,8 @@ class SettingsOverlay(Overlay):
             self.ui.apply_settings(dict(self.pending))
             self.ui.close_top(force=True)
         elif key == "check":
-            self.msg_style = "class:accent"
-            self.msg = "Readiness check (demo): Ollama available, models installed, index compatible."
+            self.ui.refresh_readiness()
+            self.tab = "system"  # the result is shown there
         else:
             self.ui.close_top()
 
@@ -1377,8 +1393,11 @@ class WelcomeOverlay(Overlay):
     has_list = False
 
     def __init__(self, ui: Any, blocked: bool = False) -> None:
-        self.blocked = blocked
         super().__init__(ui)
+
+    @property
+    def blocked(self) -> bool:
+        return self.ui.readiness.blocked
 
     def buttons(self) -> list[Btn]:
         return [
@@ -1394,25 +1413,22 @@ class WelcomeOverlay(Overlay):
     def build_body(self, iw: int):
         rows = wrap_text("Ask questions about documents stored on this PC.", iw, TEXT)
         rows.append([])
-        items = fd.READINESS_BLOCKED if self.blocked else fd.READINESS_OK
-        rows.extend(
-            kv_rows(
-                [(k, v, "class:attention" if self.blocked and "not" in v.lower() else TEXT) for k, v in items],
-                iw,
-            )
-        )
-        if self.blocked:
+        rep_ = self.ui.readiness
+        rows.extend(kv_rows([(i.label, i.value, "class:attention" if i.bad else TEXT) for i in rep_.items], iw))
+        if rep_.blocked:
             rows.append([])
-            rows.extend(wrap_text(fd.BLOCKED_HELP, iw, "class:attention"))
+            rows.extend(wrap_text(rep_.help, iw, "class:attention"))
             rows.extend(wrap_text("Docket never installs models or starts services for you.", iw, MUTED))
+        if rep_.message:
+            rows.append([])
+            rows.append([(MUTED, rep_.message)])
         return rows, None
 
     def press(self, key: str) -> None:
         if key == "add":
             self.ui.push(AddFolderOverlay(self.ui))
         elif key == "check":
-            self.msg_style = "class:accent" if not self.blocked else "class:attention"
-            self.msg = "Checked just now (demo): " + ("still blocked." if self.blocked else "everything is available.")
+            self.ui.refresh_readiness()
         elif key == "settings":
             self.ui.push(SettingsOverlay(self.ui, "system"))
         else:
@@ -1470,9 +1486,12 @@ class JobsOverlay(Overlay):
         if j is not None:
             state = {"running": "Running", "stopping": "Stopping", "done": "Completed", "stopped": "Cancelled", "failed": "Failed"}[j.state]
             out.append(Entry("current", j.source_name, f"{j.file_index}/{j.total} files", state, self.STATE_STYLE.get(state, MUTED), data="current", hint="Now"))
-        for name, state, when, summary in fd.JOB_HISTORY:
-            out.append(Entry(name, name, summary, state, self.STATE_STYLE.get(state, MUTED), data=summary, hint=when))
+        for rec in self.ui.backend.job_history(running=bool(j and j.active)):
+            out.append(Entry(rec.name, rec.name, rec.summary, rec.state, self.STATE_STYLE.get(rec.state, MUTED), data=rec.summary, hint=rec.when))
         return out
+
+    def empty_text(self) -> str:
+        return "No indexing jobs yet."
 
     def preface(self, iw: int) -> list[Row]:
         head = "  " + pad_cell("Source", self.NAME_W, False) + pad_cell("Result", self.STATE_W, False) + "When"
@@ -1505,7 +1524,8 @@ class JobsOverlay(Overlay):
         return [Btn("results", "Results", hot="r"), Btn("close", "Close")]
 
     def hint(self) -> str:
-        return "Up/Down select · Enter results · Esc close (history is demo data)"
+        note = self.ui.backend.jobs_hint
+        return "Up/Down select · Enter results · Esc close" + (f" ({note})" if note else "")
 
     def activate(self, entry: Entry) -> None:
         if entry.data == "current":
@@ -1513,7 +1533,8 @@ class JobsOverlay(Overlay):
             self.ui.push(IndexingOverlay(self.ui))
         else:
             self.msg_style = "class:text"
-            self.msg = f"{entry.key}: {entry.data}"
+            note = self.ui.backend.jobs_note
+            self.msg = f"{entry.key}: {entry.data}" + (f" {note}" if note else "")
 
     def press(self, key: str) -> None:
         if key == "results":
