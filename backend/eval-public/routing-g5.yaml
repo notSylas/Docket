@@ -1,0 +1,491 @@
+# G5 routing set (Upgrade/08 section 5.2; Upgrade/06 sections 4.2 and 10.3).
+#
+# Each item labels the correct execution path for the Auto router:
+#   FAST           one hybrid retrieval and one generation is enough (single lookup, a literal TOTAL/subtotal row,
+#                  a resolvable follow-up, or a question the corpus cannot answer, where the right behaviour is a
+#                  fast abstention)
+#   INVESTIGATION  needs more than one retrieval or computation: comparison, timeline, exhaustive listing,
+#                  cross-document or cross-sheet derivation, conflict/agreement checks, causal or impact questions
+#   CLARIFY        the question cannot be answered correctly until the user picks a period, file or referent
+# `corpus` names the folder under eval-public/ the question was written against (the labelled path assumes that
+# corpus is indexed). `history` is the prior conversation, if any. `reason_codes` are labels, not a closed enum;
+# the vocabulary is documented in eval-public/experiments/g5_route_accuracy.py.
+# Standalone file: the gold Question schema forbids extra fields, so routing labels live here. Hand-labelled.
+version: 1
+population: synthetic_public
+items:
+- id: route-001
+  corpus: corpus-synthetic
+  question: What was the actual Marigold Chai revenue in July 2025?
+  expected_path: FAST
+  reason_codes:
+  - SINGLE_LOOKUP
+  - PERIOD_STATED
+- id: route-002
+  corpus: corpus-synthetic
+  question: What was total revenue in June 2024?
+  expected_path: FAST
+  reason_codes:
+  - SINGLE_LOOKUP
+  - PERIOD_STATED
+- id: route-003
+  corpus: corpus-synthetic
+  question: How many orders did the warehouse ship in August?
+  expected_path: FAST
+  reason_codes:
+  - SINGLE_LOOKUP
+  - SINGLE_SOURCE
+- id: route-004
+  corpus: corpus-synthetic
+  question: What is the Q3 revenue target in the operations review deck?
+  expected_path: FAST
+  reason_codes:
+  - SINGLE_LOOKUP
+  - SINGLE_SOURCE
+- id: route-005
+  corpus: corpus-synthetic
+  question: What annual performance bonus percentage does the compensation policy give?
+  expected_path: FAST
+  reason_codes:
+  - SINGLE_LOOKUP
+  - SINGLE_SOURCE
+- id: route-006
+  corpus: corpus-synthetic
+  question: Who is the Head of Logistics?
+  expected_path: FAST
+  reason_codes:
+  - SINGLE_LOOKUP
+  - SINGLE_SOURCE
+- id: route-007
+  corpus: corpus-synthetic
+  question: What was the Q2 TOTAL for operating costs in Expenses-FY2025-26.xlsx?
+  expected_path: FAST
+  reason_codes:
+  - SINGLE_LOOKUP
+  - NAMED_FILE
+- id: route-008
+  corpus: corpus-synthetic
+  question: How much Juniper Masala revenue was recorded in May 2025 (actual)?
+  expected_path: FAST
+  reason_codes:
+  - SINGLE_LOOKUP
+  - PERIOD_STATED
+- id: route-009
+  corpus: corpus-synthetic
+  question: What was the return rate in September?
+  expected_path: FAST
+  reason_codes:
+  - SINGLE_LOOKUP
+  - SINGLE_SOURCE
+- id: route-010
+  corpus: corpus-synthetic
+  question: What date is the board memo on Q2 FY2025-26 results?
+  expected_path: FAST
+  reason_codes:
+  - SINGLE_LOOKUP
+  - SINGLE_SOURCE
+- id: route-011
+  corpus: corpus-synthetic
+  question: What was capital spend on vehicles in August according to Expenses-FY2025-26.xlsx?
+  expected_path: FAST
+  reason_codes:
+  - SINGLE_LOOKUP
+  - NAMED_FILE
+- id: route-012
+  corpus: corpus-synthetic
+  question: What was the budgeted Marigold Chai revenue for August 2025?
+  expected_path: FAST
+  reason_codes:
+  - SINGLE_LOOKUP
+  - PERIOD_STATED
+- id: route-013
+  corpus: corpus-synthetic
+  question: And Saffron Rusk?
+  history:
+  - question: What was the actual Marigold Chai revenue in July 2025?
+    answer: Actual Marigold Chai revenue in July 2025 was INR 4,725 thousand (Revenue-FY2025-26.xlsx).
+  expected_path: FAST
+  reason_codes:
+  - FOLLOWUP_RESOLVED
+  - SINGLE_LOOKUP
+- id: route-014
+  corpus: corpus-synthetic
+  question: What about September?
+  history:
+  - question: What was on-time delivery in August?
+    answer: On-time delivery in August was 94.6% (Warehouse-Throughput-Q2.xlsx).
+  expected_path: FAST
+  reason_codes:
+  - FOLLOWUP_RESOLVED
+  - SINGLE_LOOKUP
+- id: route-015
+  corpus: corpus-synthetic
+  question: And the same month last year?
+  history:
+  - question: What was total revenue in July 2025?
+    answer: Total revenue in July 2025 (FY2025-26 actual) was INR 8,280 thousand.
+  expected_path: FAST
+  reason_codes:
+  - FOLLOWUP_RESOLVED
+  - PERIOD_RESOLVED_FROM_HISTORY
+- id: route-016
+  corpus: corpus-synthetic
+  question: What is the revenue forecast for FY2026-27?
+  expected_path: FAST
+  reason_codes:
+  - OUT_OF_SCOPE_ABSTAIN
+- id: route-017
+  corpus: corpus-synthetic
+  question: What was the inventory turnover ratio in Q2 FY2025-26?
+  expected_path: FAST
+  reason_codes:
+  - OUT_OF_SCOPE_ABSTAIN
+- id: route-018
+  corpus: corpus-synthetic
+  question: What is the TOTAL (Apr-Sep) shown across the product columns in Revenue-FY2025-26.xlsx?
+  expected_path: FAST
+  reason_codes:
+  - SINGLE_LOOKUP
+  - NAMED_FILE
+  - LEXICAL_TRAP_ACROSS
+- id: route-019
+  corpus: corpus-synthetic
+  question: Which sheet in Expenses-FY2025-26.xlsx lists capital spend?
+  expected_path: FAST
+  reason_codes:
+  - SINGLE_LOOKUP
+  - NAMED_FILE
+- id: route-020
+  corpus: corpus-synthetic-g1
+  question: What was the actual Cotton Yarn revenue in July 2025?
+  expected_path: FAST
+  reason_codes:
+  - SINGLE_LOOKUP
+  - PERIOD_STATED
+- id: route-021
+  corpus: corpus-synthetic-g1
+  question: What was the budgeted Linen Cloth revenue for September 2025?
+  expected_path: FAST
+  reason_codes:
+  - SINGLE_LOOKUP
+  - PERIOD_STATED
+- id: route-022
+  corpus: corpus-synthetic-g1
+  question: How much Silk Blend revenue was recorded in February 2025 (actual)?
+  expected_path: FAST
+  reason_codes:
+  - SINGLE_LOOKUP
+  - PERIOD_STATED
+- id: route-023
+  corpus: corpus-synthetic-g1
+  question: What revenue target does the board memo set for CY2026?
+  expected_path: FAST
+  reason_codes:
+  - SINGLE_LOOKUP
+  - SINGLE_SOURCE
+- id: route-024
+  corpus: corpus-synthetic-g1
+  question: What was total output in metres for 2025 in the production workbook?
+  expected_path: FAST
+  reason_codes:
+  - SINGLE_LOOKUP
+  - SINGLE_SOURCE
+- id: route-025
+  corpus: corpus-synthetic-g1
+  question: What does the Notes sheet of Costs-CY2025.xlsx say about the inventory write-off?
+  expected_path: FAST
+  reason_codes:
+  - SINGLE_LOOKUP
+  - NAMED_FILE
+- id: route-026
+  corpus: corpus-synthetic-g4
+  question: How many vessels were in service in September 2025 according to Fleet-Utilisation-v2.xlsx?
+  expected_path: FAST
+  reason_codes:
+  - SINGLE_LOOKUP
+  - NAMED_FILE
+- id: route-027
+  corpus: corpus-synthetic-g4
+  question: What fuel surcharge did the board memo report for Q3 2025?
+  expected_path: FAST
+  reason_codes:
+  - SINGLE_LOOKUP
+  - SINGLE_SOURCE
+- id: route-028
+  corpus: corpus-synthetic
+  question: Compare Q2 revenue in FY2024-25 with Q2 revenue in FY2025-26.
+  expected_path: INVESTIGATION
+  reason_codes:
+  - COMPARISON
+  - CROSS_DOCUMENT
+- id: route-029
+  corpus: corpus-synthetic
+  question: By what percentage did total revenue for Q2 grow from FY2024-25 to FY2025-26?
+  expected_path: INVESTIGATION
+  reason_codes:
+  - DERIVED_CALCULATION
+  - CROSS_DOCUMENT
+- id: route-030
+  corpus: corpus-synthetic
+  question: List every month of FY2025-26 in which actual total revenue exceeded the budget.
+  expected_path: INVESTIGATION
+  reason_codes:
+  - EXHAUSTIVE
+  - ACTUAL_VS_BUDGET
+- id: route-031
+  corpus: corpus-synthetic
+  question: Which months had on-time delivery below 95%?
+  expected_path: INVESTIGATION
+  reason_codes:
+  - EXHAUSTIVE
+  - THRESHOLD_FILTER
+- id: route-032
+  corpus: corpus-synthetic
+  question: Do the operations review deck and the board memo agree on the Q3 revenue target?
+  expected_path: INVESTIGATION
+  reason_codes:
+  - CONFLICT_CHECK
+  - CROSS_DOCUMENT
+- id: route-033
+  corpus: corpus-synthetic
+  question: Why did revenue fall in September 2025?
+  expected_path: INVESTIGATION
+  reason_codes:
+  - CAUSAL
+  - CROSS_DOCUMENT
+- id: route-034
+  corpus: corpus-synthetic
+  question: How did Juniper Masala revenue evolve from April to September 2025?
+  expected_path: INVESTIGATION
+  reason_codes:
+  - TIMELINE
+- id: route-035
+  corpus: corpus-synthetic
+  question: Trace operating costs month by month from July to September 2025.
+  expected_path: INVESTIGATION
+  reason_codes:
+  - TIMELINE
+- id: route-036
+  corpus: corpus-synthetic
+  question: What share of Q2 revenue came from Marigold Chai in each fiscal year?
+  expected_path: INVESTIGATION
+  reason_codes:
+  - DERIVED_CALCULATION
+  - CROSS_DOCUMENT
+- id: route-037
+  corpus: corpus-synthetic
+  question: How much more did Tarnwick spend on operating costs than on capital in Q2 FY2025-26?
+  expected_path: INVESTIGATION
+  reason_codes:
+  - DERIVED_CALCULATION
+  - MULTI_SHEET
+- id: route-038
+  corpus: corpus-synthetic
+  question: Does the board memo's average on-time delivery match the warehouse workbook?
+  expected_path: INVESTIGATION
+  reason_codes:
+  - CONFLICT_CHECK
+  - CROSS_DOCUMENT
+- id: route-039
+  corpus: corpus-synthetic
+  question: What is the combined monthly salary of the employees based in Nagpur?
+  expected_path: INVESTIGATION
+  reason_codes:
+  - EXHAUSTIVE
+  - DERIVED_CALCULATION
+- id: route-040
+  corpus: corpus-synthetic
+  question: Summarise every metric on which the operations deck disagrees with the workbooks.
+  expected_path: INVESTIGATION
+  reason_codes:
+  - CONFLICT_CHECK
+  - EXHAUSTIVE
+  - CROSS_DOCUMENT
+- id: route-041
+  corpus: corpus-synthetic
+  question: Which product line grew fastest between April and September 2025?
+  expected_path: INVESTIGATION
+  reason_codes:
+  - COMPARISON
+  - DERIVED_CALCULATION
+- id: route-042
+  corpus: corpus-synthetic
+  question: Compare actual and budgeted revenue across all three product lines for Q2 FY2025-26.
+  expected_path: INVESTIGATION
+  reason_codes:
+  - COMPARISON
+  - ACTUAL_VS_BUDGET
+- id: route-043
+  corpus: corpus-synthetic
+  question: What was the impact of the monsoon packaging issue on September returns and on-time delivery?
+  expected_path: INVESTIGATION
+  reason_codes:
+  - IMPACT
+  - CROSS_DOCUMENT
+- id: route-044
+  corpus: corpus-synthetic
+  question: What was the average monthly total revenue across April to September 2025?
+  expected_path: INVESTIGATION
+  reason_codes:
+  - DERIVED_CALCULATION
+  - LEXICAL_TRAP_ACROSS
+- id: route-045
+  corpus: corpus-synthetic-g1
+  question: By how much did actual Q2 2025 total revenue differ from the Q2 budget?
+  expected_path: INVESTIGATION
+  reason_codes:
+  - DERIVED_CALCULATION
+  - ACTUAL_VS_BUDGET
+- id: route-046
+  corpus: corpus-synthetic-g1
+  question: In which quarters of 2025 did actual total sales exceed the budget?
+  expected_path: INVESTIGATION
+  reason_codes:
+  - EXHAUSTIVE
+  - ACTUAL_VS_BUDGET
+- id: route-047
+  corpus: corpus-synthetic-g1
+  question: What share of CY2025 revenue did operating costs represent?
+  expected_path: INVESTIGATION
+  reason_codes:
+  - DERIVED_CALCULATION
+  - CROSS_DOCUMENT
+  - UNIT_CONVERSION
+- id: route-048
+  corpus: corpus-synthetic-g1
+  question: By how many rupees did total revenue in 2025 exceed total revenue in 2024?
+  expected_path: INVESTIGATION
+  reason_codes:
+  - DERIVED_CALCULATION
+  - CROSS_DOCUMENT
+  - UNIT_CONVERSION
+- id: route-049
+  corpus: corpus-synthetic-g1
+  question: List all months in 2025 with no recorded output.
+  expected_path: INVESTIGATION
+  reason_codes:
+  - EXHAUSTIVE
+- id: route-050
+  corpus: corpus-synthetic-g1
+  question: How does the memo's revenue growth figure compare with what the sales workbooks show?
+  expected_path: INVESTIGATION
+  reason_codes:
+  - CONFLICT_CHECK
+  - CROSS_DOCUMENT
+- id: route-051
+  corpus: corpus-synthetic-g4
+  question: What is the latest September 2025 freight revenue, and how does it differ from the original workbook?
+  expected_path: INVESTIGATION
+  reason_codes:
+  - CONFLICT_CHECK
+  - VERSION_DIFF
+- id: route-052
+  corpus: corpus-synthetic-g4
+  question: What changed between version 1 and version 2 of the fleet utilisation workbook?
+  expected_path: INVESTIGATION
+  reason_codes:
+  - EXHAUSTIVE
+  - VERSION_DIFF
+- id: route-053
+  corpus: corpus-synthetic-g4
+  question: Does the board memo's Q3 freight revenue agree with the restated freight revenue workbook?
+  expected_path: INVESTIGATION
+  reason_codes:
+  - CONFLICT_CHECK
+  - CROSS_DOCUMENT
+- id: route-054
+  corpus: corpus-synthetic
+  question: What was August revenue?
+  expected_path: CLARIFY
+  reason_codes:
+  - AMBIGUOUS_PERIOD
+  - MULTIPLE_FISCAL_YEARS
+- id: route-055
+  corpus: corpus-synthetic
+  question: What was total revenue in June?
+  expected_path: CLARIFY
+  reason_codes:
+  - AMBIGUOUS_PERIOD
+  - MULTIPLE_FISCAL_YEARS
+- id: route-056
+  corpus: corpus-synthetic
+  question: What was Q1 revenue?
+  expected_path: CLARIFY
+  reason_codes:
+  - AMBIGUOUS_PERIOD
+  - MULTIPLE_FISCAL_YEARS
+- id: route-057
+  corpus: corpus-synthetic
+  question: What was Marigold Chai revenue in September?
+  expected_path: CLARIFY
+  reason_codes:
+  - AMBIGUOUS_PERIOD
+  - MULTIPLE_FISCAL_YEARS
+- id: route-058
+  corpus: corpus-synthetic
+  question: What was Saffron Rusk revenue in Q1?
+  expected_path: CLARIFY
+  reason_codes:
+  - AMBIGUOUS_PERIOD
+  - MULTIPLE_FISCAL_YEARS
+- id: route-059
+  corpus: corpus-synthetic
+  question: What was total revenue for the first half?
+  expected_path: CLARIFY
+  reason_codes:
+  - AMBIGUOUS_PERIOD
+  - MULTIPLE_FISCAL_YEARS
+- id: route-060
+  corpus: corpus-synthetic-g1
+  question: What was total sales in March?
+  expected_path: CLARIFY
+  reason_codes:
+  - AMBIGUOUS_PERIOD
+  - MULTIPLE_YEARS
+- id: route-061
+  corpus: corpus-synthetic-g1
+  question: What was Cotton Yarn revenue in December?
+  expected_path: CLARIFY
+  reason_codes:
+  - AMBIGUOUS_PERIOD
+  - MULTIPLE_YEARS
+- id: route-062
+  corpus: corpus-synthetic-g1
+  question: What was Silk Blend revenue in Q4?
+  expected_path: CLARIFY
+  reason_codes:
+  - AMBIGUOUS_PERIOD
+  - MULTIPLE_YEARS
+- id: route-063
+  corpus: corpus-synthetic-g1
+  question: What were total sales last year?
+  expected_path: CLARIFY
+  reason_codes:
+  - RELATIVE_PERIOD_UNANCHORED
+- id: route-064
+  corpus: corpus-synthetic
+  question: What was the total?
+  expected_path: CLARIFY
+  reason_codes:
+  - MISSING_SCOPE
+- id: route-065
+  corpus: corpus-synthetic
+  question: What was the budget variance?
+  expected_path: CLARIFY
+  reason_codes:
+  - MISSING_SCOPE
+  - AMBIGUOUS_METRIC
+- id: route-066
+  corpus: corpus-synthetic
+  question: How much did it grow?
+  expected_path: CLARIFY
+  reason_codes:
+  - MISSING_REFERENT
+  - NO_HISTORY
+- id: route-067
+  corpus: corpus-synthetic-g1
+  question: And for the previous quarter?
+  expected_path: CLARIFY
+  reason_codes:
+  - MISSING_REFERENT
+  - NO_HISTORY
