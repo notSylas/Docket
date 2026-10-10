@@ -510,3 +510,56 @@ def test_source_manager_honors_injected_settings_for_default_retention(
     refreshed = manager.get_source(source.id)
     expected = before.replace(tzinfo=None) + timedelta(days=3)
     assert abs((refreshed.retention_deadline - expected).total_seconds()) < 5
+
+
+@pytest.mark.parametrize("reason", [None, "user_disconnected"])
+def test_reconnect_retains_source_and_authorization(manager, tmp_path, reason):
+    source = _register(manager, tmp_path)
+    manager.deactivate_source(source.id, reason=reason)
+    restored = manager.reconnect_source(source.id)
+    assert restored.id == source.id
+    assert restored.authorized_source_id == source.authorized_source_id
+    assert restored.status == SourceStatus.ACTIVE
+    assert restored.status_reason is None
+    assert len(manager.list_sources()) == 1
+
+
+def test_reconnect_requires_reachable_folder(manager, tmp_path):
+    source = _register(manager, tmp_path)
+    manager.deactivate_source(source.id)
+    Path(source.path).rmdir()
+    with pytest.raises(ValueError, match="unavailable"):
+        manager.reconnect_source(source.id)
+    assert manager.get_source(source.id).status == SourceStatus.REVOKED
+
+
+def test_reconnect_refuses_connector_access_loss(manager, tmp_path):
+    source = _register(manager, tmp_path)
+    manager.deactivate_source(source.id, reason="access_revoked")
+    with pytest.raises(ValueError, match="authorization"):
+        manager.reconnect_source(source.id)
+    assert manager.get_source(source.id).status == SourceStatus.REVOKED
+
+
+@pytest.mark.parametrize("status", [SourceStatus.ACTIVE, SourceStatus.TOMBSTONED, SourceStatus.HARD_DELETE_PENDING, SourceStatus.DELETED])
+def test_reconnect_does_not_resurrect_other_states(manager, session_factory, tmp_path, status):
+    source = _register(manager, tmp_path)
+    _set_status(session_factory, source.id, status)
+    with pytest.raises(InvalidSourceTransitionError):
+        manager.reconnect_source(source.id)
+    assert manager.get_source(source.id).status == status
+
+
+def test_reconnect_unknown_source(manager):
+    with pytest.raises(SourceNotFoundError):
+        manager.reconnect_source("does-not-exist")
+
+
+def test_reconnect_rejects_nonlocal_source(manager, session_factory, tmp_path):
+    source = _register(manager, tmp_path)
+    manager.deactivate_source(source.id)
+    with session_factory() as session:
+        session.get(Source, source.id).source_type = "remote_connector"
+        session.commit()
+    with pytest.raises(ValueError, match="local"):
+        manager.reconnect_source(source.id)

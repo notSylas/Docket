@@ -47,14 +47,15 @@ def test_mode_args():
     assert comps[0].start_position == -1
 
 
-def test_ingest_args_active_only():
+def test_ingest_args_include_recoverable_missing_sources():
     sources = [
         SourceInfo("src_a", "/data/a", "active"),
         SourceInfo("src_b", "/data/b", "revoked"),
         SourceInfo("src_c", "/data/c", "active"),
+        SourceInfo("src_d", "/data/d", "missing"),
     ]
     comps = complete(make(sources), "/ingest ")
-    assert [c.text for c in comps] == ["all", "src_a", "src_c"]
+    assert [c.text for c in comps] == ["all", "src_a", "src_c", "src_d"]
     assert comps[1].display_meta_text == "/data/a"
     comps = complete(make(sources), "/ingest src_a")
     assert [c.text for c in comps] == ["src_a"]
@@ -86,6 +87,15 @@ def test_remove_args_active_only_no_all():
     comps = complete(make(sources), "/remove ")
     assert [c.text for c in comps] == ["src_a"]
     assert comps[0].display_meta_text == "/data/a"
+
+
+def test_reconnect_completes_only_revoked_source_ids():
+    sources = [
+        SourceInfo("src_a", "/data/a", "active"),
+        SourceInfo("src_b", "/data/b", "revoked"),
+        SourceInfo("src_c", "/data/c", "deleted"),
+    ]
+    assert [c.text for c in complete(make(sources), "/reconnect ")] == ["src_b"]
 
 
 def test_show_args_citation_numbers():

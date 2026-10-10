@@ -349,7 +349,7 @@ def test_cli_plain_ingest_reports_stale_and_changes_nothing(env, cli, monkeypatc
     result = cli.invoke(app, ["ingest", env.source.id])
     assert result.exit_code == 0, result.output
     assert "2 already-ingested files have chunks from an older chunking recipe" in result.output
-    assert "docket ingest --rechunk" in result.output
+    assert "docket ingest --all --rechunk" in result.output
     after = {k: [c.id for c in _chunks(env, v.id)] for k, v in _versions(env).items()}
     assert after == before
 
@@ -359,6 +359,16 @@ def test_cli_plain_ingest_silent_when_nothing_stale(env, cli) -> None:
     result = cli.invoke(app, ["ingest", env.source.id])
     assert result.exit_code == 0
     assert "--rechunk" not in result.output
+
+
+def test_cli_all_recovers_missing_source(env, cli) -> None:
+    from docket.core.db.models import SourceStatus
+    _populate(env)
+    env.source_manager.mark_unreachable(env.source.id)
+    result = cli.invoke(app, ["ingest", "--all"])
+    assert result.exit_code == 0, result.output
+    assert "status=succeeded" in result.output
+    assert env.source_manager.get_source(env.source.id).status == SourceStatus.ACTIVE
 
 
 def test_cli_dry_run_then_rechunk(env, cli, monkeypatch) -> None:

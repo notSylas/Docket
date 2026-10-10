@@ -273,6 +273,35 @@ class SourceManager:
             session.add(source)
             session.commit()
 
+    def reconnect_source(self, source_id: str) -> Source:
+        """Explicitly reconnect a user-disconnected local folder, keeping its ID.
+
+        Legacy CLI disconnects recorded no reason. Access-loss signals and
+        non-local connectors require their own authorization flow; this entry
+        point must not restore those permissions or resurrect deleted data.
+        """
+        with self._session_factory() as session:
+            source = session.get(Source, source_id)
+            if source is None:
+                raise SourceNotFoundError(source_id)
+            if source.status != SourceStatus.REVOKED:
+                raise InvalidSourceTransitionError(source_id, source.status, SourceStatus.ACTIVE)
+            if source.source_type != "local_folder":
+                raise ValueError("only disconnected local folders can be reconnected here")
+            if source.status_reason not in (None, "user_disconnected"):
+                raise ValueError("source access must be restored through its authorization flow")
+            path = Path(source.path)
+            if not path.is_dir():
+                raise ValueError(f"source folder is unavailable: {path}")
+            authorization = session.get(AuthorizedSource, source.authorized_source_id)
+            if authorization is None or Path(authorization.scope_path) != path:
+                raise ValueError("source folder no longer matches its authorized path")
+            source.status = SourceStatus.ACTIVE
+            source.status_reason = None
+            session.commit()
+            session.refresh(source)
+            return source
+
     def sweep_expired_retentions(self, *, now: datetime | None = None) -> list[str]:
         """``TOMBSTONED -> HARD_DELETE_PENDING`` for every source whose
         ``retention_deadline`` has passed.

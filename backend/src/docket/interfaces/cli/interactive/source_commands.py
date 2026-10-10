@@ -17,7 +17,8 @@ from typing import Any
 
 from rich.table import Table
 
-from docket.services.sources.manager import SourceNotFoundError
+from docket.core.db.models import SourceStatus
+from docket.services.sources.manager import InvalidSourceTransitionError, SourceNotFoundError
 
 from .errors import handle_error
 
@@ -40,6 +41,9 @@ def cmd_add(session: Any, arg: str) -> None:
     if not arg:
         session.say("Usage: /add <folder>")
         return
+    # A single pasted path can be quoted without treating it as a shell command.
+    if len(arg) >= 2 and arg[0] == arg[-1] and arg[0] in ("'", '"'):
+        arg = arg[1:-1]
     _register(session, Path(arg).expanduser().resolve())
 
 
@@ -47,7 +51,13 @@ def _register(session: Any, path: Path) -> Any | None:
     """Register `path` (or report it's already registered). Returns the
     source id on success or when already registered, else None."""
     for existing in session.context.source_manager.list_sources():
-        if Path(existing.path) == path:
+        if Path(existing.path).expanduser().resolve() == path:
+            if getattr(existing, "status", SourceStatus.ACTIVE) == SourceStatus.REVOKED:
+                session.say(f"Source {existing.id} is disconnected. Use /reconnect {existing.id} to reconnect and index it.")
+                return None
+            if getattr(existing, "status", SourceStatus.ACTIVE) not in (SourceStatus.ACTIVE, SourceStatus.MISSING):
+                session.error(f"Source {existing.id} is {existing.status.value}; it cannot be registered again here.")
+                return None
             session.say(f"Already registered: {existing.id}")
             return existing.id
     try:
@@ -103,15 +113,36 @@ def cmd_remove(session: Any, arg: str) -> None:
     if match is None:
         session.error(f"Error: source not found: {arg}")
         return
+    if match.status == SourceStatus.REVOKED:
+        session.say(f"Source {arg} is already disconnected.")
+        return
     if not _confirm(session, f"Remove source {arg} ({match.path})? [y/N] "):
         session.say("Cancelled.", style="dim")
         return
     try:
-        manager.deactivate_source(arg)
-    except SourceNotFoundError:
-        session.error(f"Error: source not found: {arg}")
+        manager.deactivate_source(arg, reason="user_disconnected")
+    except (SourceNotFoundError, InvalidSourceTransitionError) as exc:
+        session.error(f"Error: {exc}")
         return
     finally:
+        session.invalidate_query_service()
         session.state.refresh_sources(manager)
         session.sync_state()
     session.say(f"Removed {arg}. Its evidence is no longer searched.")
+
+
+def cmd_reconnect(session: Any, arg: str) -> None:
+    if not arg:
+        session.say("Usage: /reconnect <source-id>")
+        return
+    manager = session.context.source_manager
+    try:
+        source = manager.reconnect_source(arg)
+    except (SourceNotFoundError, InvalidSourceTransitionError, ValueError) as exc:
+        session.error(f"Error: {exc}")
+        return
+    session.invalidate_query_service()
+    session.state.refresh_sources(manager)
+    session.sync_state()
+    session.say(f"Reconnected {source.id}. Starting indexing.")
+    session.cmd_ingest(source.id)

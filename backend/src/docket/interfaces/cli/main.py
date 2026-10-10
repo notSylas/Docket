@@ -154,14 +154,14 @@ def _stale_notice(count: int) -> str:
     noun = "file has" if count == 1 else "files have"
     return (
         f"{count} already-ingested {noun} chunks from an older chunking recipe; "
-        "run `docket ingest --rechunk` to update."
+        "run `docket ingest --all --rechunk` to update."
     )
 
 
 @app.command("ingest")
 def ingest(
     source_id: str = typer.Argument(None, help="Source id to ingest."),
-    all_sources: bool = typer.Option(False, "--all", help="Ingest every active source."),
+    all_sources: bool = typer.Option(False, "--all", help="Ingest active and temporarily missing sources."),
     rechunk: bool = typer.Option(
         False,
         "--rechunk",
@@ -172,7 +172,7 @@ def ingest(
         False, "--dry-run", help="With --rechunk: list what would be re-chunked, change nothing."
     ),
 ) -> None:
-    """Run (incremental) ingestion for one source, or every active source."""
+    """Run incremental ingestion, including recovery of temporarily missing sources."""
     if bool(source_id) == bool(all_sources):
         typer.echo("Error: pass exactly one of a source_id or --all.", err=True)
         raise typer.Exit(code=1)
@@ -186,10 +186,10 @@ def ingest(
         target_ids = [
             source.id
             for source in context.source_manager.list_sources()
-            if source.status == SourceStatus.ACTIVE
+            if source.status in (SourceStatus.ACTIVE, SourceStatus.MISSING)
         ]
         if not target_ids:
-            typer.echo("No active sources to ingest.")
+            typer.echo("No active or missing sources to ingest.")
             raise typer.Exit(code=0)
     else:
         target_ids = [source_id]

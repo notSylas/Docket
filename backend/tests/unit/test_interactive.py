@@ -13,6 +13,7 @@ from docket.infra.inference.gateway import InferenceUnavailableError
 from docket.services.ingestion.pipeline import FileIngestResult, IngestionJobResult, SourceNotFoundError
 from docket.services.query.classifier import QueryMode
 from docket.services.query.service import Citation, QueryResult
+from docket.services.sources.readiness import SearchReadiness
 from docket.infra.retrieval.resolver import ChunkNotFoundError, ResolvedEvidence
 
 
@@ -44,6 +45,9 @@ class FakePipeline:
     def __init__(self, writer):
         self.writer = writer
 
+    def find_stale_versions(self, source_id):
+        return []
+
     def run_ingestion_for_source(self, source_id, progress=None):
         if source_id == "bogus":
             raise SourceNotFoundError(source_id)
@@ -65,6 +69,9 @@ def ctx(tmp_path, monkeypatch):
     writer = FakeWriter()
     context.__dict__["vector_writer"] = writer
     context.__dict__["pipeline"] = FakePipeline(writer)
+    # These are session/rendering tests; actual DB eligibility has its own
+    # tests in test_readiness.py and the real-readiness cases below.
+    context.__dict__["readiness"] = SimpleNamespace(snapshot=lambda: SearchReadiness(1, 3))
     return context
 
 
@@ -153,7 +160,7 @@ def test_add_good_and_bad(ctx, tmp_path):
 
 def test_ingest_paths(ctx, tmp_path):
     out, _ = drive(ctx, ["/ingest"])
-    assert "No active sources" in out
+    assert "No active or missing sources" in out
     folder = tmp_path / "docs"
     folder.mkdir()
     src = ctx.source_manager.register_source(folder)
@@ -288,7 +295,7 @@ def test_exit_variants(ctx, cmd):
 def test_prefix_and_alias_dispatch(ctx):
     out, _ = drive(ctx, ["/ls", "/sou", "/ing"])
     assert "No sources registered" in out
-    assert "No active sources to ingest" in out
+    assert "No active or missing sources to ingest" in out
 
 
 def test_bare_help_phrase_is_question(ctx):
@@ -628,3 +635,156 @@ def test_first_run_off_by_default(ctx, monkeypatch, tmp_path):
     monkeypatch.chdir(work)
     drive(ctx, ["y"])
     assert ctx.source_manager.list_sources() == []
+
+
+def test_add_disconnected_path_points_to_reconnect(ctx, tmp_path):
+    folder = tmp_path / "disconnected"
+    folder.mkdir()
+    source = ctx.source_manager.register_source(folder)
+    ctx.source_manager.deactivate_source(source.id, reason="user_disconnected")
+    out, _ = drive(ctx, [f'/add "{folder}"', f"/reconnect {source.id}", "/sources"])
+    assert f"Use /reconnect {source.id}" in out
+    assert "Reconnected" in out and "1 ingested" in out
+    assert len(ctx.source_manager.list_sources()) == 1
+    assert ctx.source_manager.get_source(source.id).status.value == "active"
+
+
+def test_reconnect_invalid_source_is_recoverable(ctx):
+    out, _ = drive(ctx, ["/reconnect", "/reconnect bogus", "/help"])
+    assert "Usage: /reconnect" in out
+    assert "source not found: bogus" in out
+    assert "Commands:" in out
+
+
+def test_remove_does_not_relabel_an_access_revocation(ctx, tmp_path):
+    source = ctx.source_manager.register_source(tmp_path)
+    ctx.source_manager.deactivate_source(source.id, reason="access_revoked")
+    out, _ = drive(ctx, [f"/remove {source.id}", f"/reconnect {source.id}"])
+    assert "already disconnected" in out
+    assert "authorization flow" in out
+    assert ctx.source_manager.get_source(source.id).status_reason == "access_revoked"
+
+
+def test_ingest_all_includes_missing_and_excludes_disconnected(ctx, tmp_path):
+    from docket.core.db.models import SourceStatus
+    missing_folder = tmp_path / "missing"
+    missing_folder.mkdir()
+    missing = ctx.source_manager.register_source(missing_folder)
+    ctx.source_manager.mark_unreachable(missing.id)
+    other = ctx.source_manager.register_source(tmp_path)
+    ctx.source_manager.deactivate_source(other.id)
+    out, _ = drive(ctx, ["/ingest all"])
+    assert f"{missing.id}: 1 ingested" in out
+    assert f"{other.id}: 1 ingested" not in out
+    # The fake pipeline doesn't recover lifecycle status; the real pipeline does.
+    assert ctx.source_manager.get_source(other.id).status == SourceStatus.REVOKED
+
+
+def test_ingest_unavailable_folder_does_not_report_empty(ctx, tmp_path):
+    source = ctx.source_manager.register_source(tmp_path)
+
+    class MissingPipeline:
+        def run_ingestion_for_source(self, source_id, progress=None):
+            ctx.source_manager.mark_unreachable(source_id)
+            return IngestionJobResult(source_id, "job", "failed", 0, 0, [])
+
+        def find_stale_versions(self, source_id):
+            return []
+
+    ctx.__dict__["pipeline"] = MissingPipeline()
+    out, _ = drive(ctx, [f"/ingest {source.id}"])
+    assert "Source folder unavailable" in out
+    assert "No supported files found" not in out
+
+
+class ScriptedService(FakeService):
+    def __init__(self, outcomes):
+        super().__init__()
+        self.outcomes = iter(outcomes)
+
+    def ask(self, *args, **kwargs):
+        self.error = next(self.outcomes, None)
+        return super().ask(*args, **kwargs)
+
+
+def test_retry_targets_failed_first_question(ctx):
+    service = ScriptedService([RuntimeError("failed"), None, None])
+    _, service = drive(ctx, ["q1", "/retry", "q2"], service=service)
+    assert [c["question"] for c in service.calls] == ["q1", "q1", "q2"]
+    assert [t.question for t in service.calls[-1]["history"]] == ["q1"]
+
+
+def test_failed_retry_preserves_previous_success(ctx):
+    service = ScriptedService([None, RuntimeError("failed retry"), None])
+    _, service = drive(ctx, ["q1", "/retry", "q2"], service=service)
+    assert service.calls[1]["history"] == []
+    assert [t.question for t in service.calls[-1]["history"]] == ["q1"]
+
+
+def test_retry_failed_new_question_keeps_earlier_context(ctx):
+    service = ScriptedService([None, RuntimeError("failed new"), None, None])
+    _, service = drive(ctx, ["q1", "q2", "/retry", "q3"], service=service)
+    assert [c["question"] for c in service.calls] == ["q1", "q2", "q2", "q3"]
+    assert [t.question for t in service.calls[2]["history"]] == ["q1"]
+    assert [t.question for t in service.calls[-1]["history"]] == ["q1", "q2"]
+
+
+def test_clear_resets_failed_attempt(ctx):
+    out, service = drive(ctx, ["q1", "/clear", "/retry"], service=FakeService(error=RuntimeError("failed")))
+    assert len(service.calls) == 1
+    assert "Nothing to retry yet" in out
+
+
+def test_show_displays_stored_location(tctx):
+    class LocatedResolver(FakeResolver):
+        def resolve(self, chunk_id):
+            from dataclasses import replace
+            return replace(super().resolve(chunk_id), location="Location: a.docx > page 3")
+
+    tctx.__dict__["resolver"] = LocatedResolver()
+    out, _ = drive(tctx, ["q", "/show 2"], service=TaggedService())
+    assert "Location: a.docx > page 3" in out
+
+
+def test_empty_readiness_does_not_query_existing_table(ctx):
+    ctx.__dict__.pop("readiness")
+    state = SessionState()
+    out, service = drive(ctx, ["q", "/status"], state=state)
+    assert "Nothing indexed yet" in out
+    assert "0 files / 0 chunks" in out
+    assert state.indexed is False
+    assert service.calls == []
+
+
+def test_readiness_failure_is_not_presented_as_an_empty_index(ctx):
+    def unavailable():
+        raise RuntimeError("database unavailable")
+
+    ctx.__dict__["readiness"] = SimpleNamespace(snapshot=unavailable)
+    out, service = drive(ctx, ["q", "/status"])
+    assert "Could not check search readiness" in out
+    assert "Readiness unavailable" in out
+    assert "Nothing indexed yet" not in out
+    assert "0 files / 0 chunks" not in out
+    assert service.calls == []
+
+
+def test_ingestion_invalidates_cached_service(ctx, tmp_path):
+    source = ctx.source_manager.register_source(tmp_path)
+    created = []
+    from docket.interfaces.cli.interactive.session import _Session
+    from docket.interfaces.cli.interactive.reader import CallableReader
+
+    def factory(context, table):
+        service = FakeService()
+        created.append(service)
+        return service
+
+    session = _Session(ctx, CallableReader(lambda p: ""), Console(file=io.StringIO()), factory)
+    session.command("/retry")
+    from docket.interfaces.cli.interactive import query_flow
+    query_flow.ask(session, "before")
+    session.cmd_ingest(source.id)
+    query_flow.ask(session, "after")
+    assert len(created) == 2
+    assert created[1].calls[0]["history"][0].question == "before"
