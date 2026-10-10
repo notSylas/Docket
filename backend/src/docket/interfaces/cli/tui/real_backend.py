@@ -18,6 +18,7 @@ Rules this module follows (see Upgrade/16-terminal-ui-wiring.md):
 from __future__ import annotations
 
 import os
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -37,7 +38,13 @@ from docket.core.db.models import (
 )
 from docket.infra.retrieval.resolver import ChunkNotFoundError, ResolvedEvidence
 from docket.interfaces.cli.interactive.render import number_citations
-from docket.interfaces.cli.quiet import condense_error, display_path, ignore_notices, quiet_ingest
+from docket.interfaces.cli.quiet import (
+    condense_error,
+    display_path,
+    ignore_notices,
+    quiet_ingest,
+    stale_recipe_notice,
+)
 from docket.interfaces.cli.tui import fake_data as fd
 from docket.interfaces.cli.tui.model import INDEXING_NOTE
 from docket.services.sources.resolve import display_names
@@ -53,6 +60,7 @@ from docket.interfaces.cli.tui.backend import (
     IndexOutcome,
     IndexProgress,
     JobRecord,
+    NarrowPlan,
     ReadinessItem,
     ReadinessReport,
     SourceView,
@@ -60,6 +68,7 @@ from docket.interfaces.cli.tui.backend import (
     World,
     describe_error,
 )
+from docket.services.ingestion.failure import plain_failure_reason
 from docket.services.ingestion.pipeline import SUPPORTED_EXTENSIONS, SourceNotActiveError
 from docket.services.query.classifier import QueryMode
 from docket.services.query.conversation import ConversationTurn
@@ -67,6 +76,7 @@ from docket.services.sources.manager import (
     InvalidSourceTransitionError,
     SourceCoveredError,
     SourceNotFoundError,
+    anchored_subfolder_name,
 )
 
 _STATUS_MAP = {
@@ -114,8 +124,8 @@ class RealBackend:
         "Appearance and answering mode apply to this session only; nothing is saved. "
         "The answer model and thinking level are not connected yet."
     )
-    jobs_hint = "per-file results are not stored yet"
-    jobs_note = "Per-file results are not stored yet."
+    jobs_hint = "files that need attention are listed under each job"
+    jobs_note = ""
     stage_search = "Searching and writing answer"
     stage_citations = "Checking citations"
     intro_notice = "Type a question, or press F1 for commands."
@@ -142,6 +152,10 @@ class RealBackend:
 
         self._health = health_check
         self._missing: frozenset[str] = frozenset()
+        # One lock for building the pipeline (and so the document parser): a
+        # health check on one worker and an indexing job on another must not
+        # each construct their own.
+        self._build_lock = threading.Lock()
         self.data_dir_label = str(settings.data_dir)
         self.embed_model = str(settings.embed_model)
         self.default_model = str(settings.gen_model)
@@ -162,8 +176,7 @@ class RealBackend:
             ("jobs", "show indexing jobs and results", ""),
             ("settings", "answering, appearance, history, system", ""),
             ("details", "details of the latest answer", ""),
-            ("rechunk", "update stored chunks", "Not available in this screen yet. Use: docket ingest --all --rechunk"),
-            ("reindex", "rebuild the search index", "Not available in this screen yet. Use: docket reindex"),
+            ("update", "bring the library up to date", ""),
         )
 
     # -- models ------------------------------------------------------------
@@ -191,6 +204,7 @@ class RealBackend:
                     EvidenceVersion.status,
                     EvidenceVersion.observed_at,
                     func.count(Chunk.id),
+                    EvidenceVersion.failure_reason,
                 )
                 .outerjoin(Chunk, Chunk.evidence_version_id == EvidenceVersion.id)
                 .where(EvidenceVersion.status != VersionStatus.SUPERSEDED)
@@ -204,14 +218,14 @@ class RealBackend:
                 ).all()
             )
         names = self._names(sources)
-        latest: dict[tuple[str, str], tuple[datetime, VersionStatus, int]] = {}
-        for source_id, file_path, status, observed, n_chunks in versions:
+        latest: dict[tuple[str, str], tuple[datetime, VersionStatus, int, str | None]] = {}
+        for source_id, file_path, status, observed, n_chunks, reason in versions:
             key = (source_id, file_path or "")
             if key not in latest or observed >= latest[key][0]:
-                latest[key] = (observed, status, int(n_chunks))
+                latest[key] = (observed, status, int(n_chunks), reason)
         by_source: dict[str, list[FileView]] = {}
         roots = {s.id: s.path for s in sources}
-        for (source_id, file_path), (_obs, status, n_chunks) in sorted(latest.items(), key=lambda kv: kv[0]):
+        for (source_id, file_path), (_obs, status, n_chunks, reason) in sorted(latest.items(), key=lambda kv: kv[0]):
             root = roots.get(source_id)
             if root is None:
                 continue
@@ -219,7 +233,7 @@ class RealBackend:
             if status == VersionStatus.READY:
                 fv = FileView(rel, Path(rel).suffix.lstrip(".").lower(), fd.FILE_READY if n_chunks > 0 else fd.FILE_EMPTY, n_chunks)
             elif status == VersionStatus.FAILED:
-                fv = FileView(rel, Path(rel).suffix.lstrip(".").lower(), fd.FILE_FAILED, 0, "reason not stored; refresh to see it again")
+                fv = FileView(rel, Path(rel).suffix.lstrip(".").lower(), fd.FILE_FAILED, 0, plain_failure_reason(reason, rel))
             else:
                 fv = FileView(rel, Path(rel).suffix.lstrip(".").lower(), fd.FILE_PENDING, 0)
             by_source.setdefault(source_id, []).append(fv)
@@ -296,6 +310,10 @@ class RealBackend:
             sources = list(session.execute(select(Source)).scalars().all())
             jobs = list(session.execute(select(IngestionJob).order_by(IngestionJob.started_at.desc()).limit(_MAX_JOBS)).scalars().all())
         names = self._names(sources)
+        try:
+            failed_files = self.failed_file_lines()
+        except Exception:  # noqa: BLE001 -- details are a nicety
+            failed_files = {}
         out: list[JobRecord] = []
         for job in jobs:
             if job.status in (IngestionJobStatus.RUNNING, IngestionJobStatus.PENDING):
@@ -323,7 +341,56 @@ class RealBackend:
                 summary = "Stopped when the process exited; refresh to finish."
             elif job.error and state != "Completed":
                 summary = (summary + " — " if summary else "") + condense_error(job.error)
-            out.append(JobRecord(names.get(job.source_id, job.source_id), state, _local_time(job.finished_at or job.started_at), summary))
+            details: tuple[str, ...] = ()
+            if state in ("Partial", "Failed"):
+                details = failed_files.get(job.source_id, ())
+            out.append(
+                JobRecord(
+                    names.get(job.source_id, job.source_id),
+                    state,
+                    _local_time(job.finished_at or job.started_at),
+                    summary,
+                    details,
+                )
+            )
+        return out
+
+    def failed_file_lines(self, source_id: str | None = None, limit: int = 5) -> dict[str, tuple[str, ...]]:
+        """Per source: the files whose latest version is FAILED, each as
+        "relative/path: plain reason" (at most `limit` lines, then a count)."""
+        sf = self._ctx.session_factory
+        with sf() as session:
+            q = (
+                select(
+                    EvidenceVersion.source_id,
+                    EvidenceVersion.file_path,
+                    EvidenceVersion.status,
+                    EvidenceVersion.observed_at,
+                    EvidenceVersion.failure_reason,
+                    Source.path,
+                )
+                .join(Source, Source.id == EvidenceVersion.source_id)
+                .where(EvidenceVersion.status != VersionStatus.SUPERSEDED)
+            )
+            if source_id is not None:
+                q = q.where(EvidenceVersion.source_id == source_id)
+            rows = session.execute(q).all()
+        latest: dict[tuple[str, str], tuple[datetime, VersionStatus, str | None, str]] = {}
+        for sid, file_path, status, observed, reason, root in rows:
+            key = (sid, file_path or "")
+            if key not in latest or observed >= latest[key][0]:
+                latest[key] = (observed, status, reason, root)
+        grouped: dict[str, list[str]] = {}
+        for (sid, file_path), (_o, status, reason, root) in sorted(latest.items()):
+            if status != VersionStatus.FAILED or not file_path:
+                continue
+            rel = display_path(Path(file_path), Path(root))
+            grouped.setdefault(sid, []).append(f"{rel}: {plain_failure_reason(reason, rel)}")
+        out: dict[str, tuple[str, ...]] = {}
+        for sid, lines in grouped.items():
+            if len(lines) > limit:
+                lines = [*lines[:limit], f"and {len(lines) - limit} more"]
+            out[sid] = tuple(lines)
         return out
 
     def system_rows(self, world: World, readiness: ReadinessReport) -> list[tuple[str, str]]:
@@ -507,7 +574,7 @@ class RealBackend:
             if result is not None:
                 if result.status == "failed":
                     failed += 1
-                    pair = (current, condense_error(result.error))
+                    pair = (current, plain_failure_reason(condense_error(result.error), current))
                     if pair not in seen:
                         seen.add(pair)
                         failures.append(pair)
@@ -525,7 +592,7 @@ class RealBackend:
             on_progress(snapshot())
         try:
             with quiet_ingest():
-                pipeline = ctx.pipeline
+                pipeline = self._pipeline()
                 current = ""
                 on_progress(snapshot())
                 result = pipeline.run_ingestion_for_source(source_id, progress=on_event)
@@ -559,13 +626,152 @@ class RealBackend:
         try:
             stale = len(ctx.pipeline.find_stale_versions(source_id))
             if stale:
-                notices.append(
-                    f"{stale} already-ingested file(s) have chunks from an older recipe; "
-                    "run `docket ingest --all --rechunk` to update."
-                )
+                notices.append(stale_recipe_notice(stale))
         except Exception:  # noqa: BLE001
             pass
         return IndexOutcome("done", final, notices=tuple(notices))
+
+    def _pipeline(self) -> Any:
+        """The pipeline, built at most once even when a job and a health
+        check ask for it at the same moment."""
+        with self._build_lock:
+            return self._ctx.pipeline
+
+    # -- self-maintenance --------------------------------------------------
+    def maintenance_plan(self) -> Any:
+        ctx = self._ctx
+        try:
+            has_files = ctx.readiness.snapshot().files > 0
+        except Exception:  # noqa: BLE001
+            has_files = False
+        if has_files and "pipeline" not in vars(ctx):
+            try:
+                self._pipeline()
+            except Exception:  # noqa: BLE001 -- plan() copes step by step
+                pass
+        return ctx.maintenance.plan()
+
+    def run_maintenance(
+        self,
+        plan: Any,
+        on_progress: IndexCallback,
+        should_stop: Callable[[], bool],
+        *,
+        source_ids: list[str] | None = None,
+        kinds: frozenset[str] | None = None,
+    ) -> IndexOutcome:
+        ctx = self._ctx
+        maintenance = ctx.maintenance
+        if plan is None:
+            plan = maintenance.plan(source_ids)
+        if kinds is not None:
+            plan = plan.only(kinds)
+        last = {"done": 0, "total": 0}
+
+        def on_event(p: Any) -> None:
+            last["done"], last["total"] = p.done, p.total
+            on_progress(IndexProgress(p.done, p.total, p.current, indexed=p.done, stage=p.label))
+
+        if plan.empty:
+            return IndexOutcome("done", IndexProgress(), notices=("Everything is up to date.",))
+        try:
+            with quiet_ingest():
+                self._pipeline()
+                result = maintenance.run(plan, progress=on_event, stop=should_stop)
+        except (SourceNotFoundError, SourceNotActiveError) as exc:
+            return IndexOutcome("failed", IndexProgress(), reason=f"Error: {_first_line(exc)}")
+        done = result.pruned + result.files_read + result.rechunked + (1 if result.reindexed else 0)
+        failures = tuple(
+            (display_path(Path(path), None), plain_failure_reason(condense_error(reason), path))
+            for path, reason in result.failures
+        )
+        total = max(last["total"], last["done"])
+        final = IndexProgress(total, total, "", indexed=done, failed=result.files_failed, failures=failures)
+        notices = (result.summary(),)
+        if result.stopped:
+            return IndexOutcome("stopped", final, notices=notices)
+        if (result.errors or result.reindex_error) and done == 0:
+            reason = result.reindex_error or result.errors[0]
+            return IndexOutcome("failed", final, reason=reason)
+        return IndexOutcome("done", final, notices=notices)
+
+    def ignore_file(self, source_id: str, rel_path: str) -> int:
+        try:
+            return self._ctx.maintenance.ignore_file(source_id, rel_path)
+        except (SourceNotFoundError, ValueError) as exc:
+            raise BackendError(f"Error: {exc}") from exc
+
+    def retry_file(
+        self,
+        source_id: str,
+        rel_path: str,
+        on_progress: IndexCallback,
+        should_stop: Callable[[], bool],
+    ) -> IndexOutcome:
+        ctx = self._ctx
+        name = Path(rel_path).name
+        on_progress(IndexProgress(0, 1, name, stage="Reading the file again"))
+        try:
+            with quiet_ingest():
+                self._pipeline()
+                job = ctx.maintenance.retry_file(source_id, rel_path)
+        except (SourceNotFoundError, SourceNotActiveError) as exc:
+            return IndexOutcome("failed", IndexProgress(), reason=f"Error: {_first_line(exc)}")
+        result = job.file_results[0] if job.file_results else None
+        if result is not None and result.status == "failed":
+            reason = plain_failure_reason(condense_error(result.error), rel_path)
+            final = IndexProgress(1, 1, "", failed=1, failures=((rel_path, reason),))
+            return IndexOutcome("done", final, notices=(f"{name} still could not be read. {reason}",))
+        final = IndexProgress(1, 1, "", indexed=1)
+        return IndexOutcome("done", final, notices=(f"{name} was read and is searchable now.",))
+
+    def narrow_plan(self, source_id: str) -> NarrowPlan | None:
+        from docket.services.ingestion.ignore import parse_rules_json
+        from docket.services.sources.scan import recent_seconds_per_file, scan_folder
+        from docket.services.sources.session import (
+            KIND_NEW,
+            SessionPlan,
+            broad_location_roots,
+            folder_label,
+        )
+
+        ctx = self._ctx
+        try:
+            source = ctx.source_manager.get_source(source_id)
+        except SourceNotFoundError as exc:
+            raise BackendError(f"Error: {exc}") from exc
+        root = Path(source.path)
+        if not root.is_dir():
+            raise BackendError(f"The folder cannot be reached at {root}.")
+        rules = parse_rules_json(source.rules_json)
+        left_out = [n for n in (anchored_subfolder_name(p) for p in rules["exclude"]) if n]
+        scan_rules = {
+            **rules,
+            "exclude": [p for p in rules["exclude"] if anchored_subfolder_name(p) is None],
+        }
+        scan = scan_folder(
+            root,
+            extra_rules=scan_rules,
+            seconds_per_file=recent_seconds_per_file(ctx.session_factory),
+            well_known_broad=broad_location_roots(),
+        )
+        name = self._names(ctx.source_manager.list_sources()).get(source.id, root.name)
+        plan = SessionPlan(
+            KIND_NEW, folder=root, name=name or folder_label(root), scan=scan, needs_preview=True
+        )
+        if len(scan.subfolders) < 2 and not scan.broad:
+            return NarrowPlan(
+                source_id,
+                plan,
+                reason=f"{name} is small and has little to leave out, so there is nothing to narrow.",
+            )
+        return NarrowPlan(source_id, plan, tuple(left_out))
+
+    def narrow_source(self, source_id: str, keep: tuple[str, ...], universe: tuple[str, ...]) -> None:
+        try:
+            self._ctx.source_manager.narrow_source(source_id, keep, all_subfolders=universe)
+        except (SourceNotFoundError, ValueError) as exc:
+            raise BackendError(f"Error: {exc}") from exc
 
     # -- asking --------------------------------------------------------------
     def ask(self, request: AskRequest, on_stage: StageCallback, scope_label: str, mode_label: str) -> AskOutcome:

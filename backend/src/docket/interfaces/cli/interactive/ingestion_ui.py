@@ -12,7 +12,12 @@ from pathlib import Path
 from typing import Any
 
 from docket.core.db.models import SourceStatus
-from docket.interfaces.cli.quiet import FailureReporter, ignore_notices, quiet_ingest
+from docket.interfaces.cli.quiet import (
+    FailureReporter,
+    ignore_notices,
+    quiet_ingest,
+    stale_recipe_notice,
+)
 from docket.services.ingestion.pipeline import SUPPORTED_EXTENSIONS, ProgressEvent, SourceNotActiveError
 from docket.services.sources.manager import SourceNotFoundError
 from docket.services.sources.resolve import SourceRefError, resolve_source
@@ -83,11 +88,43 @@ def _ingest_targets(session: Any, target_ids: list[str]) -> None:
             session.say(notice, style="dim")
         stale = len(pipeline.find_stale_versions(target_id))
         if stale:
-            session.say(
-                f"{stale} already-ingested file(s) have chunks from an older recipe; "
-                "run `docket ingest --all --rechunk` to update.",
-                style="dim",
-            )
+            session.say(stale_recipe_notice(stale), style="dim")
+    offer_update(session, target_ids)
+
+
+def offer_update(session: Any, source_ids: list[str] | None = None) -> None:
+    """After an ingest: say plainly what is out of date and, with one y/N,
+    bring it up to date (prune, refresh, re-prepare, rebuild the index)."""
+    from docket.interfaces.cli.interactive.source_commands import _confirm
+
+    maintenance = getattr(session.context, "maintenance", None)
+    if maintenance is None:
+        return
+    try:
+        # The sources were just read, so "not read yet" cannot apply.
+        plan = maintenance.plan(source_ids).only({"prune", "rechunk", "reindex"})
+    except Exception:  # noqa: BLE001 -- an offer must never break the ingest summary
+        return
+    if plan.empty:
+        return
+    for step in plan.steps:
+        if step.kind != "prune":  # the ingest notices already said so
+            session.say(step.label, style="dim")
+    if not _confirm(session, f"{plan.headline}. Update now? [y/N] "):
+        return
+    try:
+        with quiet_ingest(), session.console.status("Updating...") as status:
+
+            def on_progress(p: Any) -> None:
+                where = f" {p.current}" if p.current else ""
+                status.update(f"{p.label}{where} ({p.done}/{p.total})")
+
+            result = maintenance.run(plan, progress=on_progress)
+    except KeyboardInterrupt:
+        session.say()
+        session.say("(interrupted)", style="dim")
+        return
+    session.say(result.summary())
 
 
 def _source_root(session: Any, target_id: str) -> Path | None:

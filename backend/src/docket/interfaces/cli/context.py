@@ -51,6 +51,7 @@ from docket.infra.parsing.recipes import ChunkRecipe, docling_recipe
 from docket.infra.retrieval.resolver import EvidenceResolver
 from docket.services.sources.manager import SourceManager
 from docket.services.sources.readiness import ReadinessService
+from docket.services.sources.maintenance import LibraryMaintenance
 from docket.services.sources.prune import SourcePruneService
 from docket.services.sources.purge import SourcePurgeService
 
@@ -289,6 +290,34 @@ class AppContext:
             self.evidence_manager,
             self.index_manager,
             enabled=self.settings.ingest_ignore_enabled,
+        )
+
+    @cached_property
+    def maintenance(self) -> LibraryMaintenance:
+        """Self-maintenance over the existing services. The pipeline (and so
+        the document parser) is only built when a plan or run needs it."""
+
+        def reindex() -> Any:
+            from docket.infra.index.reindex import reindex as run_reindex
+
+            return run_reindex(
+                engine=self.engine,
+                db_path=self.settings.lancedb_path,
+                gateway=self.gateway,
+                manifest_path=self.settings.index_manifest_path,
+                embed_model=self.settings.embed_model,
+                batch_size=self.settings.embed_batch_size,
+                tokenizer=get_token_counter().name,
+            )
+
+        return LibraryMaintenance(
+            session_factory=self.session_factory,
+            source_manager=self.source_manager,
+            prune_service=self.prune_service,
+            pipeline=lambda: self.pipeline,
+            reindex=reindex,
+            manifest_path=self.settings.index_manifest_path,
+            embed_model=str(self.settings.embed_model),
         )
 
     @cached_property

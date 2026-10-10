@@ -348,8 +348,8 @@ def test_cli_plain_ingest_reports_stale_and_changes_nothing(env, cli, monkeypatc
     before = {k: [c.id for c in _chunks(env, v.id)] for k, v in _versions(env).items()}
     result = cli.invoke(app, ["ingest", env.source.id])
     assert result.exit_code == 0, result.output
-    assert "2 already-ingested files have chunks from an older chunking recipe" in result.output
-    assert "docket ingest --all --rechunk" in result.output
+    assert "2 already-read files were prepared with an older recipe" in result.output
+    assert "docket " not in result.output  # a statement, never a command to run
     after = {k: [c.id for c in _chunks(env, v.id)] for k, v in _versions(env).items()}
     assert after == before
 

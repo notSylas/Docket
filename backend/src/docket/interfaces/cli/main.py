@@ -16,7 +16,14 @@ from docket.infra.inference.gateway import InferenceError
 from docket.infra.parsing.tokens import get_token_counter
 from docket.interfaces.cli.context import build_context
 from docket.interfaces.cli import launcher
-from docket.interfaces.cli.quiet import FailureReporter, condense_error, ignore_notices, quiet_ingest
+from docket.interfaces.cli.quiet import (
+    FailureReporter,
+    condense_error,
+    ignore_notices,
+    index_format_notice,
+    quiet_ingest,
+    stale_recipe_notice,
+)
 from docket.interfaces.cli.interactive import run_session
 from docket.core.db.models import SourceStatus
 from docket.services.ingestion.pipeline import SourceNotActiveError
@@ -370,14 +377,6 @@ def sources_prune(
 # -- ingest --------------------------------------------------------------
 
 
-def _stale_notice(count: int) -> str:
-    noun = "file has" if count == 1 else "files have"
-    return (
-        f"{count} already-ingested {noun} chunks from an older chunking recipe; "
-        "run `docket ingest --all --rechunk` to update."
-    )
-
-
 @app.command("ingest")
 def ingest(
     source_id: str = typer.Argument(None, help="Source name, list number or id to ingest."),
@@ -452,7 +451,7 @@ def ingest(
         stale_total += len(context.pipeline.find_stale_versions(target_id))
 
     if stale_total:
-        typer.echo(_stale_notice(stale_total))
+        typer.echo(typer.style(stale_recipe_notice(stale_total), dim=True))
 
     raise typer.Exit(code=exit_code)
 
@@ -493,12 +492,101 @@ def _rechunk_sources(context, target_ids: list[str], dry_run: bool) -> int:
 
         manifest = read_manifest(context.settings.index_manifest_path)
         if manifest is not None and manifest.index_text_version < INDEX_TEXT_VERSION:
-            typer.echo(
-                "Other index rows still lack the chunk context prefix "
-                f"(index_text_version {manifest.index_text_version} < {INDEX_TEXT_VERSION}); "
-                "run `docket reindex` to update them."
-            )
+            typer.echo(typer.style(index_format_notice(), dim=True))
     return exit_code
+
+
+# -- sync ----------------------------------------------------------------
+
+
+def _interactive() -> bool:
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _print_plan(plan) -> None:
+    typer.echo(plan.headline + ".")
+    for step in plan.steps:
+        typer.echo(f"  - {step.label}")
+        for rel in step.detail[:3]:
+            typer.echo(typer.style(f"      {rel}", dim=True))
+        if step.count > len(step.detail) > 0 and step.kind in ("prune", "rechunk"):
+            typer.echo(typer.style(f"      and {step.count - len(step.detail)} more", dim=True))
+
+
+def _run_plan(context, plan, label: str) -> bool:
+    """Run `plan`, printing one line per stage; True when it finished cleanly."""
+    if plan.empty:
+        return True
+    seen: set[str] = set()
+
+    def on_progress(p) -> None:
+        key = f"{p.stage}:{p.source_name}"
+        if key in seen:
+            return
+        seen.add(key)
+        where = f" ({p.source_name})" if p.source_name else ""
+        typer.echo(f"{p.label}{where}...")
+
+    try:
+        with quiet_ingest():
+            result = context.maintenance.run(plan, progress=on_progress)
+    except KeyboardInterrupt:
+        typer.echo("Stopped. Anything that finished was kept.")
+        return False
+    for path, reason in result.failures:
+        from docket.services.ingestion.failure import plain_failure_reason
+
+        typer.echo(f"  Could not read {Path(path).name}: {plain_failure_reason(condense_error(reason), path)}")
+    typer.echo(result.summary())
+    return result.ok
+
+
+@app.command("sync")
+def sync(
+    refs: list[str] = typer.Argument(
+        None, help="Sources to bring up to date (name, number or id). Default: all."
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be done and change nothing."),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Also run the slower steps without asking."
+    ),
+) -> None:
+    """Bring the library up to date: remove what is no longer read, read new
+    folders, re-prepare older documents and rebuild the search index when
+    needed. Quick steps run straight away; slower ones ask once with a time
+    estimate. Your original files are never touched."""
+    context = build_context()
+    ids = [_resolve_ref(context, r).id for r in refs] if refs else None
+    plan = context.maintenance.plan(ids)
+    _print_plan(plan)
+    if plan.empty:
+        raise typer.Exit(code=0)
+    if dry_run:
+        typer.echo("Dry run: nothing changed.")
+        raise typer.Exit(code=0)
+
+    ok = True
+    cheap = plan.only({"prune", "refresh"})
+    if not cheap.empty:
+        ok = _run_plan(context, cheap, "quick")
+    costly = plan.costly_steps
+    if costly:
+        costly_plan = plan.only({"rechunk", "reindex"})
+        go = yes
+        if not go:
+            if _interactive():
+                go = typer.confirm(
+                    f"Run the slower updates now? This takes {costly_plan.duration_text}.",
+                    default=False,
+                )
+            else:
+                typer.echo(
+                    f"The slower updates ({costly_plan.duration_text}) were not run. "
+                    "Pass --yes to run them without asking."
+                )
+        if go:
+            ok = _run_plan(context, costly_plan, "slower") and ok
+    raise typer.Exit(code=0 if ok else 1)
 
 
 # -- reindex -------------------------------------------------------------

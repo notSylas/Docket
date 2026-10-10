@@ -68,6 +68,9 @@ class JobRecord:
     state: str  # Completed | Partial | Failed | Interrupted
     when: str
     summary: str
+    # Plain lines under the summary: the files of that folder that still need
+    # attention, each with its reason ("a.pdf: Password-protected. ...").
+    details: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -81,6 +84,7 @@ class IndexProgress:
     unchanged: int = 0
     failed: int = 0
     failures: tuple[tuple[str, str], ...] = ()  # (relative path, one-line reason)
+    stage: str = ""  # plain stage label for a library update ("Re-preparing documents")
 
 
 @dataclass(frozen=True)
@@ -113,6 +117,18 @@ class AskOutcome:
     answer: AnswerView | None = None
     history_answer: str = ""  # raw tagged answer for the conversation memory
     error: str = ""  # non-empty when the question could not be answered
+
+
+@dataclass(frozen=True)
+class NarrowPlan:
+    """What the Narrow flow shows for one existing source: the folder preview
+    (a `SessionPlan` over the source's root) and the subfolders that are
+    already left out, so they start unticked."""
+
+    source_id: str
+    plan: Any  # SessionPlan
+    unticked: tuple[str, ...] = ()
+    reason: str = ""  # non-empty: nothing to narrow, said in plain words
 
 
 IndexCallback = Callable[[IndexProgress], None]
@@ -154,6 +170,27 @@ class TuiBackend(Protocol):
     def disconnect_source(self, source_id: str) -> None: ...
     def reconnect_source(self, source_id: str) -> None: ...
     def job_finished(self, source_id: str, on_done: str) -> None: ...
+    # -- self-maintenance (services/sources/maintenance.py) -----------------
+    def maintenance_plan(self) -> Any: ...  # -> MaintenancePlan, or None when unknown (worker)
+    def run_maintenance(
+        self,
+        plan: Any,
+        on_progress: IndexCallback,
+        should_stop: Callable[[], bool],
+        *,
+        source_ids: list[str] | None = None,
+        kinds: frozenset[str] | None = None,
+    ) -> IndexOutcome: ...
+    def ignore_file(self, source_id: str, rel_path: str) -> int: ...
+    def retry_file(
+        self,
+        source_id: str,
+        rel_path: str,
+        on_progress: IndexCallback,
+        should_stop: Callable[[], bool],
+    ) -> IndexOutcome: ...
+    def narrow_plan(self, source_id: str) -> NarrowPlan | None: ...  # blocks (scan): worker
+    def narrow_source(self, source_id: str, keep: tuple[str, ...], universe: tuple[str, ...]) -> None: ...
     def open_original_note(self, citation: CitationView) -> str: ...
     def run_index(
         self,
@@ -261,6 +298,30 @@ class FakeBackend:
         src = self.world.find(source_id)
         if src and on_done == "ready":
             src.status, src.note = fd.READY, ""
+
+    # -- self-maintenance: the demo has nothing to maintain ---------------------
+    def maintenance_plan(self) -> Any:
+        return None
+
+    def run_maintenance(self, plan, on_progress, should_stop, *, source_ids=None, kinds=None) -> IndexOutcome:
+        raise NotImplementedError("the demo has no library maintenance")
+
+    def ignore_file(self, source_id: str, rel_path: str) -> int:
+        src = self.world.find(source_id)
+        if src is None:
+            return 0
+        before = len(src.files)
+        src.files = [f for f in src.files if f.path != rel_path]
+        return before - len(src.files)
+
+    def retry_file(self, source_id: str, rel_path: str, on_progress, should_stop) -> IndexOutcome:
+        raise NotImplementedError("the demo simulates nothing for a single file")
+
+    def narrow_plan(self, source_id: str) -> NarrowPlan | None:
+        return None
+
+    def narrow_source(self, source_id: str, keep: tuple[str, ...], universe: tuple[str, ...]) -> None:
+        return None
 
     def open_original_note(self, citation: CitationView) -> str:
         return f"Demo: Docket would confirm {citation.rel_path} still matches the stored version, then open it with your system opener."

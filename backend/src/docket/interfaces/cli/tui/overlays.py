@@ -57,6 +57,7 @@ class Entry:
     enabled: bool = True
     hint: str = ""
     data: Any = None
+    extra: Any = None
 
 
 MAX_OVERLAY_WIDTH = 100
@@ -694,8 +695,35 @@ class SourcesOverlay(Overlay):
                 "d",
             ),
             Btn("details", "Hide details" if self.expanded else "Details", s is not None, none, "i"),
+            Btn(
+                "failed",
+                "Failed files",
+                s is not None and s.count(fd.FILE_FAILED) > 0,
+                none if s is None else "No file in this folder needs attention.",
+                "f",
+            ),
+            Btn(
+                "narrow",
+                "Narrow...",
+                s is not None and s.status == fd.READY and not self.ui.backend.demo,
+                none if s is None else "Narrowing applies to a Ready folder.",
+                "n",
+            ),
+            Btn("update", "Update now", self._can_update(), self._update_why(), "u"),
             Btn("close", "Close"),
         ]
+
+    def _can_update(self) -> bool:
+        h = self.ui.health
+        return h is not None and not h.empty and not self.ui.busy
+
+    def _update_why(self) -> str:
+        h = self.ui.health
+        if self.ui.busy:
+            return "Wait for the current work to finish."
+        if h is None:
+            return "Docket is still checking."
+        return "Everything is up to date."
 
     def hint(self) -> str:
         return "Type to filter · Tab actions · Enter toggles details · Esc close"
@@ -745,6 +773,16 @@ class SourcesOverlay(Overlay):
         return rows
 
     def build_body(self, iw: int) -> tuple[list[Row], int | None]:
+        rows, sel = self._build_list_body(iw)
+        line = self.ui.health_line()
+        if line:
+            h = self.ui.health
+            style = "class:attention" if h is not None and not h.empty else MUTED
+            rows = [[(MUTED, "Library health: "), (style, line)], []] + rows
+            sel = None if sel is None else sel + 2
+        return rows, sel
+
+    def _build_list_body(self, iw: int) -> tuple[list[Row], int | None]:
         es = self.entries()
         self._clamp_sel()
         s = self._selected()
@@ -789,6 +827,13 @@ class SourcesOverlay(Overlay):
             self.ui.start_job(s, "Retrying", "ready")
         elif key == "reconnect" and s:
             self.ui.reconnect_source(s)
+        elif key == "update":
+            self.ui.close_top()
+            self.ui.update_now()
+        elif key == "failed" and s:
+            self.ui.push(FailedFilesOverlay(self.ui, s.id))
+        elif key == "narrow" and s:
+            self.ui.begin_narrow(s)
         elif key == "disconnect" and s:
             self.ui.push(
                 ConfirmOverlay(
@@ -805,6 +850,89 @@ class SourcesOverlay(Overlay):
 
     def activate(self, entry: Entry) -> None:
         self.expanded = not self.expanded
+
+
+# ---------------------------------------------------------------------------
+# Failed files: the stored reason in plain words, Retry, Ignore this file
+# ---------------------------------------------------------------------------
+
+
+class FailedFilesOverlay(Overlay):
+    name = "failed-files"
+    title = "Files that need attention"
+
+    def __init__(self, ui: Any, source_id: str) -> None:
+        self.source_id = source_id
+        super().__init__(ui)
+
+    def _source(self):
+        return self.ui.world.find(self.source_id)
+
+    def entries(self) -> list[Entry]:
+        s = self._source()
+        if s is None:
+            return []
+        return [
+            Entry(f.path, f.path, f.error or "Docket could not read this file.", "Failed", "class:failed", data=f)
+            for f in s.files
+            if f.status == fd.FILE_FAILED
+        ]
+
+    def empty_text(self) -> str:
+        return "No file needs attention. Everything here was read."
+
+    def entry_row(self, e: Entry, selected: bool, iw: int) -> Row:
+        return super().entry_row(Entry(e.key, e.label), selected, iw)
+
+    def build_body(self, iw: int) -> tuple[list[Row], int | None]:
+        rows: list[Row] = []
+        sel_row = None
+        self._clamp_sel()
+        es = self.entries()
+        s = self._source()
+        if s is not None:
+            rows.extend(wrap_text(f"In {s.name}. Retry reads a file again; Ignore this file leaves it out for good (the file itself is never touched).", iw, MUTED))
+            rows.append([])
+        for i, e in enumerate(es):
+            if i == self.sel:
+                sel_row = len(rows)
+            rows.append(self.entry_row(e, i == self.sel and self.zone == "list", iw))
+            rows.extend(wrap_tokens(inline_tokens(e.sub, "class:failed"), iw, "    "))
+        if not es:
+            rows.append([(MUTED, self.empty_text())])
+        return rows, sel_row
+
+    def _selected(self):
+        es = self.entries()
+        return es[min(self.sel, len(es) - 1)].data if es else None
+
+    def buttons(self) -> list[Btn]:
+        f = self._selected()
+        none = "Select a file first."
+        return [
+            Btn("retry", "Retry", f is not None, none, "r"),
+            Btn("ignore", "Ignore this file", f is not None, none, "i"),
+            Btn("close", "Close"),
+        ]
+
+    def hint(self) -> str:
+        return "Up/Down choose a file · Tab actions · Esc close"
+
+    def activate(self, entry: Entry) -> None:
+        self.press("retry")
+
+    def press(self, key: str) -> None:
+        f = self._selected()
+        s = self._source()
+        if key == "retry" and f and s:
+            self.ui.close_top()
+            self.ui.retry_file(s, f.path)
+        elif key == "ignore" and f and s:
+            self.ui.ignore_file(s, f.path)
+            if not self.entries():
+                self.ui.close_top()
+        else:
+            super().press(key)
 
 
 # ---------------------------------------------------------------------------
@@ -919,7 +1047,9 @@ class IndexingOverlay(Overlay):
         if j.state == "stopping":
             return [Btn("hide", "Hide progress", hot="h"), Btn("stop", "Stop indexing", False, "Stop was already requested.")]
         out = [Btn("ask", "Start asking", j.state in ("done", "stopped"), "Nothing is searchable yet.", "a")]
-        if j.failed or j.state in ("failed", "stopped"):
+        if j.kind == "update" and j.state in ("failed", "stopped"):
+            out.append(Btn("retry", "Update again", hot="r"))
+        elif j.kind == "index" and (j.failed or j.state in ("failed", "stopped")):
             out.append(Btn("retry", "Retry indexing", hot="r"))
         out.append(Btn("close", "Close"))
         return out
@@ -948,7 +1078,8 @@ class IndexingOverlay(Overlay):
             if j.stage:  # a real run only knows file events, so it shows no stage
                 items.append(("Stage", j.stage, TEXT))
             items.append(("Elapsed", j.elapsed_label, TEXT))
-            items.append(("So far", f"{j.indexed} indexed · {j.unchanged} unchanged · {j.failed} failed", TEXT))
+            if j.kind == "index":
+                items.append(("So far", f"{j.indexed} indexed · {j.unchanged} unchanged · {j.failed} failed", TEXT))
             rows.extend(kv_rows(items, iw, 10))
             rows.append([])
             rows.append(bar)
@@ -966,14 +1097,24 @@ class IndexingOverlay(Overlay):
             return rows, None
         if j.state == "failed":
             rows.append([("class:failed", "Failed: "), (TEXT, j.reason or "Indexing could not start.")])
-            rows.append([(MUTED, f"{j.source_name} stays registered. Repair the problem, then Retry indexing.")])
+            if j.kind == "index":
+                rows.append([(MUTED, f"{j.source_name} stays registered. Repair the problem, then Retry indexing.")])
+            else:
+                rows.append([(MUTED, "Nothing was lost; the index was left as it was.")])
             return rows, None
-        headline = "Indexing finished" if j.state == "done" else "Stopped before finishing"
+        done_word = "Indexing finished" if j.kind == "index" else "Update finished"
+        headline = done_word if j.state == "done" else "Stopped before finishing"
         style = "class:ready" if j.state == "done" and not j.failed else "class:attention"
         label = "Completed" if j.state == "done" and not j.failed else ("Partial" if j.state == "done" else "Cancelled")
         rows.append([(style, f"{label}: "), (TEXT, headline)])
-        rows.append([(TEXT, f"{j.indexed} indexed · {j.unchanged} unchanged · {j.failed} failed")])
-        rows.append([(MUTED, f"{j.file_index} of {j.total} files processed in {j.elapsed_label}")])
+        if j.kind == "index":
+            rows.append([(TEXT, f"{j.indexed} indexed · {j.unchanged} unchanged · {j.failed} failed")])
+            rows.append([(MUTED, f"{j.file_index} of {j.total} files processed in {j.elapsed_label}")])
+        else:
+            rows.append([(TEXT, f"{j.indexed} done · {j.failed} could not be read")])
+            rows.append([(MUTED, f"Finished in {j.elapsed_label}")])
+            for line in j.notices:
+                rows.extend(wrap_text(line, iw, MUTED))
         if j.state == "stopped":
             rows.append([(MUTED, "Completed files were kept; the rest are unavailable until you retry.")])
         if j.failures:
@@ -981,7 +1122,9 @@ class IndexingOverlay(Overlay):
             rows.append([("class:title", "Failures")])
             for name, reason in j.failures:
                 rows.extend(wrap_tokens([(TEXT, name), (" ", " "), ("class:failed", "Failed"), (MUTED, f" — {reason}")], iw, "  "))
-            rows.append([(MUTED, "Recovery: fix or replace the file, then Retry indexing.")])
+            rows.append(
+                [(MUTED, "Recovery: fix or replace the file, then retry it from Sources, or ignore it there.")]
+            )
         return rows, None
 
     def press(self, key: str) -> None:
@@ -990,6 +1133,9 @@ class IndexingOverlay(Overlay):
             self.ui.close_top()
         elif key == "stop":
             self.ui.stop_job()
+        elif key == "retry" and j and j.kind == "update":
+            self.ui.close_top()
+            self.ui.update_now()
         elif key == "retry" and j:
             src = self.ui.world.find(j.source_id)
             self.ui.close_top()
@@ -1470,6 +1616,10 @@ class WelcomeOverlay(Overlay):
         if rep_.message:
             rows.append([])
             rows.append([(MUTED, rep_.message)])
+        health = self.ui.health_line()
+        if health:
+            rows.append([])
+            rows.append([(MUTED, "Library health: "), (TEXT, health)])
         sel_row = None
         es = self.entries()
         if es:
@@ -1562,9 +1712,15 @@ class FolderPreviewOverlay(Overlay):
     name = "folder-preview"
     title = "Choose what to read"
 
-    def __init__(self, ui: Any, plan: Any) -> None:
+    def __init__(self, ui: Any, plan: Any, narrow: Any = None) -> None:
         self.plan = plan
-        self.ticked: dict[str, bool] = {name: True for name, _n in plan.scan.subfolders}
+        self.narrow = narrow  # a NarrowPlan: this preview edits an existing source
+        left_out = set(getattr(narrow, "unticked", ()) or ())
+        self.ticked: dict[str, bool] = {
+            name: name not in left_out for name, _n in plan.scan.subfolders
+        }
+        if narrow is not None:
+            self.title = f"Narrow {plan.name}"
         super().__init__(ui)
 
     # ---- numbers ---------------------------------------------------------
@@ -1594,6 +1750,16 @@ class FolderPreviewOverlay(Overlay):
             iw,
             TEXT,
         )
+        if self.narrow is not None:
+            rows.extend(
+                wrap_text(
+                    "Choose the folders to keep. Documents in the others are removed from the "
+                    "index (nothing is re-read, and your files are not touched). Nothing "
+                    "changes until you confirm.",
+                    iw,
+                    MUTED,
+                )
+            )
         types = " · ".join(
             f"{n} {_TYPE_LABELS.get(ext, ext.lstrip('.'))}"
             for ext, n in sorted(scan.by_type.items(), key=lambda kv: -kv[1])
@@ -1602,7 +1768,8 @@ class FolderPreviewOverlay(Overlay):
             rows.extend(wrap_text("By type: " + types, iw, MUTED))
         total = max(scan.documents, 1)
         est = scan.estimated_seconds * (self.selected() / total)
-        rows.extend(wrap_text(f"Reading the ticked folders would take {format_duration(est)}.", iw, MUTED))
+        if self.narrow is None:
+            rows.extend(wrap_text(f"Reading the ticked folders would take {format_duration(est)}.", iw, MUTED))
         skipped: list[str] = []
         if scan.skipped.get("ignored_folders"):
             skipped.append(f"{_plural(scan.skipped['ignored_folders'], 'folder')} Docket never reads")
@@ -1627,6 +1794,11 @@ class FolderPreviewOverlay(Overlay):
 
     def buttons(self) -> list[Btn]:
         n = self.selected()
+        if self.narrow is not None:
+            return [
+                Btn("go", f"Keep {_plural(n, 'document')}", n > 0, "Tick at least one folder first.", hot="k"),
+                Btn("cancel", "Cancel", hot="n"),
+            ]
         return [
             Btn("go", f"Index {_plural(n, 'document')}", n > 0, "Tick at least one folder first.", hot="i"),
             Btn("other", "Choose another folder", hot="c"),
@@ -1652,7 +1824,11 @@ class FolderPreviewOverlay(Overlay):
         super().text(s)
 
     def press(self, key: str) -> None:
-        if key == "go":
+        if key == "go" and self.narrow is not None:
+            kept = tuple(name for name, on in self.ticked.items() if on)
+            self.ui.close_top(force=True)
+            self.ui.narrow_confirmed(self.narrow, kept)
+        elif key == "go":
             self.ui.begin_folder(self.plan, self.excluded())
         elif key == "other":
             self.ui.close_top()
@@ -1661,7 +1837,8 @@ class FolderPreviewOverlay(Overlay):
             self.ui.close_top()
 
     def on_dismiss(self) -> None:
-        self.ui.consent_declined()
+        if self.narrow is None:  # cancelling a narrow changes nothing
+            self.ui.consent_declined()
 
 
 class ConfirmOverlay(Overlay):
@@ -1716,7 +1893,18 @@ class JobsOverlay(Overlay):
             state = {"running": "Running", "stopping": "Stopping", "done": "Completed", "stopped": "Cancelled", "failed": "Failed"}[j.state]
             out.append(Entry("current", j.source_name, f"{j.file_index}/{j.total} files", state, self.STATE_STYLE.get(state, MUTED), data="current", hint="Now"))
         for rec in self.ui.backend.job_history(running=bool(j and j.active)):
-            out.append(Entry(rec.name, rec.name, rec.summary, rec.state, self.STATE_STYLE.get(rec.state, MUTED), data=rec.summary, hint=rec.when))
+            out.append(
+                Entry(
+                    rec.name,
+                    rec.name,
+                    rec.summary,
+                    rec.state,
+                    self.STATE_STYLE.get(rec.state, MUTED),
+                    data=rec.summary,
+                    hint=rec.when,
+                    extra=tuple(rec.details),
+                )
+            )
         return out
 
     def empty_text(self) -> str:
@@ -1747,7 +1935,14 @@ class JobsOverlay(Overlay):
         if not es:
             return []
         e = es[min(self.sel, len(es) - 1)]
-        return [[], *kv_rows([("Summary", f"{e.label}: {e.sub}", TEXT)], iw, 9)]
+        rows = [[], *kv_rows([("Summary", f"{e.label}: {e.sub}", TEXT)], iw, 9)]
+        details = e.extra or ()
+        if details:
+            rows.append([])
+            rows.append([(MUTED, "Files that still need attention:")])
+            for line in details:
+                rows.extend(wrap_text("  " + line, iw, "class:attention"))
+        return rows
 
     def buttons(self) -> list[Btn]:
         return [Btn("results", "Results", hot="r"), Btn("close", "Close")]

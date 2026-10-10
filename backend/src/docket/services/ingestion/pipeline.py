@@ -820,12 +820,22 @@ class IngestionPipeline:
         *,
         dry_run: bool = False,
         progress: Callable[[int, int, RechunkCandidate], None] | None = None,
+        only_stale: bool = False,
+        should_stop: Callable[[], bool] | None = None,
     ) -> RechunkReport:
+        """Re-chunk the source's candidates. `only_stale` leaves FAILED
+        versions alone (library maintenance must not retry a password-
+        protected file on every update); `should_stop` is checked before each
+        file, and a stopped run still ends with the reconcile pass."""
         candidates, up_to_date = self._classify_versions(source_id)
+        if only_stale:
+            candidates = [c for c in candidates if c.reason == "stale"]
         report = RechunkReport(source_id=source_id, candidates=candidates, up_to_date=up_to_date)
         if dry_run or not candidates:
             return report
         for index, candidate in enumerate(candidates, start=1):
+            if should_stop is not None and should_stop():
+                break
             if progress is not None:
                 progress(index, len(candidates), candidate)
             report.results.append(self.rechunk_version(source_id, candidate))
@@ -850,7 +860,112 @@ class IngestionPipeline:
             session.add(job)
             session.commit()
 
-    # -- entrypoint -----------------------------------------------------
+    # -- entrypoints ----------------------------------------------------
+
+    def run_ingestion_for_paths(
+        self,
+        source_id: str,
+        paths: list[Path],
+        progress: Callable[[ProgressEvent], None] | None = None,
+    ) -> IngestionJobResult:
+        """Ingest just `paths` (files under the source root) through the same
+        per-file path as a whole-source run: unchanged files are a no-op, a
+        changed or previously failed file is re-processed (a retry that
+        succeeds clears its stored failure reason).
+
+        Used for "Retry this file" (CP5); the freshness watcher (CP6) extends
+        this with deleted-file handling. A path outside the source root, or
+        one that no longer exists, is reported as a failed result for that
+        path; nothing else is touched. Unlike a whole-source run no
+        discovery is done, so ignore rules are not consulted: the caller
+        chose these paths. Ends with the same whole-source reconcile pass and
+        records an `IngestionJob` row like any run."""
+        source = self._load_active_source(source_id)
+        self._chunk_writer.ensure_recipe_row()
+        root = Path(source.path)
+
+        with self._session_factory() as session:
+            job = IngestionJob(
+                source_id=source_id,
+                status=IngestionJobStatus.RUNNING,
+                started_at=_utcnow(),
+            )
+            session.add(job)
+            session.commit()
+            session.refresh(job)
+            job_id = job.id
+
+        def emit(event: ProgressEvent) -> None:
+            if progress is None:
+                return
+            try:
+                progress(event)
+            except Exception:  # noqa: BLE001
+                logger.debug("progress callback raised; ignored", exc_info=True)
+
+        targets = [Path(p) for p in paths]
+        file_results: list[FileIngestResult] = []
+        try:
+            total = len(targets)
+            for index, path in enumerate(targets, start=1):
+                emit(ProgressEvent("start", index, total, path))
+                try:
+                    try:
+                        path.resolve().relative_to(root.resolve())
+                    except ValueError:
+                        raise ValueError(f"{path} is not inside the source folder") from None
+                    if not path.is_file():
+                        raise FileNotFoundError(f"file not found: {path.name}")
+                    result = self._ingest_one_file(source_id, path)
+                except Exception as exc:  # noqa: BLE001 -- one bad file must not abort the batch
+                    result = FileIngestResult(path=path, status="failed", error=str(exc))
+                file_results.append(result)
+                emit(ProgressEvent("done", index, total, path, result))
+            self._index_manager.reconcile_source(
+                source_id,
+                current_chunk_ids=self._chunk_writer.current_chunk_ids_for_source(source_id),
+                current_version_ids=self._chunk_writer.ready_version_ids_for_source(source_id),
+            )
+        except BaseException as exc:
+            self._finalize_job(
+                job_id,
+                IngestionJobStatus.FAILED,
+                "interrupted" if not isinstance(exc, Exception) else str(exc),
+                {
+                    "files_processed": len(file_results),
+                    "files_failed": sum(1 for r in file_results if r.status == "failed"),
+                    "chunks_written": sum(r.chunks_written for r in file_results),
+                },
+            )
+            raise
+
+        files_failed = sum(1 for r in file_results if r.status == "failed")
+        files_processed = len(file_results)
+        error: str | None = None
+        if files_processed and files_failed == files_processed:
+            job_status, error = IngestionJobStatus.FAILED, "all files failed to ingest"
+        elif files_failed:
+            job_status = IngestionJobStatus.PARTIAL
+        else:
+            job_status = IngestionJobStatus.SUCCEEDED
+        self._finalize_job(
+            job_id,
+            job_status,
+            error,
+            {
+                "files_processed": files_processed,
+                "files_failed": files_failed,
+                "chunks_written": sum(r.chunks_written for r in file_results),
+            },
+        )
+        return IngestionJobResult(
+            source_id=source_id,
+            job_id=job_id,
+            status=job_status.value,
+            files_processed=files_processed,
+            files_failed=files_failed,
+            file_results=file_results,
+        )
 
     def run_ingestion_for_source(
         self,

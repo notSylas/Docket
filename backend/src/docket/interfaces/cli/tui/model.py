@@ -63,6 +63,9 @@ class IndexJob:
     ended: float | None = None
     notices: tuple[str, ...] = ()
     paused: bool = False  # waiting between files while a question is answered
+    # "index" (read a folder), "update" (library maintenance) or "retry" (one file).
+    kind: str = "index"
+    stage_text: str = ""  # real update runs: the plain stage label
 
     @property
     def active(self) -> bool:
@@ -87,7 +90,7 @@ class IndexJob:
     def stage(self) -> str:
         """Simulated jobs report a stage; real ones only know file events."""
         if self.real:
-            return ""
+            return self.stage_text
         return fd.INDEX_STAGES[self.stage_index % len(fd.INDEX_STAGES)]
 
     def advance(self, *, blocked: bool = False) -> None:
