@@ -51,6 +51,12 @@ PDF, Word (`.docx`), Excel (`.xlsx`) and PowerPoint (`.pptx`) files. Legacy `.xl
 
 ## Interactive mode
 
+On a Linux desktop, `docket` opens the session in its own terminal window and returns your shell immediately. `docket chat` always runs in the current terminal, and `docket launch` always opens a window (it is what the app-menu icon runs). Over SSH, without a display, or with `DOCKET_NO_WINDOW=1`, `docket` runs in place as before.
+
+- `docket install-launcher` adds a "Docket" entry and icon to your app menu (user files only, under `~/.local/share`); `docket uninstall-launcher` removes them. Docket also offers this once on the first interactive run.
+- `DOCKET_TERMINAL` picks the terminal emulator (for example `DOCKET_TERMINAL=kitty`); otherwise `$TERMINAL`, `x-terminal-emulator` and common emulators are tried in turn.
+- `DOCKET_NO_WINDOW=1` disables the separate window.
+
 Run `docket` with no arguments in a terminal (or `docket chat`) to open an interactive session. Ask questions back-to-back — follow-ups like "what about X instead?" work because the session remembers recent turns — and manage sources with slash commands:
 
 ```
@@ -138,6 +144,8 @@ All settings are environment variables with a `DOCKET_` prefix:
 | `DOCKET_DATA_DIR` | `~/.local/share/docket` | where the index and stored originals live |
 | `DOCKET_GEN_MODEL` | `qwen3:14b` | Ollama model that writes answers |
 | `DOCKET_EMBED_MODEL` | `qwen3-embedding:0.6b` | Ollama embedding model (run `docket reindex` after changing it) |
+| `DOCKET_TERMINAL` | auto-detected | terminal emulator used for the separate window |
+| `DOCKET_NO_WINDOW` | unset | `1` runs `docket` in the current terminal |
 | `DOCKET_ANSWER_THINK` | `true` | `false` trades accuracy for speed |
 | `DOCKET_REWRITE_ENABLED` | `true` | rewrite follow-up questions into a standalone search query |
 | `DOCKET_QUERY_SCOPE_ENABLED` | `true` | restrict search when a file is named explicitly |

@@ -15,6 +15,7 @@ from docket.infra.index.reindex import reindex as run_reindex
 from docket.infra.inference.gateway import InferenceError
 from docket.infra.parsing.tokens import get_token_counter
 from docket.interfaces.cli.context import build_context
+from docket.interfaces.cli import launcher
 from docket.interfaces.cli.interactive import run_session
 from docket.core.db.models import SourceStatus
 from docket.services.ingestion.pipeline import SourceNotActiveError
@@ -93,7 +94,9 @@ def main(
         raise typer.Exit()
     if ctx.invoked_subcommand is None:
         if sys.stdin.isatty() and sys.stdout.isatty():
-            _run_interactive()
+            # Own window first; fall back to running in place (no display, SSH, ...).
+            if not launcher.spawn_window():
+                _run_interactive()
         else:
             typer.echo(ctx.get_help())
 
@@ -103,6 +106,8 @@ def _run_interactive() -> None:
 
     context = build_context()
     settings = context.settings
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        launcher.maybe_offer_launcher(settings.data_dir)
     run_session(
         context,
         health_check=lambda: check_ollama([settings.gen_model, settings.embed_model]),
@@ -112,9 +117,59 @@ def _run_interactive() -> None:
 
 
 @app.command("chat")
-def chat() -> None:
+def chat(
+    in_window: bool = typer.Option(False, "--in-window", hidden=True),
+) -> None:
     """Start an interactive session (multi-turn questions and /commands)."""
-    _run_interactive()
+    if not in_window:
+        _run_interactive()
+        return
+    sys.stdout.write("\033]0;Docket\007")
+    sys.stdout.flush()
+    try:
+        _run_interactive()
+    except (KeyboardInterrupt, SystemExit, typer.Exit):
+        raise
+    except Exception as exc:  # the window would otherwise vanish unread
+        import traceback
+
+        traceback.print_exc()
+        print(f"\nDocket stopped unexpectedly: {exc}")
+        try:
+            input("Press Enter to close this window...")
+        except (EOFError, KeyboardInterrupt):
+            pass
+        raise typer.Exit(code=1) from exc
+
+
+@app.command("launch")
+def launch() -> None:
+    """Open Docket in its own terminal window (used by the app-menu icon)."""
+    if launcher.spawn_window():
+        return
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        _run_interactive()
+        return
+    typer.echo("Could not open a terminal window; run `docket` from a terminal.", err=True)
+    raise typer.Exit(code=1)
+
+
+@app.command("install-launcher")
+def install_launcher_cmd() -> None:
+    """Add Docket to the desktop app menu (user-level, no system files touched)."""
+    desktop, icon = launcher.install_launcher()
+    typer.echo(f"Installed {desktop}")
+    typer.echo(f"Installed {icon}")
+
+
+@app.command("uninstall-launcher")
+def uninstall_launcher_cmd() -> None:
+    """Remove the app-menu entry and icon added by `install-launcher`."""
+    removed = launcher.uninstall_launcher()
+    if not removed:
+        typer.echo("No launcher installed.")
+    for path in removed:
+        typer.echo(f"Removed {path}")
 
 
 # -- sources -----------------------------------------------------------
