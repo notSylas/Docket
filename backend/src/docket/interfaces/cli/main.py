@@ -155,6 +155,24 @@ def launch() -> None:
     raise typer.Exit(code=1)
 
 
+@app.command("tui-demo", hidden=True)
+def tui_demo(
+    state: str = typer.Option("chat", "--state", help="welcome | welcome-blocked | chat | indexing | sources | evidence | settings"),
+    reduced_motion: bool = typer.Option(False, "--reduced-motion", help="No timed progress; press N in the indexing panel to advance."),
+    ascii_mode: bool = typer.Option(False, "--ascii", help="Force ASCII borders (also DOCKET_ASCII=1)."),
+) -> None:
+    """Full-screen Screen A prototype with fake data only (design review; no backend)."""
+    from docket.interfaces.cli.tui import STATES, run_demo
+
+    if state not in STATES:
+        typer.echo(f"Unknown state {state!r}. Choose from: {', '.join(STATES)}", err=True)
+        raise typer.Exit(code=2)
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        typer.echo("tui-demo needs an interactive terminal.", err=True)
+        raise typer.Exit(code=1)
+    run_demo(state, reduced_motion=reduced_motion, ascii_mode=True if ascii_mode else None)
+
+
 @app.command("install-launcher")
 def install_launcher_cmd() -> None:
     """Add Docket to the desktop app menu (user-level, no system files touched)."""
