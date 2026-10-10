@@ -1,6 +1,8 @@
 """`SourcePruneService` -- remove already-indexed files that the CURRENT
 discovery ignore rules (`services/ingestion/ignore.py`) would no longer pick
-up (e.g. a virtualenv's site-packages indexed before the rules existed).
+up (e.g. a virtualenv's site-packages indexed before the rules existed), and
+FAILED versions of files that are not real documents (bytes contradict the
+extension; discovery now skips those).
 
 Mechanism (existing lifecycle, no schema change): each matching READY/FAILED
 `EvidenceVersion` is moved to `VersionStatus.SUPERSEDED` via
@@ -26,10 +28,23 @@ from sqlalchemy.orm import sessionmaker
 from docket.core.db.models import EvidenceVersion, Source, VersionStatus
 from docket.infra.evidence.manager import EvidenceManager
 from docket.infra.index.manager import IndexManager
+from docket.infra.parsing.filecheck import InvalidFileError, check_file_signature
 from docket.services.ingestion.ignore import IgnoreRules
 from docket.services.sources.manager import SourceNotFoundError
 
 _PRUNABLE = (VersionStatus.READY, VersionStatus.FAILED)
+
+
+def _is_invalid_file(path: Path) -> bool:
+    """True when the file exists but its bytes contradict its extension --
+    discovery now skips these, so an old FAILED version of one is dead weight."""
+    try:
+        check_file_signature(path)
+    except InvalidFileError:
+        return True
+    except OSError:
+        return False
+    return False
 
 
 @dataclass(frozen=True)
@@ -62,15 +77,16 @@ class SourcePruneService:
             if source is None:
                 raise SourceNotFoundError(source_id)
             root = Path(source.path)
+            rules_json = source.rules_json
             rows = session.execute(
                 select(EvidenceVersion.id, EvidenceVersion.file_path, EvidenceVersion.status).where(
                     EvidenceVersion.source_id == source_id,
                     EvidenceVersion.status.in_(_PRUNABLE),
                 )
             ).all()
-        if not self._enabled:
-            return []
-        rules = IgnoreRules.for_root(root)
+        # With ignoring disabled nothing counts as ignored, but invalid
+        # files are skipped by discovery regardless of that setting.
+        rules = IgnoreRules.for_root(root, rules_json) if self._enabled else IgnoreRules()
         out: list[PruneCandidate] = []
         for version_id, file_path, status in rows:
             if not file_path:
@@ -80,7 +96,9 @@ class SourcePruneService:
                 rel = path.relative_to(root)
             except ValueError:
                 continue
-            if rules.path_ignored(rel):
+            if (self._enabled and rules.path_ignored(rel)) or (
+                status == VersionStatus.FAILED and _is_invalid_file(path)
+            ):
                 out.append(PruneCandidate(version_id, path, rel, status.value))
         out.sort(key=lambda c: c.relative_path.as_posix())
         return out

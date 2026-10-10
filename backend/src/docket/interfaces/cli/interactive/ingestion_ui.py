@@ -15,6 +15,7 @@ from docket.core.db.models import SourceStatus
 from docket.interfaces.cli.quiet import FailureReporter, ignore_notices, quiet_ingest
 from docket.services.ingestion.pipeline import SUPPORTED_EXTENSIONS, ProgressEvent, SourceNotActiveError
 from docket.services.sources.manager import SourceNotFoundError
+from docket.services.sources.resolve import SourceRefError, resolve_source
 
 
 def cmd_ingest(session: Any, arg: str) -> None:
@@ -28,7 +29,11 @@ def cmd_ingest(session: Any, arg: str) -> None:
             session.say("No active or missing sources to ingest. Use /add <folder> first.")
             return
     else:
-        target_ids = [arg]
+        try:
+            target_ids = [resolve_source(arg, session.context.source_manager.list_sources()).id]
+        except SourceRefError as exc:
+            session.error(f"Error: {exc}")
+            return
 
     try:
         _ingest_targets(session, target_ids)

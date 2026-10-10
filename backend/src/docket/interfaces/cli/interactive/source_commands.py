@@ -18,7 +18,17 @@ from typing import Any
 from rich.table import Table
 
 from docket.core.db.models import SourceStatus
-from docket.services.sources.manager import InvalidSourceTransitionError, SourceNotFoundError
+from docket.services.sources.manager import (
+    InvalidSourceTransitionError,
+    SourceCoveredError,
+    SourceNotFoundError,
+)
+from docket.services.sources.resolve import (
+    SourceRefError,
+    display_names,
+    ordered_sources,
+    resolve_source,
+)
 
 from .errors import handle_error
 
@@ -29,11 +39,17 @@ def cmd_sources(session: Any, arg: str) -> None:
         session.say("No sources registered. Use /add <folder>.")
         return
     table = Table(show_header=True, header_style="bold", box=None, pad_edge=False)
+    table.add_column("#", no_wrap=True)
+    table.add_column("Name", no_wrap=True)
     table.add_column("ID", no_wrap=True, overflow="fold")
     table.add_column("Status", no_wrap=True)
     table.add_column("Path", overflow="fold")
-    for source in sources:
-        table.add_row(str(source.id), source.status.value, str(source.path))
+    ordered = ordered_sources(sources)
+    names = display_names(ordered)
+    for number, source in enumerate(ordered, start=1):
+        table.add_row(
+            str(number), names[source.id], str(source.id), source.status.value, str(source.path)
+        )
     session.console.print(table)
 
 
@@ -62,6 +78,9 @@ def _register(session: Any, path: Path) -> Any | None:
             return existing.id
     try:
         source = session.context.source_manager.register_source(path)
+    except SourceCoveredError as exc:
+        session.say(f"Already covered by {exc.covering_name}.")
+        return exc.covering.id
     except ValueError as exc:
         session.error(f"Error: {exc}")
         return None
@@ -106,13 +125,15 @@ def _confirm(session: Any, prompt: str) -> bool:
 
 def cmd_remove(session: Any, arg: str) -> None:
     if not arg:
-        session.say("Usage: /remove <source-id>")
+        session.say("Usage: /remove <name, number or source-id>")
         return
     manager = session.context.source_manager
-    match = next((s for s in manager.list_sources() if s.id == arg), None)
-    if match is None:
-        session.error(f"Error: source not found: {arg}")
+    try:
+        match = resolve_source(arg, manager.list_sources())
+    except SourceRefError as exc:
+        session.error(f"Error: {exc}")
         return
+    arg = match.id
     if match.status == SourceStatus.REVOKED:
         session.say(f"Source {arg} is already disconnected.")
         return
@@ -133,11 +154,12 @@ def cmd_remove(session: Any, arg: str) -> None:
 
 def cmd_reconnect(session: Any, arg: str) -> None:
     if not arg:
-        session.say("Usage: /reconnect <source-id>")
+        session.say("Usage: /reconnect <name, number or source-id>")
         return
     manager = session.context.source_manager
     try:
-        source = manager.reconnect_source(arg)
+        target = resolve_source(arg, manager.list_sources())
+        source = manager.reconnect_source(target.id)
     except (SourceNotFoundError, InvalidSourceTransitionError, ValueError) as exc:
         session.error(f"Error: {exc}")
         return

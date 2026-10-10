@@ -38,3 +38,19 @@ class ReadinessService:
         with self._session_factory() as session:
             files, chunks = session.execute(stmt).one()
         return SearchReadiness(files=files, chunks=chunks)
+
+    def files_by_source(self) -> dict[str, int]:
+        """Eligible file count per ACTIVE source, under the same rules as
+        `snapshot` (READY versions that have chunks). Sources with nothing
+        eligible are absent from the mapping."""
+        stmt = (
+            select(Source.id, func.count(func.distinct(EvidenceVersion.id)))
+            .select_from(Chunk)
+            .join(Source, Chunk.source_id == Source.id)
+            .join(EvidenceVersion, Chunk.evidence_version_id == EvidenceVersion.id)
+            .where(Source.status == SourceStatus.ACTIVE)
+            .where(EvidenceVersion.status == VersionStatus.READY)
+            .group_by(Source.id)
+        )
+        with self._session_factory() as session:
+            return {sid: int(n) for sid, n in session.execute(stmt).all()}

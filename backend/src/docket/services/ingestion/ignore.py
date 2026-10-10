@@ -1,6 +1,7 @@
 """Discovery ignore rules: which folders/files under a registered root are
 never ingested (virtualenvs, site-packages, hidden folders, Office lock
-files, plus an optional `.docketignore` at the root).
+files, plus an optional `.docketignore` at the root and the source's stored
+`rules_json`).
 
 Everything is evaluated on paths RELATIVE to the registered root, so a root
 that itself lives under a hidden or virtualenv path still works, and the
@@ -13,9 +14,12 @@ docs, build, dist, env.
 from __future__ import annotations
 
 import fnmatch
+import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
+
+from docket.infra.parsing.filecheck import InvalidFileError, check_file_signature
 
 DOCKETIGNORE_NAME = ".docketignore"
 
@@ -61,29 +65,82 @@ class _Pattern:
     has_slash: bool
 
 
+def _compile_pattern(line: str) -> _Pattern | None:
+    """One gitignore-style line -> pattern. Blank, comment and `!` lines and
+    bare slashes yield None."""
+    line = line.strip()
+    if not line or line.startswith("#") or line.startswith("!"):
+        return None
+    dir_only = line.endswith("/")
+    line = line.strip("/")
+    if not line:
+        return None
+    return _Pattern(line, dir_only, "/" in line)
+
+
+def parse_rules_json(raw: object) -> dict:
+    """Parse a source's stored `rules_json` (str, dict or None) into
+    ``{"exclude": [...], "include": [...], "ignored_files": [...]}``.
+    Malformed input degrades to "no rules"."""
+    empty: dict = {"exclude": [], "include": [], "ignored_files": []}
+    data = raw
+    if isinstance(raw, (str, bytes)):
+        try:
+            data = json.loads(raw)
+        except (ValueError, TypeError):
+            return empty
+    if not isinstance(data, dict):
+        return empty
+    out: dict = {}
+    for key in ("exclude", "include", "ignored_files"):
+        value = data.get(key, [])
+        out[key] = [v for v in value if isinstance(v, str)] if isinstance(value, list) else []
+    return out
+
+
+def dump_rules_json(rules: dict) -> str | None:
+    """Canonical `rules_json` text, or None when there is nothing to store."""
+    parsed = parse_rules_json(rules)
+    if not any(parsed.values()):
+        return None
+    return json.dumps({"version": 1, **parsed}, sort_keys=True)
+
+
 @dataclass
 class IgnoreRules:
-    """Built-in rules plus the (optional) `.docketignore` patterns."""
+    """Built-in rules plus the (optional) `.docketignore` patterns and the
+    source's stored rules (`exclude` / `include` / `ignored_files`)."""
 
     patterns: list[_Pattern] = field(default_factory=list)
+    # When non-empty, a file is kept only if it, or one of its ancestor
+    # directories, matches an include pattern.
+    include: list[_Pattern] = field(default_factory=list)
+    ignored_files: frozenset[str] = frozenset()
 
     @classmethod
-    def for_root(cls, root: Path) -> "IgnoreRules":
+    def for_root(cls, root: Path, extra_rules: object = None) -> "IgnoreRules":
+        """Rules for `root`: `.docketignore` plus `extra_rules` (a source's
+        stored `rules_json`, as text or a dict)."""
         patterns: list[_Pattern] = []
         try:
             raw = (Path(root) / DOCKETIGNORE_NAME).read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
-            return cls(patterns)
+            raw = ""
         for line in raw.splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or line.startswith("!"):
-                continue
-            dir_only = line.endswith("/")
-            line = line.strip("/")
-            if not line:
-                continue
-            patterns.append(_Pattern(line, dir_only, "/" in line))
-        return cls(patterns)
+            pat = _compile_pattern(line)
+            if pat is not None:
+                patterns.append(pat)
+        stored = parse_rules_json(extra_rules)
+        for line in stored["exclude"]:
+            pat = _compile_pattern(line)
+            if pat is not None:
+                patterns.append(pat)
+        include = [p for p in map(_compile_pattern, stored["include"]) if p is not None]
+        ignored = frozenset(
+            PurePosixPath(f.replace("\\", "/")).as_posix().lstrip("/")
+            for f in stored["ignored_files"]
+        )
+        return cls(patterns, include, ignored)
 
     def _custom_match(self, rel_posix: str, name: str, is_dir: bool) -> bool:
         for pat in self.patterns:
@@ -94,6 +151,28 @@ class IgnoreRules:
                 return True
         return False
 
+    def _include_allows(self, rel_posix: str, is_dir: bool) -> bool:
+        """Include rules drop FILES that no include pattern covers, plus
+        directories that provably cannot contain an included path (a
+        directory is never pruned when unsure)."""
+        if not self.include:
+            return True
+        parts = rel_posix.split("/")
+        for pat in self.include:
+            # Matches the entry itself or any ancestor directory.
+            for i in range(1, len(parts) + 1):
+                target = "/".join(parts[:i]) if pat.has_slash else parts[i - 1]
+                if fnmatch.fnmatchcase(target, pat.text):
+                    return True
+            if is_dir:
+                if not pat.has_slash:
+                    return True  # a name glob could match anywhere below
+                if pat.text.startswith(rel_posix + "/"):
+                    return True  # an include path lies under this directory
+                if any(c in pat.text for c in "*?["):
+                    return True  # wildcard path: cannot tell, do not prune
+        return False
+
     def entry_ignored(self, rel_posix: str, name: str, is_dir: bool) -> bool:
         """Is this single entry (given its path relative to the root) ignored?
         Ancestors are NOT consulted -- the walk prunes them first."""
@@ -102,7 +181,11 @@ class IgnoreRules:
                 return True
         elif is_ignored_file_name(name):
             return True
-        return self._custom_match(rel_posix, name, is_dir)
+        elif rel_posix in self.ignored_files:
+            return True
+        if self._custom_match(rel_posix, name, is_dir):
+            return True
+        return not self._include_allows(rel_posix, is_dir)
 
     def path_ignored(self, rel: Path) -> bool:
         """Would a FILE at `rel` (relative to the root) be ignored, counting
@@ -122,15 +205,23 @@ class DiscoveryReport:
     # Discoverable-extension files that live in a pruned directory or were
     # ignored by a file rule.
     files_skipped: int = 0
+    # Files whose bytes contradict their extension (e.g. a text file named
+    # x.pdf): not real documents, never handed to a parser.
+    invalid_skipped: int = 0
 
 
 def discover(
-    root: Path, *, extensions: frozenset[str] | set[str], enabled: bool = True
+    root: Path,
+    *,
+    extensions: frozenset[str] | set[str],
+    enabled: bool = True,
+    extra_rules: object = None,
 ) -> DiscoveryReport:
     """Walk `root`, pruning ignored directories. With `enabled=False` nothing
-    is ignored (escape hatch: DOCKET_INGEST_IGNORE_ENABLED=false)."""
+    is ignored (escape hatch: DOCKET_INGEST_IGNORE_ENABLED=false).
+    `extra_rules` is the source's stored `rules_json`."""
     root = Path(root)
-    rules = IgnoreRules.for_root(root) if enabled else IgnoreRules()
+    rules = IgnoreRules.for_root(root, extra_rules) if enabled else IgnoreRules()
     report = DiscoveryReport(files=[])
 
     for dirpath, dirnames, filenames in os.walk(root):
@@ -155,6 +246,13 @@ def discover(
                 continue
             p = here / f
             if p.is_file():
+                try:
+                    check_file_signature(p)
+                except InvalidFileError:
+                    report.invalid_skipped += 1
+                    continue
+                except OSError:
+                    pass  # unreadable: the parser reports it per file
                 report.files.append(p)
 
     report.files.sort()
@@ -176,4 +274,16 @@ def skipped_summary(files_skipped: int) -> str | None:
     return (
         f"Skipped {files_skipped} {noun} in ignored folders "
         "(virtualenvs, site-packages, hidden)"
+    )
+
+
+def invalid_summary(invalid_skipped: int) -> str | None:
+    """Dim line for files skipped because they are not real documents."""
+    if invalid_skipped <= 0:
+        return None
+    if invalid_skipped == 1:
+        return "Skipped 1 file that is not a real document (contents do not match its extension)"
+    return (
+        f"Skipped {invalid_skipped} files that are not real documents "
+        "(contents do not match their extensions)"
     )

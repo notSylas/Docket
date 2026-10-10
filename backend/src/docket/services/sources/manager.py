@@ -20,6 +20,8 @@ drives via ``mark_unreachable``/``mark_reachable`` on every ingestion run.
 
 from __future__ import annotations
 
+import os
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -29,6 +31,8 @@ from sqlalchemy.orm import sessionmaker
 from docket.core.config import Settings
 from docket.core.config import settings as _default_settings
 from docket.core.db.models import AuthorizedSource, Source, SourceStatus, Workspace
+from docket.services.ingestion.ignore import dump_rules_json
+from docket.services.sources.resolve import display_names, resolve_source
 
 DEFAULT_WORKSPACE_NAME = "default"
 
@@ -51,6 +55,32 @@ class SourceNotFoundError(Exception):
     def __init__(self, source_id: str):
         self.source_id = source_id
         super().__init__(f"source not found: {source_id}")
+
+
+class SourceCoveredError(ValueError):
+    """The folder lies inside an existing ACTIVE source, so registering it
+    would index the same files twice. `covering` is that source."""
+
+    def __init__(self, path: Path | str, covering: Source, name: str | None = None):
+        self.path = Path(path)
+        self.covering = covering
+        self.covering_name = name or Path(covering.path).name or str(covering.path)
+        super().__init__(f"{self.path} is already covered by {self.covering_name}")
+
+
+def _glob_escape(text: str) -> str:
+    """Escape fnmatch metacharacters so a literal folder name matches itself."""
+    return re.sub(r"([*?\[])", r"[\1]", text)
+
+
+def _is_within(child: Path, parent: Path) -> bool:
+    """Strictly inside (not equal), compared on resolved paths."""
+    try:
+        c = Path(os.path.realpath(child))
+        p = Path(os.path.realpath(parent))
+    except OSError:
+        return False
+    return c != p and p in c.parents
 
 
 class InvalidSourceTransitionError(Exception):
@@ -90,12 +120,24 @@ class SourceManager:
             session.refresh(workspace)
             return workspace
 
-    def register_source(self, path: Path, *, workspace_id: str | None = None) -> Source:
+    def register_source(
+        self,
+        path: Path,
+        *,
+        workspace_id: str | None = None,
+        display_name: str | None = None,
+    ) -> Source:
         """Register a local folder as a source.
 
         Validates ``path`` exists and is a directory before touching the DB
         -- registering a bogus path would silently create a Source that can
         never successfully ingest anything, so we fail fast here instead.
+
+        Sources never overlap: a folder INSIDE an existing ACTIVE source
+        raises `SourceCoveredError`; registering a PARENT of existing
+        ACTIVE/MISSING sources stores excludes for those child folders in the
+        new source's ``rules_json`` (the children stay sources). An exact
+        duplicate path registers as before.
         """
         path = Path(path)
         if not path.exists():
@@ -107,6 +149,29 @@ class SourceManager:
             workspace_id = self.get_or_create_default_workspace().id
 
         with self._session_factory() as session:
+            existing = list(session.execute(select(Source)).scalars().all())
+            local = [s for s in existing if s.source_type == "local_folder"]
+            for other in local:
+                if other.status == SourceStatus.ACTIVE and _is_within(path, Path(other.path)):
+                    raise SourceCoveredError(
+                        path, other, display_names(existing).get(other.id)
+                    )
+            excludes: list[str] = []
+            for other in local:
+                if other.status in (SourceStatus.ACTIVE, SourceStatus.MISSING) and _is_within(
+                    Path(other.path), path
+                ):
+                    try:
+                        rel = Path(os.path.realpath(other.path)).relative_to(
+                            Path(os.path.realpath(path))
+                        )
+                    except ValueError:
+                        continue
+                    pattern = "/".join(_glob_escape(part) for part in rel.parts) + "/"
+                    if pattern not in excludes:
+                        excludes.append(pattern)
+            rules = dump_rules_json({"exclude": sorted(excludes)}) if excludes else None
+
             authorized_source = AuthorizedSource(
                 workspace_id=workspace_id, scope_path=str(path)
             )
@@ -119,6 +184,8 @@ class SourceManager:
                 source_type="local_folder",
                 path=str(path),
                 status=SourceStatus.ACTIVE,
+                display_name=(display_name or "").strip() or None,
+                rules_json=rules,
             )
             session.add(source)
             session.commit()
@@ -138,6 +205,11 @@ class SourceManager:
             if source is None:
                 raise SourceNotFoundError(source_id)
             return source
+
+    def get_source_by_ref(self, ref: str, *, workspace_id: str | None = None) -> Source:
+        """Resolve a display name, `sources list` number, ID prefix or full ID
+        (see `services/sources/resolve.py`); raises a `SourceRefError`."""
+        return resolve_source(ref, self.list_sources(workspace_id=workspace_id))
 
     # -- state machine transitions (Upgrade doc 03 section 6) ------------
 

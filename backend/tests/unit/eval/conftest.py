@@ -18,14 +18,18 @@ _BLOCK_RE = re.compile(r"(\[[^\[\]]*#[^\[\]]*\])\n(.*?)(?=\n\n\[|\n\nQuestion: )
 
 
 class PlainTextParser:
-    """Stand-in for `DoclingParser`: the fixture 'pdfs' are plain text."""
+    """Stand-in for `DoclingParser`: the fixture 'pdfs' are plain text behind
+    a `%PDF-` signature line (discovery skips files with no signature)."""
 
     parser_name = "plain"
     parser_version = "1"
 
     def parse(self, source_id: str, path: Path) -> ParsedDocument:
+        text = path.read_text(encoding="utf-8")
+        if text.startswith("%PDF-"):
+            text = text.split("\n", 1)[1] if "\n" in text else ""
         return ParsedDocument(
-            text=path.read_text(encoding="utf-8"),
+            text=text,
             source_path=path,
             parser_name=self.parser_name,
             parser_version=self.parser_version,
