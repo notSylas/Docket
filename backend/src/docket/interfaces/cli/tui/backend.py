@@ -143,6 +143,11 @@ class TuiBackend(Protocol):
     def check_folder(self, path: str) -> FolderCheck: ...
     def is_broad_location(self, path: str) -> bool: ...
     def add_source(self, path: str) -> SourceView: ...
+    # -- folder-first launch (see services/sources/session.py) ------------
+    def plan_for(self, folder: Any) -> Any: ...  # -> SessionPlan (folder None: library)
+    def consent_given(self) -> bool: ...
+    def record_consent(self) -> None: ...
+    def start_folder(self, plan: Any, excluded: tuple[str, ...] = ()) -> SourceView: ...
     def disconnect_source(self, source_id: str) -> None: ...
     def reconnect_source(self, source_id: str) -> None: ...
     def job_finished(self, source_id: str, on_done: str) -> None: ...
@@ -225,6 +230,20 @@ class FakeBackend:
 
     def add_source(self, path: str) -> SourceView:
         return self.world.new_source_from_path(path)
+
+    def plan_for(self, folder: Any) -> Any:
+        from docket.services.sources.session import KIND_LIBRARY, SessionPlan
+
+        return SessionPlan(KIND_LIBRARY, reason="demo")
+
+    def consent_given(self) -> bool:
+        return True
+
+    def record_consent(self) -> None:
+        return None
+
+    def start_folder(self, plan: Any, excluded: tuple[str, ...] = ()) -> SourceView:
+        return self.world.new_source_from_path(str(plan.folder))
 
     def disconnect_source(self, source_id: str) -> None:
         s = self.world.find(source_id)

@@ -80,6 +80,8 @@ class _Session:
         self.last_attempted_question: str | None = None
         self.retry_turn_index: int | None = None
         self._service: Any | None = None
+        self.folder: Path | None = None  # the folder Docket was opened in
+        self.scope: Any = None  # a QueryScope when questions are limited to a folder
         self.state.model = getattr(getattr(context, "settings", None), "gen_model", "") or ""
         self.sync_state()
 
@@ -265,6 +267,7 @@ def run_session(
     state: SessionState | None = None,
     health_check: Callable[[], HealthReport] | None = None,
     offer_first_run: bool = False,
+    folder: Path | None = None,
 ) -> None:
     registry = default_registry()
     state = state if state is not None else SessionState()
@@ -281,6 +284,7 @@ def run_session(
         state=state,
         health_check=health_check,
     )
+    session.folder = folder
     session.banner()
     if offer_first_run:
         session.first_run_offer()

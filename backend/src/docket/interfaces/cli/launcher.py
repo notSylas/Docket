@@ -142,18 +142,40 @@ def forwarded_env(env: dict[str, str] | None = None) -> list[str]:
     return [f"{k}={v}" for k, v in sorted(pairs.items())]
 
 
+def window_title(folder: str | None) -> str:
+    """'Docket' or 'Docket - <folder name>' (a broad place such as home or
+    Desktop keeps the plain title: that window shows the library)."""
+    if not folder:
+        return WINDOW_TITLE
+    from docket.services.sources.session import broad_location_reason
+
+    if broad_location_reason(Path(folder)):
+        return WINDOW_TITLE
+    name = Path(folder).name
+    return f"{WINDOW_TITLE} - {name}" if name else WINDOW_TITLE
+
+
 def build_spawn_argv(
     terminal: list[str],
     cwd: str,
     env: dict[str, str] | None = None,
     docket_command: list[str] | None = None,
+    folder: str | None = None,
+    all_folders: bool = False,
 ) -> list[str]:
+    """`folder` opens Docket on that folder (`--folder`); `all_folders` asks
+    for the library of all folders (`--all`). Neither: the window's own
+    working directory decides."""
     docket = docket_command if docket_command is not None else resolve_docket_command()
     # The full-screen UI is the default in its own window; DOCKET_CLASSIC=1
     # keeps the classic prompt there.
     entry = "chat" if (env if env is not None else os.environ).get("DOCKET_CLASSIC") == "1" else "ui"
     inner = ["env", *forwarded_env(env), *docket, entry, "--in-window"]
-    return build_terminal_argv(terminal, inner, cwd)
+    if all_folders:
+        inner.append("--all")
+    elif folder:
+        inner += ["--folder", folder]
+    return build_terminal_argv(terminal, inner, cwd, window_title(None if all_folders else folder))
 
 
 # -- spawning ---------------------------------------------------------------
@@ -179,8 +201,16 @@ def fallback_reason(env: dict[str, str] | None = None, platform: str | None = No
     return None
 
 
-def spawn_window(env: dict[str, str] | None = None, platform: str | None = None) -> bool:
-    """Open Docket in a detached terminal window. True if spawned, False to run in place."""
+def spawn_window(
+    env: dict[str, str] | None = None,
+    platform: str | None = None,
+    folder: str | None = None,
+    all_folders: bool = False,
+) -> bool:
+    """Open Docket in a detached terminal window. True if spawned, False to run in place.
+
+    `folder` is the folder Docket should open on (the window starts there and
+    is titled with its name); `all_folders` opens the library instead."""
     env = os.environ if env is None else env
     reason = fallback_reason(env, platform)
     if reason is not None:
@@ -194,8 +224,8 @@ def spawn_window(env: dict[str, str] | None = None, platform: str | None = None)
             file=sys.stderr,
         )
         return False
-    cwd = os.getcwd()
-    argv = build_spawn_argv(terminal, cwd, env)
+    cwd = folder if (folder and not all_folders and os.path.isdir(folder)) else os.getcwd()
+    argv = build_spawn_argv(terminal, cwd, env, folder=folder, all_folders=all_folders)
     try:
         subprocess.Popen(
             argv,

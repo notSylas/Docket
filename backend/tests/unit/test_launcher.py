@@ -288,8 +288,8 @@ def _fake_tty(monkeypatch):
 def test_bare_docket_with_tty_spawns(monkeypatch):
     calls = []
     _fake_tty(monkeypatch)
-    monkeypatch.setattr(cli_main.launcher, "spawn_window", lambda: calls.append("spawn") or True)
-    monkeypatch.setattr(cli_main, "_run_interactive", lambda: calls.append("inplace"))
+    monkeypatch.setattr(cli_main.launcher, "spawn_window", lambda **kw: calls.append("spawn") or True)
+    monkeypatch.setattr(cli_main, "_run_interactive", lambda *a: calls.append("inplace"))
     result = CliRunner().invoke(cli_main.app, [])
     assert result.exit_code == 0
     assert calls == ["spawn"]
@@ -298,22 +298,22 @@ def test_bare_docket_with_tty_spawns(monkeypatch):
 def test_bare_docket_falls_back_in_place(monkeypatch):
     calls = []
     _fake_tty(monkeypatch)
-    monkeypatch.setattr(cli_main.launcher, "spawn_window", lambda: False)
-    monkeypatch.setattr(cli_main, "_run_interactive", lambda: calls.append("inplace"))
+    monkeypatch.setattr(cli_main.launcher, "spawn_window", lambda **kw: False)
+    monkeypatch.setattr(cli_main, "_run_interactive", lambda *a: calls.append("inplace"))
     CliRunner().invoke(cli_main.app, [])
     assert calls == ["inplace"]
 
 
 def test_chat_stays_in_place(monkeypatch):
     calls = []
-    monkeypatch.setattr(cli_main.launcher, "spawn_window", lambda: calls.append("spawn") or True)
-    monkeypatch.setattr(cli_main, "_run_interactive", lambda: calls.append("inplace"))
+    monkeypatch.setattr(cli_main.launcher, "spawn_window", lambda **kw: calls.append("spawn") or True)
+    monkeypatch.setattr(cli_main, "_run_interactive", lambda *a: calls.append("inplace"))
     CliRunner().invoke(cli_main.app, ["chat"])
     assert calls == ["inplace"]
 
 
 def test_in_window_error_waits_for_enter(monkeypatch):
-    def boom():
+    def boom(*_a):
         raise RuntimeError("kaput")
 
     monkeypatch.setattr(cli_main, "_run_interactive", boom)

@@ -92,25 +92,91 @@ def _register(session: Any, path: Path) -> Any | None:
 
 
 def first_run_offer(session: Any) -> None:
-    """Opt-in guided start: offer to register the cwd when nothing is set up."""
-    if session.context.source_manager.list_sources():
+    """Folder-first start for the classic prompt: act on the folder Docket was
+    opened in. A folder already covered by a source is searched as is; a new
+    folder with documents is offered for indexing (asked once per data
+    directory, then done unasked); home, a broad root or no folder does
+    nothing. The bare current directory is never offered blindly."""
+    from docket.services.sources.session import (
+        KIND_COVERED,
+        KIND_EMPTY,
+        KIND_NEW,
+        has_consent,
+        record_consent,
+        resolve_session,
+        start_folder,
+    )
+
+    folder = getattr(session, "folder", None)
+    if folder is None:
         return
-    cwd = Path.cwd().resolve()
-    if cwd == Path("/") or cwd == Path.home().resolve():
+    ctx = session.context
+    try:
+        plan = resolve_session(
+            folder,
+            ctx.source_manager,
+            session_factory=getattr(ctx, "session_factory", None),
+            suggest_for_library=False,
+        )
+    except Exception:  # noqa: BLE001 -- a scan problem must never block the prompt
         return
-    if not _confirm(session, f"No sources yet. Add the current directory ({cwd})? [y/N] "):
+    if plan.kind == KIND_COVERED:
+        session.scope = plan.scope
+        where = plan.source_name + (f" / {plan.relative_path}" if plan.relative_path else "")
+        session.say(f"Using {where}, already indexed. Questions here search this folder only.")
         return
-    source_id = _register(session, cwd)
-    if source_id is None:
+    if plan.kind == KIND_EMPTY:
+        session.say(f"No supported documents in {plan.name} ({plan.reason}).")
         return
-    if _confirm(session, "Ingest it now? [y/N] "):
+    if plan.kind != KIND_NEW:
+        return
+
+    n = plan.documents
+    noun = "document" if n == 1 else "documents"
+    data_dir = ctx.settings.data_dir
+    if plan.needs_preview:
+        scan = plan.scan
+        session.say(
+            f"{plan.name} is large: {n} {noun}"
+            + (" or more" if scan and scan.incomplete else "")
+            + ".",
+        )
+        if scan is not None:
+            for name, count in scan.subfolders[:5]:
+                session.say(f"  {name}: {count}", style="dim")
+        if not _confirm(session, "Index everything here anyway? [y/N] "):
+            return
+    elif not has_consent(data_dir):
+        if not _confirm(
+            session, f"Docket will read {n} {noun} in {plan.name}. Index them now? [y/N] "
+        ):
+            return
         try:
-            session.cmd_ingest(str(source_id))
-        except KeyboardInterrupt:
-            session.say()
-            session.say("(interrupted)", style="dim")
-        except Exception as exc:  # noqa: BLE001
-            handle_error(session, exc)
+            record_consent(data_dir)
+        except OSError:
+            pass
+    else:
+        session.say(f"Reading {n} {noun} in {plan.name}.")
+    try:
+        source = start_folder(ctx.source_manager, plan)
+    except SourceCoveredError as exc:
+        session.say(f"Already covered by {exc.covering_name}.")
+        return
+    except ValueError as exc:
+        session.error(f"Error: {exc}")
+        return
+    from docket.services.query.scope import QueryScope
+
+    session.scope = QueryScope.for_source(source.id, label=plan.name)
+    session.state.refresh_sources(ctx.source_manager)
+    session.sync_state()
+    try:
+        session.cmd_ingest(str(source.id))
+    except KeyboardInterrupt:
+        session.say()
+        session.say("(interrupted)", style="dim")
+    except Exception as exc:  # noqa: BLE001
+        handle_error(session, exc)
 
 
 def _confirm(session: Any, prompt: str) -> bool:

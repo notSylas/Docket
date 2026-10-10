@@ -22,6 +22,8 @@ def run_ui(
     reduced_motion: bool = False,
     ascii_mode: bool | None = None,
     backend: Any = None,
+    folder: Any = None,
+    session_plan: Any = None,
 ) -> None:
     """Run the full-screen UI against real services until the user exits.
 
@@ -31,7 +33,17 @@ def run_ui(
     """
     from docket.interfaces.cli.tui.real_backend import RealBackend
 
-    ui = TuiApp(backend or RealBackend(context), reduced_motion=reduced_motion, ascii_mode=ascii_mode)
+    backend = backend or RealBackend(context)
+    if session_plan is None and hasattr(backend, "plan_for"):
+        if folder is not None:
+            print("Looking at the folder...", flush=True)
+        session_plan = backend.plan_for(folder)
+    ui = TuiApp(
+        backend,
+        reduced_motion=reduced_motion,
+        ascii_mode=ascii_mode,
+        session_plan=session_plan,
+    )
     try:
         ui.run()
     finally:
