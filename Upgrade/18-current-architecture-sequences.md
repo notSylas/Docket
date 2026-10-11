@@ -2,7 +2,7 @@
 
 Status: **Current.** Companion to [18-current-architecture.md](18-current-architecture.md). Each diagram follows one real flow through the code on `main` (commit `8a13c3b`), step by step, with the module that performs each step. Nothing here is a proposal.
 
-How to read: columns are participants (grey cards), numbered arrows are calls in time order, green notes mark the decision or the guarantee that matters, and `alt` / `opt` / `loop` boxes show branches and repetition. Paths are relative to `backend/src/docket/`.
+How to read: columns are participants (grey cards), numbered arrows are calls in time order, green notes mark the decision or the guarantee that matters, and `alt` / `opt` / `loop` boxes show branches and repetition. Diagrams name components, not source files.
 
 | Part | Flow |
 | --- | --- |
@@ -27,16 +27,16 @@ How to read: columns are participants (grey cards), numbered arrows are calls in
 sequenceDiagram
     autonumber
     actor U as User
-    participant CLI as main.py
-    participant L as launcher.py
+    participant CLI as Command line
+    participant L as Launcher
     participant T as Terminal window
     participant UI as docket ui --in-window
-    participant S as session.py
+    participant S as Session planner
     U->>CLI: docket [folder]
     CLI->>CLI: resolve folder argument (default: current directory)
     CLI->>L: spawn_window(folder)
     alt display available, not SSH, not DOCKET_NO_WINDOW
-        L->>L: find_terminal() (DOCKET_TERMINAL, $TERMINAL, known emulators)
+        L->>L: find a terminal (override, $TERMINAL, known emulators)
         L->>T: Popen(env DOCKET_* ... docket ui --in-window --folder F, new session)
         L-->>CLI: True
         CLI-->>U: "Opened Docket in a new window." (shell returns)
@@ -45,15 +45,13 @@ sequenceDiagram
         L-->>CLI: False
         CLI->>UI: run the interactive session in place
     end
-    UI->>S: resolve_session(cwd, sources)
+    UI->>S: plan the session (cwd, sources)
     Note over S: library · covered · new · empty
     S-->>UI: SessionPlan
     UI-->>U: chat, consent, preview, or library view
 ```
 
 The launcher passes every `DOCKET_*` variable through to the new window, so a scratch data directory set in the calling shell also applies there. If the full-screen UI fails with an unexpected error, the window prints it and waits for Enter instead of closing.
-
-Files: `interfaces/cli/main.py`, `interfaces/cli/launcher.py`, `services/sources/session.py`.
 
 ---
 
@@ -66,12 +64,12 @@ sequenceDiagram
     actor U as User
     participant UI as TuiApp
     participant B as RealBackend
-    participant SS as session.py
+    participant SS as Session planner
     participant SM as SourceManager
     participant P as IngestionPipeline
     UI->>B: plan_for(folder)
-    B->>SS: resolve_session(folder)
-    SS->>SS: scan_folder(folder), bounded to about 2 s
+    B->>SS: plan the session (folder)
+    SS->>SS: scan the folder (bounded to about 2 s)
     SS-->>UI: new folder plan (counts, broad?)
     alt broad or large folder
         UI-->>U: preview: counts by type and subfolder, checkboxes
@@ -80,7 +78,7 @@ sequenceDiagram
         UI-->>U: "Read this folder?"
         U->>UI: Continue
         UI->>B: record_consent()
-        B->>SS: write preferences.json (folder_consent_v1)
+        B->>SS: remember consent in preferences
     end
     UI->>B: start_folder(folder, excludes)
     B->>SM: register_source(path, display_name, rules)
@@ -94,8 +92,6 @@ sequenceDiagram
 ```
 
 Consent is asked once per data directory. Nothing is registered or read before the user agrees. The scan is read-only and is limited by time and number of entries, so a huge tree is reported as "broad" instead of being walked completely.
-
-Files: `services/sources/scan.py`, `session.py`, `manager.py`; `interfaces/cli/tui/app.py`, `real_backend.py`.
 
 ---
 
@@ -144,8 +140,6 @@ sequenceDiagram
 
 The index text sent to the embedder and the full-text index is the chunk plus its file name, heading breadcrumb and (for spreadsheets) a `Context:` line with fiscal year and units. The stored chunk text stays verbatim, so citations quote the original. A final reconcile after the whole run removes any index row that no longer has a current chunk.
 
-Files: `services/ingestion/pipeline.py`, `chunk_writer.py`; `infra/evidence/manager.py`; `infra/parsing/*`; `infra/index/manager.py`, `context.py`.
-
 ---
 
 ## D. A question, fast path
@@ -156,7 +150,7 @@ sequenceDiagram
     autonumber
     actor U as User
     participant Q as QueryService
-    participant SC as scope.py
+    participant SC as Scope resolver
     participant G as Ollama gateway
     participant HS as hybrid_search
     participant R as EvidenceResolver
@@ -187,8 +181,6 @@ sequenceDiagram
 
 If the search returns nothing, the answer is the fixed abstention sentence and no model call is made. The scope is applied before ranking, so a folder scope cannot be widened by a file named in the question; a named file outside the scope produces an explanation instead of a wider search.
 
-Files: `services/query/service.py`, `scope.py`, `signals.py`; `infra/retrieval/hybrid.py`, `resolver.py`; `infra/inference/gateway.py`.
-
 ---
 
 ## E. Citation validation and repair
@@ -198,7 +190,7 @@ Files: `services/query/service.py`, `scope.py`, `signals.py`; `infra/retrieval/h
 sequenceDiagram
     autonumber
     participant Q as QueryService
-    participant V as citations.py
+    participant V as Citation checker
     participant R as EvidenceResolver
     participant G as Ollama gateway
     Q->>V: validate_citations(answer, resolved chunks)
@@ -224,8 +216,6 @@ sequenceDiagram
 ```
 
 This is the whole trust check today. It protects against invented citations, uncited answers and evidence that disappeared mid-answer. It does not verify that a cited passage supports each claim; the answer view says so ("citations are not verified").
-
-Files: `services/query/citations.py`, `service.py` (`_finalize_answer`).
 
 ---
 
@@ -265,8 +255,6 @@ sequenceDiagram
 
 Citations come from what the tools actually returned, not from labels the model wrote. On the measured sets this path scored 47% against 82% for the fast path, because the local model usually searches once and reads the top hit; it is therefore used only for investigative phrasing.
 
-Files: `services/query/classifier.py`, `service.py`; `services/agent/graph.py`, `policy_gateway.py`, `tools.py`, `run_context.py`.
-
 ---
 
 ## G. Asking while indexing
@@ -301,8 +289,6 @@ sequenceDiagram
 
 Two slots exist: one indexing job and one question. A second question is refused with a message and the draft is kept; starting Add or Refresh while a question runs is refused too. Stopping an indexing job takes effect between files. A model call that has started cannot be interrupted.
 
-Files: `interfaces/cli/tui/app.py`, `yield_gate.py`, `real_backend.py`.
-
 ---
 
 ## H. Freshness: launch catch-up and a watcher batch
@@ -312,7 +298,7 @@ Files: `interfaces/cli/tui/app.py`, `yield_gate.py`, `real_backend.py`.
 sequenceDiagram
     autonumber
     participant UI as TuiApp
-    participant F as freshness.py
+    participant F as Freshness
     participant W as FileWatcher thread
     participant D as Debouncer
     participant P as IngestionPipeline
@@ -338,8 +324,6 @@ sequenceDiagram
 ```
 
 An unreachable root deletes nothing and marks the source MISSING; if everything looks "gone" under a reachable but empty root, deletions are held back rather than wiping the index. The whole mechanism stops when the window closes.
-
-Files: `services/sources/freshness.py`, `watcher.py`; `services/ingestion/pipeline.py`; `interfaces/cli/tui/app.py`.
 
 ---
 
@@ -379,8 +363,6 @@ sequenceDiagram
 
 Rechunk always works from the stored original bytes, never from the file on disk, so it cannot pick up a newer edit; refresh does that. Reindex is global and is skipped when the plan is limited to one source.
 
-Files: `services/sources/maintenance.py`, `prune.py`; `services/ingestion/pipeline.py`; `infra/index/reindex.py`.
-
 ---
 
 ## J. Narrowing a broad source and pruning
@@ -392,7 +374,7 @@ sequenceDiagram
     actor U as User
     participant UI as Sources panel
     participant B as RealBackend
-    participant SC as scan.py
+    participant SC as Folder scanner
     participant SM as SourceManager
     participant PR as SourcePruneService
     U->>UI: Narrow on the Desktop source
@@ -411,8 +393,6 @@ sequenceDiagram
 ```
 
 Rules are stored on the source row (`rules_json`: exclude, include, ignored files) and are read by discovery on every run, so excluded folders stay excluded. The same path handles "Ignore this file" for a permanently failing document.
-
-Files: `services/sources/manager.py`, `scan.py`, `prune.py`; `services/ingestion/ignore.py`.
 
 ---
 
@@ -441,8 +421,6 @@ sequenceDiagram
 ```
 
 Evidence is resolved again every time it is opened, so a disconnected or deleted source cannot be read through an old answer. A citation always refers to the version it was answered from, never to a newer one. "Open original" is disabled for now.
-
-Files: `infra/retrieval/resolver.py`; `interfaces/cli/tui/overlays.py`, `real_backend.py`.
 
 ---
 
