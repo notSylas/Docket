@@ -59,6 +59,21 @@ with WriterLock(sys.argv[1]).hold('indexing temporary fixtures'):
 
 
 @pytest.mark.parametrize("suffix", ["", ".zip"])
+def test_feedback_round_trip_preserves_private_permissions(library, tmp_path, suffix):
+    from docket.services.feedback import FeedbackStore
+    store = FeedbackStore(library.settings.data_dir, True)
+    fid = store.capture("Private question", "Private answer", [], "good")
+    destination = snapshots.backup(library.settings.data_dir, tmp_path / ("private" + suffix))
+    assert destination.stat().st_mode & 0o077 == 0
+    target = tmp_path / "restored-private"
+    snapshots.restore(target, destination)
+    restored = FeedbackStore(target)
+    assert restored.items()[0]["id"] == fid
+    assert restored.path.stat().st_mode & 0o777 == 0o600
+    assert restored.path.parent.stat().st_mode & 0o777 == 0o700
+
+
+@pytest.mark.parametrize("suffix", ["", ".zip"])
 def test_round_trip_with_wal_originals_vectors_preferences_and_lock(library, tmp_path, suffix):
     root = library.settings.data_dir
     # This row is committed into the live WAL, which a raw main-file copy

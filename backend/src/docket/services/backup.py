@@ -27,7 +27,7 @@ from docket.infra.index.manifest import read_manifest
 
 MANIFEST = "backup.json"
 ROOT_FILES = {"docket.sqlite3", "index_manifest.json", "preferences.json"}
-ROOT_TREES = {"lancedb", "evidence_store"}
+ROOT_TREES = {"lancedb", "evidence_store", "feedback"}
 
 
 class BackupError(ValueError):
@@ -189,7 +189,7 @@ def backup(data_dir: Path, destination: Path | None = None, *, writer_lock: Writ
                 target.parent.mkdir(parents=True, exist_ok=True)
                 staging = Path(tempfile.mkdtemp(prefix=".docket-backup-", dir=target.parent))
                 payload = staging / "payload"
-                payload.mkdir()
+                payload.mkdir(mode=0o700)
                 with closing(sqlite3.connect(payload / "docket.sqlite3")) as copied:
                     _copy_database(source, copied)
             for name in sorted(ROOT_FILES - {"docket.sqlite3"}):
@@ -208,6 +208,9 @@ def backup(data_dir: Path, destination: Path | None = None, *, writer_lock: Writ
                     copied = payload / path.relative_to(root)
                     copied.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copyfile(path, copied)
+                    if name == "feedback":
+                        (payload / "feedback").chmod(0o700)
+                        copied.chmod(0o600)
             index = _index_raw(payload)
             revision = check_library(payload, expected_index=index)
             manifest = {
@@ -224,6 +227,7 @@ def backup(data_dir: Path, destination: Path | None = None, *, writer_lock: Writ
                 with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as out:
                     for path in _files(payload):
                         out.write(path, path.relative_to(payload).as_posix())
+                archive.chmod(0o600)
                 with archive.open("rb") as stream:
                     os.fsync(stream.fileno())
                 # Publishing a ZIP must not replace a concurrently created
@@ -288,6 +292,9 @@ def _read_snapshot(source: Path, staging: Path) -> dict:
                     out.write(block)
             if size != record["size"] or digest.hexdigest() != record.get("sha256"):
                 raise BackupError(f"A backup file is missing or damaged: {name}")
+            if relative.parts[0] == "feedback":
+                (staging / "feedback").chmod(0o700)
+                path.chmod(0o600)
         return manifest
     except BackupError:
         raise

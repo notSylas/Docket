@@ -7,6 +7,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="DOCKET_")
 
     data_dir: Path = Path.home() / ".local" / "share" / "docket"
+    # Explicit local opt-in. No capture, export, logging or training happens automatically.
+    feedback_enabled: bool = False
 
     gen_model: str = "qwen3:14b"
     embed_model: str = "qwen3-embedding:0.6b"

@@ -146,6 +146,7 @@ class RealBackend:
     ) -> None:
         self._ctx = context
         settings = context.settings
+        self.feedback_enabled = getattr(settings, "feedback_enabled", False)
         if query_service_factory is None:
             from docket.interfaces.cli.interactive.session import _default_factory
 
@@ -187,9 +188,21 @@ class RealBackend:
             ("settings", "answering, appearance, history, system", ""),
             ("details", "details of the latest answer", ""),
             ("update", "bring the library up to date", ""),
+            ("feedback", "rate the focused answer privately (F9)", ""),
         )
 
     # -- models ------------------------------------------------------------
+    def save_feedback(self, question: str, answer: AnswerView, label: str, correction: str = "", *, answer_text: str | None = None) -> str:
+        from docket.core.writer_lock import lock_for_sessions
+        from docket.services.feedback import FeedbackStore
+
+        return FeedbackStore(self._ctx.settings.data_dir, self.feedback_enabled,
+                             writer_lock=lock_for_sessions(self._ctx.session_factory)).capture(
+            question, answer.text if answer_text is None else answer_text,
+            [{"chunk_id": c.chunk_id, "evidence_version_id": c.evidence_version_id} for c in answer.citations],
+            label, correction,
+        )
+
     @property
     def answer_models(self) -> tuple[tuple[str, bool, str], ...]:
         name = self.default_model
@@ -1178,6 +1191,7 @@ class RealBackend:
                     indexed=_local_time(observed) if observed else "unknown",
                     chunk_id=c.chunk_id,
                     source=source_name,
+                    evidence_version_id=ev.evidence_version_id,
                 )
             )
         return out

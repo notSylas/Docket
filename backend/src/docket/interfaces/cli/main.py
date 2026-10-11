@@ -122,6 +122,62 @@ formulas_app = typer.Typer(help="Verify a sample of formula transcriptions again
 app.add_typer(formulas_app, name="formulas")
 library_app = typer.Typer(help="Maintain stored library data.")
 app.add_typer(library_app, name="library")
+feedback_app = typer.Typer(help="Review private feedback and export draft evaluation cases.")
+app.add_typer(feedback_app, name="feedback")
+
+
+@feedback_app.command("review")
+def feedback_review(
+    item_id: str = typer.Argument(..., help="Full saved feedback ID."),
+    expected: str = typer.Option("", "--expected", help="Manually checked expected fact."),
+    spans: list[str] = typer.Option([], "--span", help="Verbatim cited quote, 20–60 characters; repeatable."),
+    unanswerable: bool = typer.Option(False, "--unanswerable", help="Explicitly review this question as unanswerable."),
+) -> None:
+    """Review one capture against its stored evidence; this does not accept gold."""
+    from docket.core.writer_lock import lock_for_sessions
+    from docket.services.feedback import FeedbackError, FeedbackStore
+
+    context = build_context()
+    try:
+        FeedbackStore(context.settings.data_dir, writer_lock=lock_for_sessions(context.session_factory)).review(
+            item_id, context.resolver, expected=expected, spans=spans, answerable=not unanswerable)
+    except FeedbackError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+    typer.echo("Feedback reviewed. Any export remains DRAFT with reviewed: false; no training was performed.")
+
+
+@feedback_app.command("export")
+def feedback_export(
+    gold_draft: bool = typer.Option(False, "--gold-draft", help="Export explicitly reviewed items as unaccepted gold drafts."),
+    out: Path | None = typer.Option(None, "--out", help="New private YAML file; otherwise write to standard output."),
+) -> None:
+    """Export DRAFT cases only, never raw feedback or automatic training data."""
+    import os
+    from docket.services.feedback import FeedbackError, FeedbackStore
+
+    if not gold_draft:
+        typer.echo("Choose --gold-draft to export reviewed items. Raw feedback is kept private.", err=True)
+        raise typer.Exit(1)
+    context = build_context()
+    try:
+        content, skipped = FeedbackStore(context.settings.data_dir).export_gold(context.resolver)
+        if out is None:
+            typer.echo(content, nl=False)
+        else:
+            fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            typer.echo(f"DRAFT gold saved to {out}.")
+    except FeedbackError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+    except OSError:
+        typer.echo("Draft could not be written. Choose a new file in a writable folder.", err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"DRAFT only: reviewed: false. {skipped} reviewed items skipped because evidence is unavailable or invalid.", err=True)
 
 
 @app.command("doctor")

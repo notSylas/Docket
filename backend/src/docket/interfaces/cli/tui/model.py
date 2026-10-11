@@ -38,6 +38,7 @@ class Message:
     scope_label: str = ""
     uid: int = 0
     history_answer: str = ""  # tagged answer text kept for follow-up context
+    question: str = ""  # the question for this answer, including older focused answers
 
 
 @dataclass

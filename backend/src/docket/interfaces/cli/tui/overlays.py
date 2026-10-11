@@ -1991,6 +1991,41 @@ class ConfirmOverlay(Overlay):
             cb()
 
 
+class FeedbackOverlay(Overlay):
+    name = "feedback"
+    title = "Private feedback"
+    filterable = True
+    placeholder = "optional one-line correction"
+
+    def __init__(self, ui, message):
+        self.message = message
+        super().__init__(ui)
+
+    def build_body(self, iw):
+        return wrap_text("Rate this answer. Your question, answer and cited passage versions stay in the private local feedback folder. Nothing is sent or trained.", iw, TEXT), None
+
+    def filter_row(self, iw):
+        return [(MUTED, "Correction: "), (TEXT, truncate(self.filter_text or self.placeholder, iw - 12))]
+
+    def text(self, s):
+        super().text(" ".join(s.splitlines()))
+        self.filter_text = self.filter_text[:500]
+
+    def buttons(self):
+        return [Btn("good", "Good"), Btn("not_good", "Not good"), Btn("cancel", "Cancel")]
+
+    def on_enter_input(self):
+        self.stop = 1  # choose a label explicitly; typing a correction does not submit it
+
+    def hint(self):
+        return "Tab choose label · Enter save · Esc cancel"
+
+    def press(self, key):
+        self.ui.close_top(force=True)
+        if key != "cancel":
+            self.ui.save_feedback(self.message, key, self.filter_text)
+
+
 class JobsOverlay(Overlay):
     name = "jobs"
     title = "Jobs"

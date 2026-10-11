@@ -77,6 +77,7 @@ class FakeCitation:
     table: tuple[tuple[str, ...], ...] = ()
     table_origin: str = ""
     cited: tuple[str, ...] = ()
+    evidence_version_id: str = ""  # stable identity, distinct from the display ordinal
 
     @property
     def version_label(self) -> str:
