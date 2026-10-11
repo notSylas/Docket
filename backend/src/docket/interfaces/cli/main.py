@@ -120,6 +120,68 @@ sources_app = typer.Typer(help="Manage registered sources (local folders).")
 app.add_typer(sources_app, name="sources")
 formulas_app = typer.Typer(help="Verify a sample of formula transcriptions against their source crops.")
 app.add_typer(formulas_app, name="formulas")
+library_app = typer.Typer(help="Maintain stored library data.")
+app.add_typer(library_app, name="library")
+
+
+def _cleanup(context):
+    from docket.services.library_cleanup import LibraryCleanup
+
+    return LibraryCleanup(context.session_factory, context.source_manager, context.purge_service,
+                          context.store, context.settings)
+
+
+@sources_app.command("purge")
+def sources_purge(
+    name: str = typer.Argument(..., help="Disconnected folder name, number or ID."),
+    yes: bool = typer.Option(False, "--yes", help="Skip the deletion confirmation."),
+) -> None:
+    """Delete a disconnected folder's stored evidence and index entries."""
+    from docket.services.library_cleanup import CleanupError
+    from docket.services.sources.manager import InvalidSourceTransitionError
+    from docket.services.sources.purge import SourceNotPurgeableError
+
+    context = build_context()
+    source = _resolve_ref(context, name)
+    if source.status not in (SourceStatus.REVOKED, SourceStatus.HARD_DELETE_PENDING):
+        typer.echo("Disconnect this folder before purging it. Original user files are never touched.", err=True)
+        raise typer.Exit(1)
+    typer.echo("Deletes stored passages, versions and index entries for this folder. "
+               "Unshared stored originals enter trash before permanent cleanup; shared originals remain. "
+               "Job history is retained. Original user files are never touched.")
+    if not yes and not typer.confirm(f"Purge stored evidence for {name}?", default=False):
+        typer.echo("Cancelled. Nothing was purged.")
+        return
+    try:
+        result = _cleanup(context).purge_disconnected(source.id)
+    except (CleanupError, InvalidSourceTransitionError, SourceNotPurgeableError, SourceNotFoundError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+    except (WriterLockBusyError, LibraryReplacedError):
+        raise
+    except Exception:
+        typer.echo("The purge could not finish. Check data-folder permissions and disk space, then retry.", err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"Purged {result.versions_deleted} stored versions; {len(result.blobs_trashed)} originals moved to trash.")
+
+
+@library_app.command("clean")
+def library_clean(
+    apply: bool = typer.Option(False, "--apply", help="Apply the previewed retention and trash cleanup."),
+) -> None:
+    """Preview expired retention and evidence trash cleanup by default."""
+    try:
+        plan = _cleanup(build_context()).clean(apply=apply)
+    except (WriterLockBusyError, LibraryReplacedError):
+        raise
+    except Exception:
+        typer.echo("Cleanup could not finish. Check data-folder permissions and disk space, then retry.", err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"{'Cleaned' if apply else 'Preview'}: {len(plan.source_ids)} expired or pending folders; "
+               f"{len(plan.trash_objects)} trash objects {'deleted' if apply else 'eligible for deletion'}.")
+    typer.echo("Original user files are never touched. Disconnected folders are retained unless explicitly purged.")
+    if not apply:
+        typer.echo("No evidence was deleted. Run docket library clean --apply to apply this cleanup.")
 
 
 @app.command("backup")
