@@ -124,6 +124,21 @@ library_app = typer.Typer(help="Maintain stored library data.")
 app.add_typer(library_app, name="library")
 
 
+@app.command("doctor")
+def doctor_command() -> None:
+    """Check local setup without changing the library or loading models."""
+    from docket.core.config import Settings
+    from docket.services.doctor import checks
+
+    results = checks(Settings())
+    for result in results:
+        typer.echo(f"{result.status} · {result.name}: {result.detail}")
+        if result.fix:
+            typer.echo(f"  Fix: {result.fix}")
+    if any(result.status == "BLOCK" for result in results):
+        raise typer.Exit(1)
+
+
 def _cleanup(context):
     from docket.services.library_cleanup import LibraryCleanup
 
