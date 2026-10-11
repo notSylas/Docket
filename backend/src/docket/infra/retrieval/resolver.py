@@ -83,6 +83,7 @@ def format_location(
     locator_json: str | None,
     page_start: int | None = None,
     page_end: int | None = None,
+    chunk_ordinal: int | None = None,
 ) -> str | None:
     """Location line for a chunk, from the unit's stored locator (not the
     chunk text): ``Section: A > B (pages 4-5)`` for Docling sections,
@@ -107,6 +108,21 @@ def format_location(
     if "part" in locator and "of" in locator:
         part = f", part {locator['part']} of {locator['of']}"
 
+    if unit_kind == "mail_message":
+        text = f"Location: {_clean(file_name)} > Message {_clean(locator.get('message_index', '?'))}"
+        text += f", byte {_clean(locator.get('byte_offset', '?'))}"
+        if locator.get("message_id"):
+            text += f", Message-ID {_clean(locator['message_id'])}"
+        chunk = next((c for c in locator.get("chunks", []) if c.get("ordinal") == chunk_ordinal), {})
+        parts = chunk.get("body_parts", [])
+        if not parts:
+            text += ", headers"
+        for body in parts:
+            text += (f", MIME part {_clean(body['mime_part'])}, "
+                     f"body lines {_clean(body['line_start'])}-{_clean(body['line_end'])}")
+        if locator.get("partial_notice"):
+            text += " (partial mailbox)"
+        return text
     if "sheet" in locator:
         text = f"Location: {_clean(file_name)} > {_clean(locator['sheet'])}"
         if locator.get("range"):
@@ -241,6 +257,7 @@ class EvidenceResolver:
                         locator_json=unit.locator_json,
                         page_start=chunk.page_start,
                         page_end=chunk.page_end,
+                        chunk_ordinal=chunk.ordinal,
                     ),
                 )
             )

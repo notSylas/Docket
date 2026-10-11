@@ -217,6 +217,8 @@ def ignore_notices(result: object, prune_service: object, source_id: str) -> lis
         for line in (skipped_summary(skipped), invalid_summary(invalid))
         if line is not None
     ]
+    notices.extend(f"{getattr(item, 'path', 'Mailbox')}: {item.notice}"
+                   for item in getattr(result, "file_results", ()) if getattr(item, "notice", None))
     try:
         count = int(prune_service.count(source_id))  # type: ignore[attr-defined]
     except Exception:  # noqa: BLE001 -- a hint must never break ingestion output

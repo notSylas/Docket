@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     # node_modules, Office lock files, `.docketignore`). Escape hatch:
     # DOCKET_INGEST_IGNORE_ENABLED=false walks everything, as before.
     ingest_ignore_enabled: bool = True
+    # Snapshot size is a hard limit; count overflow is explicit partial intake.
+    mail_max_bytes: int = 64 * 1024 * 1024
+    mail_max_messages: int = 1000
 
     # Off by default, same posture as `visual_index_enabled`: this checkpoint
     # builds the formula-region crop + VLM transcription + storage

@@ -50,6 +50,7 @@ FAMILY_DOCLING = "docling"
 FAMILY_XLSX = "xlsx"
 FAMILY_PPTX = "pptx"
 FAMILY_TEXT = "text"
+FAMILY_MAIL = "mail"
 
 
 def recipe_family(file_path: str | None) -> str:
@@ -58,6 +59,8 @@ def recipe_family(file_path: str | None) -> str:
     suffix = Path(file_path).suffix.lower() if file_path else ""
     from docket.infra.parsing.text_family import TEXT_EXTENSIONS
 
+    if suffix in {".eml", ".mbox"}:
+        return FAMILY_MAIL
     if suffix in TEXT_EXTENSIONS:
         return FAMILY_TEXT
     if suffix == ".xlsx":
@@ -111,3 +114,9 @@ def text_recipe(settings, parser_name: str, parser_version: str) -> ChunkRecipe:
     return ChunkRecipe(0, 0,
         f"text_exact_v1:max_tokens={settings.chunk_max_tokens}:decoded_v={DECODED_TEXT_VERSION}",
         parser_name, parser_version)
+
+
+def mail_recipe(settings, parser_name: str, parser_version: str) -> ChunkRecipe:
+    return ChunkRecipe(0, 0,
+        f"mail_exact_v1:max_tokens={settings.chunk_max_tokens}:messages={settings.mail_max_messages}"
+        f":bytes={settings.mail_max_bytes}:decoded_v=1", parser_name, parser_version)

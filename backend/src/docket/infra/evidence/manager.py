@@ -65,9 +65,10 @@ class EvidenceManager:
         *,
         parser_name: str,
         parser_version: str,
+        snapshot: bytes | None = None,
     ) -> EvidenceVersion:
         path = Path(path)
-        data = path.read_bytes()
+        data = path.read_bytes() if snapshot is None else snapshot
         try:
             source_mtime: float | None = path.stat().st_mtime
         except OSError:

@@ -1762,7 +1762,7 @@ class WelcomeOverlay(Overlay):
 
 
 _TYPE_LABELS = {".pdf": "PDF", ".docx": "Word", ".xlsx": "Excel", ".pptx": "PowerPoint",
-                ".txt": "Text", ".md": "Markdown", ".csv": "CSV", ".html": "HTML", ".htm": "HTML"}
+                ".txt": "Text", ".md": "Markdown", ".csv": "CSV", ".html": "HTML", ".htm": "HTML", ".eml": "Email", ".mbox": "Mailbox"}
 
 
 def _plural(n: int, noun: str) -> str:
