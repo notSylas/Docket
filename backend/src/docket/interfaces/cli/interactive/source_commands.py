@@ -179,6 +179,37 @@ def first_run_offer(session: Any) -> None:
         handle_error(session, exc)
 
 
+def offer_dropped_path(session: Any, dropped: Any) -> None:
+    """A pasted or dragged path at the classic prompt: offer to add it
+    (y/N) instead of asking it as a question. A file offers its folder."""
+    from docket.interfaces.cli.dropped import FILE_OFFER
+    from docket.services.sources.session import broad_location_reason
+
+    path = Path(dropped.path)
+    if not dropped.is_dir:
+        path = path.parent
+        if not _confirm(session, f"{FILE_OFFER} {path} [y/N] "):
+            session.say("Cancelled.", style="dim")
+            return
+    broad = broad_location_reason(path)
+    if broad:
+        session.say(f"That is {broad}. Choose a folder inside it, or use /add {path} to add it anyway.")
+        return
+    if dropped.is_dir and not _confirm(session, f"Add {path} and index it? [y/N] "):
+        session.say("Cancelled.", style="dim")
+        return
+    source_id = _register(session, path.resolve())
+    if source_id is None:
+        return
+    try:
+        session.cmd_ingest(str(source_id))
+    except KeyboardInterrupt:
+        session.say()
+        session.say("(interrupted)", style="dim")
+    except Exception as exc:  # noqa: BLE001
+        handle_error(session, exc)
+
+
 def _confirm(session: Any, prompt: str) -> bool:
     read = getattr(session.reader, "confirm", None) or session.reader.read
     try:
