@@ -36,6 +36,7 @@ from typing import Any, Callable
 import pyarrow as pa
 from sqlalchemy import Engine, bindparam, text
 
+from docket.core.writer_lock import WriterLock
 from docket.core.db.models import SourceStatus, VersionStatus
 from docket.infra.index.context import INDEX_TEXT_VERSION, index_text_for_chunk
 from docket.infra.index.manifest import new_manifest, read_manifest, write_manifest
@@ -115,6 +116,25 @@ def _build_staging(
 
 
 def reindex(
+    *,
+    engine: Engine,
+    db_path: str | Path,
+    gateway: InferenceGateway,
+    manifest_path: Path,
+    embed_model: str,
+    batch_size: int = 32,
+    sleep: Callable[[float], None] | None = None,
+    tokenizer: str | None = None,
+    writer_lock: WriterLock | None = None,
+) -> ReindexResult:
+    with (writer_lock or WriterLock(manifest_path.parent)).hold("rebuilding the search index"):
+        return _reindex_unlocked(
+            engine=engine, db_path=db_path, gateway=gateway, manifest_path=manifest_path,
+            embed_model=embed_model, batch_size=batch_size, sleep=sleep, tokenizer=tokenizer,
+        )
+
+
+def _reindex_unlocked(
     *,
     engine: Engine,
     db_path: str | Path,

@@ -292,7 +292,9 @@ class RunRecord(BaseModel):
     answer_status: str | None = None
     abstention_reason: str | None = None
     claim_records: list[dict[str, Any]] | None = None
-    # Seconds per phase (route, retrieve, plan, generate, verify), if timed.
+    # Exclusive wall seconds: scope_resolve, rewrite, search, resolve_evidence,
+    # prompt_assembly, generation, citation_validation and overhead. Optional
+    # compute time appears when used. Older run files leave this unset.
     latency_by_phase: dict[str, float] | None = None
     # Per gold span: does it appear in any indexed chunk of the corpus? Lets the
     # report tell a parse/chunk failure from a retrieval failure.

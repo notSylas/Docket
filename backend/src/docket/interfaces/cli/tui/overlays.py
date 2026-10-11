@@ -1126,9 +1126,9 @@ class IndexingOverlay(Overlay):
         if j.state == "stopping":
             return [Btn("hide", "Hide progress", hot="h"), Btn("stop", "Stop indexing", False, "Stop was already requested.")]
         out = [Btn("ask", "Start asking", j.state in ("done", "stopped"), "Nothing is searchable yet.", "a")]
-        if j.kind == "update" and j.state in ("failed", "stopped"):
+        if j.kind == "update" and j.state in ("failed", "stopped", "busy"):
             out.append(Btn("retry", "Update again", hot="r"))
-        elif j.kind == "index" and (j.failed or j.state in ("failed", "stopped")):
+        elif j.kind == "index" and (j.failed or j.state in ("failed", "stopped", "busy")):
             out.append(Btn("retry", "Retry indexing", hot="r"))
         out.append(Btn("close", "Close"))
         return out
@@ -1173,6 +1173,10 @@ class IndexingOverlay(Overlay):
                 else:
                     rows.append([("class:attention", "Stopping after the current operation...")])
                     rows.append([(MUTED, "Completed files are kept. Unfinished files stay unavailable and can be retried.")])
+            return rows, None
+        if j.state == "busy":
+            rows.extend(wrap_text(j.reason, iw, "class:attention"))
+            rows.append([(MUTED, "No files were changed by this request. Retry when the other window finishes.")])
             return rows, None
         if j.state == "failed":
             rows.append([("class:failed", "Failed: "), (TEXT, j.reason or "Indexing could not start.")])

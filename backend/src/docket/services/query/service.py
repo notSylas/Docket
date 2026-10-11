@@ -32,6 +32,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from pydantic import BaseModel
 from sqlalchemy import Engine
 
+from docket.services.query.timing import phase, record_question, timed_phase
 from docket.services.agent.graph import build_investigation_agent
 from docket.services.agent.run_context import (
     RunContext,
@@ -145,6 +146,9 @@ class QueryResult(BaseModel):
     # AbstentionReason value when the abstention has a specific code (an empty
     # or out-of-scope boundary); None otherwise.
     abstention_reason: str | None = None
+    # Optional for older consumers. Seconds, exclusive phases plus overhead.
+    latency_by_phase: dict[str, float] | None = None
+    latency_s: float | None = None
 
 
 # Tools whose successful results make chunks citable on the agent path.
@@ -304,6 +308,7 @@ class QueryService:
         # No per-run state lives on this shared instance: each ask() creates a
         # `RunContext` (see `docket.services.agent.run_context`).
 
+    @timed_phase("scope_resolve")
     def _query_signals(
         self, question: str, standalone: str | None, history: list[ConversationTurn] | None
     ) -> QuerySignals | None:
@@ -346,12 +351,15 @@ class QueryService:
             )
         return self._agent
 
+    @record_question
     def ask(
         self,
         question: str,
         mode: QueryMode | None = None,
         history: list[ConversationTurn] | None = None,
         scope: QueryScope | None = None,
+        *,
+        on_progress: Callable[[str], None] | None = None,
     ) -> QueryResult:
         """Answer `question`, routing to FAST or AGENT.
 
@@ -373,12 +381,17 @@ class QueryService:
         stay inside it, a file named in the question can only narrow it, and a
         scope that holds nothing returns an explicit "nothing indexed" result
         without searching or calling the model.
+
+        `on_progress` optionally receives phase names before work starts. Its
+        failures are ignored. Timings include exclusive phases and overhead
+        in seconds, with skipped phases at zero.
         """
-        if mode is None:
-            mode = self._classifier.classify(question)
-        boundary: ResolvedScope | None = (
-            resolve_scope(self._engine, scope) if scope is not None else None
-        )
+        with phase("scope_resolve"):
+            if mode is None:
+                mode = self._classifier.classify(question)
+            boundary: ResolvedScope | None = (
+                resolve_scope(self._engine, scope) if scope is not None else None
+            )
         if boundary is not None and boundary.empty:
             return self._abstain_for_scope(
                 question, mode, boundary,
@@ -406,6 +419,7 @@ class QueryService:
         return result.model_copy(update=update)
 
     @staticmethod
+    @timed_phase("scope_resolve")
     def _combine_scope(
         named_ids: list[str], boundary: ResolvedScope | None
     ) -> tuple[list[str] | None, bool]:
@@ -479,22 +493,23 @@ class QueryService:
                 standalone=standalone, scoped_to=scoped_to,
                 warning="the named file is outside the selected scope",
             )
-        ranked_chunks = hybrid_search(
-            engine=self._engine,
-            table=self._table,
-            gateway=self._gateway,
-            query=question,
-            top_k=self._top_k,
-            page_table=self._page_table,
-            manifest_guard=self._manifest_guard,
-            **({"extra_queries": [standalone]} if standalone else {}),
-            **({"scope_version_ids": scope_ids} if scope_ids is not None else {}),
-            **(
-                {"pool_k": self._settings.retrieval_pool_k}
-                if self._settings.retrieval_pool_k is not None
-                else {}
-            ),
-        )
+        with phase("search"):
+            ranked_chunks = hybrid_search(
+                engine=self._engine,
+                table=self._table,
+                gateway=self._gateway,
+                query=question,
+                top_k=self._top_k,
+                page_table=self._page_table,
+                manifest_guard=self._manifest_guard,
+                **({"extra_queries": [standalone]} if standalone else {}),
+                **({"scope_version_ids": scope_ids} if scope_ids is not None else {}),
+                **(
+                    {"pool_k": self._settings.retrieval_pool_k}
+                    if self._settings.retrieval_pool_k is not None
+                    else {}
+                ),
+            )
 
         if not ranked_chunks and named_ids:
             # The named file yields nothing retrievable: say so; never widen the
@@ -529,7 +544,8 @@ class QueryService:
             )
 
         try:
-            resolved = self._resolver.resolve_many([rc.chunk_id for rc in ranked_chunks])
+            with phase("resolve_evidence"):
+                resolved = self._resolver.resolve_many([rc.chunk_id for rc in ranked_chunks])
         except ChunkNotFoundError:
             return QueryResult(
                 question=question, answer=ABSTENTION_PHRASE, citations=[],
@@ -541,23 +557,24 @@ class QueryService:
         # (best first), so dropping the tail drops the weakest chunks. Agent
         # chunks are in read order, not rank order, so the agent path has no
         # equivalent and relies on the agent's own bounded tool budget.
-        system, prompt, resolved, dropped = self._fit_prompt(question, history, resolved)
+        with phase("prompt_assembly"):
+            system, prompt, resolved, dropped = self._fit_prompt(question, history, resolved)
 
-        # Ambiguous period (doc 05 section 6): no file scope, no stated period,
-        # and the chunks that will be shown come from same-sheet workbooks of
-        # different fiscal years. The model is told to answer for each and ask.
-        ambiguity: PeriodAmbiguity | None = None
-        if (
-            self._settings.query_ambiguity_enabled
-            and signals is not None
-            and not named_ids
-            and not signals.has_period
-        ):
-            ambiguity = detect_period_ambiguity(resolved)
-            if ambiguity is not None:
-                system += period_ambiguity_note(
-                    [(o.file, o.fiscal_year, o.context_lines) for o in ambiguity.options]
-                )
+            # Ambiguous period (doc 05 section 6): no file scope, no stated period,
+            # and the chunks that will be shown come from same-sheet workbooks of
+            # different fiscal years. The model is told to answer for each and ask.
+            ambiguity: PeriodAmbiguity | None = None
+            if (
+                self._settings.query_ambiguity_enabled
+                and signals is not None
+                and not named_ids
+                and not signals.has_period
+            ):
+                ambiguity = detect_period_ambiguity(resolved)
+                if ambiguity is not None:
+                    system += period_ambiguity_note(
+                        [(o.file, o.fiscal_year, o.context_lines) for o in ambiguity.options]
+                    )
 
         # Flagged deterministic compute stage: default off, and then nothing
         # below differs from the previous behaviour.
@@ -567,7 +584,8 @@ class QueryService:
                 question, standalone, system, resolved, ambiguity is not None
             )
 
-        answer = self._gateway.generate(system=system, prompt=prompt, **self._answer_opts())
+        with phase("generation"):
+            answer = self._gateway.generate(system=system, prompt=prompt, **self._answer_opts())
 
         return self._finalize_answer(
             question=question, answer=answer, resolved=resolved,
@@ -588,6 +606,7 @@ class QueryService:
             )
         return self._workbook_reader
 
+    @timed_phase("compute")
     def _compute_stage(
         self,
         question: str,
@@ -668,6 +687,12 @@ class QueryService:
         question alone is searched."""
         if not history or not self._settings.rewrite_enabled:
             return None
+        return self._rewrite_with_history(question, history)
+
+    @timed_phase("rewrite")
+    def _rewrite_with_history(
+        self, question: str, history: list[ConversationTurn]
+    ) -> str | None:
         # Citation tags would pollute the query; the prior answer text stays.
         clean = [
             ConversationTurn(
@@ -762,6 +787,7 @@ class QueryService:
             )
         return system, build(included), included, dropped
 
+    @timed_phase("citation_validation")
     def _finalize_answer(
         self, *, question: str, answer: str, resolved: list[ResolvedEvidence],
         mode: QueryMode, retry_system: str, retry_prompt: str,
@@ -778,16 +804,17 @@ class QueryService:
             validation.uncited or bool(validation.unknown_citations)
         )
         if invalid and resolved:
-            answer = self._gateway.generate(
-                system=retry_system,
-                prompt=(
-                    retry_prompt
-                    + "\n\nYour previous answer had missing or invalid citations. "
-                    "Answer again using only the supplied citation tags after "
-                    "each factual claim, or use the exact abstention sentence."
-                ),
-                **self._answer_opts(),
-            )
+            with phase("generation"):
+                answer = self._gateway.generate(
+                    system=retry_system,
+                    prompt=(
+                        retry_prompt
+                        + "\n\nYour previous answer had missing or invalid citations. "
+                        "Answer again using only the supplied citation tags after "
+                        "each factual claim, or use the exact abstention sentence."
+                    ),
+                    **self._answer_opts(),
+                )
             validation = validate_citations(answer, resolved)
 
         warnings: list[str] = []
@@ -862,19 +889,20 @@ class QueryService:
             else None
         )
 
-        system_prompt = AGENT_SYSTEM_PROMPT_WITH_HISTORY if history else AGENT_SYSTEM_PROMPT
-        messages_in: list = [SystemMessage(content=system_prompt)]
-        for turn in history or []:
-            messages_in.append(HumanMessage(content=turn.question))
-            messages_in.append(AIMessage(content=turn.answer))
-        messages_in.append(HumanMessage(content=question))
+        with phase("prompt_assembly"):
+            system_prompt = AGENT_SYSTEM_PROMPT_WITH_HISTORY if history else AGENT_SYSTEM_PROMPT
+            messages_in: list = [SystemMessage(content=system_prompt)]
+            for turn in history or []:
+                messages_in.append(HumanMessage(content=turn.question))
+                messages_in.append(AIMessage(content=turn.answer))
+            messages_in.append(HumanMessage(content=question))
 
-        initial_state = {
-            "messages": messages_in,
-            "iterations": 0,
-            "tool_calls_made": 0,
-            "blocked_calls": [],
-        }
+            initial_state = {
+                "messages": messages_in,
+                "iterations": 0,
+                "tool_calls_made": 0,
+                "blocked_calls": [],
+            }
         try:
             # Each iteration is an agent + gateway (or force_tool_use) node
             # pair: 8 iterations need at most ~24 steps, under the limit of 50.
@@ -896,7 +924,8 @@ class QueryService:
             else ""
         )
 
-        resolved = _citations_from_agent_messages(messages, self._resolver)
+        with phase("resolve_evidence"):
+            resolved = _citations_from_agent_messages(messages, self._resolver)
         if boundary is not None and boundary.version_ids is not None:
             # Belt and braces: the tools already refuse out-of-scope reads.
             resolved = [c for c in resolved if boundary.contains(c.evidence_version_id)]
@@ -909,9 +938,12 @@ class QueryService:
                 "blocked_calls": result_state.get("blocked_calls", []),
             })
 
+        with phase("prompt_assembly"):
+            retry_prompt = f"Context:\n{build_context_block(resolved)}\n\nQuestion: {question}\n\nAnswer:"
+
         return self._finalize_answer(
             question=question, answer=answer, resolved=resolved,
             mode=QueryMode.AGENT,
             retry_system=SYSTEM_PROMPT,
-            retry_prompt=f"Context:\n{build_context_block(resolved)}\n\nQuestion: {question}\n\nAnswer:",
+            retry_prompt=retry_prompt,
         ).model_copy(update={"standalone_query": standalone, "scoped_to": scoped_to})

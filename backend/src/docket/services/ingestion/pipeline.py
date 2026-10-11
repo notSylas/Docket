@@ -123,6 +123,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
+from docket.core.writer_lock import WriterLock, lock_for_sessions, writer_operation
 from docket.core.config import Settings
 from docket.core.config import settings as _default_settings
 from docket.core.db.models import (
@@ -334,7 +335,9 @@ class IngestionPipeline:
         pptx_recipe: ChunkRecipe | None = None,
         source_manager: SourceManager | None = None,
         manifest_guard: IndexManifestGuard | None = None,
+        writer_lock: WriterLock | None = None,
     ) -> None:
+        self._writer_lock = writer_lock or lock_for_sessions(session_factory)
         self._session_factory = session_factory
         self._evidence_manager = evidence_manager
         self._parser = parser
@@ -785,6 +788,7 @@ class IngestionPipeline:
     def find_rechunk_candidates(self, source_id: str) -> tuple[list[RechunkCandidate], int]:
         return self._classify_versions(source_id)
 
+    @writer_operation("re-preparing a document")
     def rechunk_version(self, source_id: str, candidate: RechunkCandidate) -> FileIngestResult:
         """Re-chunk one version from its STORED original bytes (never the
         live file): PENDING -> parse + chunk with the current recipe ->
@@ -820,6 +824,7 @@ class IngestionPipeline:
         self._evidence_manager.mark_version_status(candidate.version_id, VersionStatus.READY)
         return FileIngestResult(path=candidate.path, status="ingested", chunks_written=len(records))
 
+    @writer_operation("re-preparing documents", dry_run=True)
     def rechunk_source(
         self,
         source_id: str,
@@ -907,6 +912,7 @@ class IngestionPipeline:
             pass  # unreadable: reported per file by the ingest below
         return self._ingest_one_file(source_id, path)
 
+    @writer_operation("refreshing library files")
     def run_ingestion_for_paths(
         self,
         source_id: str,
@@ -1031,6 +1037,7 @@ class IngestionPipeline:
             file_results=file_results,
         )
 
+    @writer_operation("indexing a folder")
     def run_ingestion_for_source(
         self,
         source_id: str,

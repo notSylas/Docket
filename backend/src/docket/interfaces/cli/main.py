@@ -10,6 +10,7 @@ import typer.core
 import typer.main
 
 from docket import __version__
+from docket.core.writer_lock import WriterLockBusyError
 from docket.infra.index.manifest import IndexManifestMismatchError
 from docket.infra.index.reindex import reindex as run_reindex
 from docket.infra.inference.gateway import InferenceError
@@ -75,6 +76,13 @@ class _LazyEvalGroup(typer.core.TyperGroup):
     ...` (or `docket --help`, which needs every subcommand's one-line help)
     does.
     """
+
+    def invoke(self, ctx: click.Context):
+        try:
+            return super().invoke(ctx)
+        except WriterLockBusyError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from None
 
     def list_commands(self, ctx: click.Context) -> list[str]:
         return sorted({*super().list_commands(ctx), _EVAL_COMMAND_NAME})

@@ -25,6 +25,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
+from docket.core.writer_lock import WriterLock, lock_for_sessions, writer_operation
 from docket.core.db.models import EvidenceVersion, Source, VersionStatus
 from docket.infra.evidence.manager import EvidenceManager
 from docket.infra.index.manager import IndexManager
@@ -77,7 +78,9 @@ class SourcePruneService:
         index_manager: IndexManager | None = None,
         *,
         enabled: bool = True,
+        writer_lock: WriterLock | None = None,
     ) -> None:
+        self._writer_lock = writer_lock or lock_for_sessions(session_factory)
         self._session_factory = session_factory
         self._evidence_manager = evidence_manager
         self._index_manager = index_manager
@@ -120,10 +123,12 @@ class SourcePruneService:
     def count(self, source_id: str) -> int:
         return len(self.find(source_id))
 
+    @writer_operation("removing files from the index")
     def apply(self, source_id: str) -> list[PruneCandidate]:
         """Supersede and de-index every candidate; returns what was pruned."""
         return self.apply_candidates(self.find(source_id))
 
+    @writer_operation("removing files from the index")
     def apply_candidates(self, candidates: list[PruneCandidate]) -> list[PruneCandidate]:
         """Supersede and de-index exactly these candidates (as found by
         `find`); "Ignore this file" uses it to touch only that one file."""

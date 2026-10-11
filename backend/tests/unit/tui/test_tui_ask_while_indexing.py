@@ -493,12 +493,16 @@ def test_worker_threads_use_their_own_database_sessions(ctx, folder):
     src = ctx.source_manager.register_source(folder)
     add_file(ctx, src, "a.md")
     opened: list[tuple[int, int]] = []
+    # Keep closed sessions alive until the assertion: CPython can otherwise
+    # reuse an object's id and falsely report sharing between threads.
+    sessions = []
     lock = threading.Lock()
     real = ctx.session_factory
 
     def spy():
         s = real()
         with lock:
+            sessions.append(s)
             opened.append((threading.get_ident(), id(s)))
         return s
 

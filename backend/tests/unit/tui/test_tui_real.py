@@ -620,6 +620,54 @@ def scenario(fn, backend=None, state="chat", cols=120, rows=40, **kw):
     return run(go, timeout=30)
 
 
+def test_writer_contention_is_library_busy_instead_of_failed():
+    from docket.core.writer_lock import WriterLockBusyError
+    from docket.interfaces.cli.tui import overlays
+    class BusyBackend(StubBackend):
+        def run_index(self, source_id, on_progress, should_stop):
+            raise WriterLockBusyError({
+                "pid": 1234, "started_at": "2026-10-11T12:00:00+00:00",
+                "operation": "indexing fixture documents",
+            }, 0)
+
+    async def go(h, b):
+        h.ui.start_job(h.ui.world.sources[0], "Indexing", "")
+        await h.wait_for(lambda: h.ui.job.state == "busy")
+        assert "Another Docket window is updating the library" in h.text()
+        assert "1234" in h.text()
+        assert "Failed:" not in h.text()
+        assert any(button.key == "retry" for button in overlays.IndexingOverlay(h.ui).buttons())
+
+    scenario(go, BusyBackend())
+
+
+def test_searching_status_is_set_before_question_worker_starts():
+    async def go(h, b):
+        b.stage_search = "Searching..."
+        workers = []
+        h.ui._spawn = lambda name, worker: workers.append((name, worker))
+        assert h.ui.ask("A fixture question?")
+        assert h.ui.query_op.stage_name == "Searching..."
+        assert workers and workers[0][0] == "ask"
+        assert not b.ask_started.is_set()
+        await h.settle()
+        assert "Searching..." in h.text()
+        h.ui._gate.release()
+
+    scenario(go)
+
+
+def test_real_backend_reports_searching_before_readiness_or_model(ctx):
+    be = backend_for(ctx)
+    events = []
+    def readiness():
+        assert events == ["Searching..."]
+        raise RuntimeError("fixture readiness failure")
+    ctx.__dict__["readiness"] = SimpleNamespace(snapshot=readiness)
+    out = be.ask(AskRequest("fixture", "fast"), events.append, "All sources", "Fast")
+    assert out.error and "readiness" in out.error
+
+
 def test_real_mode_has_no_demo_tag_and_demo_still_has_it():
     async def go(h, b):
         assert "DEMO DATA" not in h.screen_lines()[0]

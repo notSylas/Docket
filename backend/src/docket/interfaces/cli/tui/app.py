@@ -40,6 +40,7 @@ from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.processors import BeforeInput, ConditionalProcessor
 from prompt_toolkit.styles import DynamicStyle
 
+from docket.core.writer_lock import WriterLockBusyError
 from docket.interfaces.cli.interactive.commands import (
     BARE_WORDS,
     CommandRegistry,
@@ -1161,6 +1162,8 @@ class TuiApp:
                 with quiet_ingest():
                     run = runner or self.backend.run_index
                     outcome = run(src.id, on_progress, stop.is_set)
+            except WriterLockBusyError as exc:
+                outcome = IndexOutcome("busy", IndexProgress(), reason=f"{exc.ui_message}. {exc}")
             except Exception as exc:  # noqa: BLE001 -- surfaced as a failed job
                 outcome = IndexOutcome("failed", IndexProgress(), reason=describe_error(exc))
             self._post(lambda: self._real_job_done(job, outcome))
@@ -1289,6 +1292,8 @@ class TuiApp:
         if j.state == "done":
             level = "attention" if j.failed else "info"
             self.notice(f"Indexing {j.source_name} finished: {j.indexed} indexed, {j.unchanged} unchanged, {j.failed} failed.", level)
+        elif j.state == "busy":
+            self.notice(j.reason, "attention")
         elif j.state == "stopped":
             self.notice(f"Indexing {j.source_name} stopped after {j.file_index} of {j.total} files. Completed files were kept.", "attention")
         else:
@@ -1738,7 +1743,9 @@ class TuiApp:
 
     def _maintenance_finished(self, j: IndexJob) -> None:
         """End of an update or single-file retry: say what happened, then look again."""
-        if j.state == "failed":
+        if j.state == "busy":
+            self.notice(j.reason, "attention")
+        elif j.state == "failed":
             self.notice(f"The update did not finish: {j.reason or 'something went wrong.'}", "error")
         elif j.state == "stopped":
             self.notice("Update stopped. What finished was kept; the rest is still listed.", "attention")
@@ -1953,7 +1960,9 @@ class TuiApp:
     def _refresh_finished(self, j: IndexJob) -> None:
         """A background update ended: say so quietly, and only loudly when
         something could not be read."""
-        if j.state == "failed":
+        if j.state == "busy":
+            self.notice(j.reason, "attention")
+        elif j.state == "failed":
             self.notice(f"Could not update {j.source_name}: {j.reason or 'something went wrong.'}", "attention")
         elif j.state == "stopped":
             self.notice("Update stopped. Changes not yet read are picked up the next time Docket checks.", "attention")

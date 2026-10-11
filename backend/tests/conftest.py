@@ -65,6 +65,8 @@ def ollama_available() -> bool:
 
 
 def pytest_collection_modifyitems(config, items):
+    if not any("integration" in item.keywords for item in items):
+        return
     if _ollama_available():
         return
     skip_integration = pytest.mark.skip(reason="Ollama not reachable")

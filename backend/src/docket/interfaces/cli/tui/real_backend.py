@@ -27,6 +27,7 @@ from typing import Any, Callable
 
 from sqlalchemy import func, select
 
+from docket.core.writer_lock import WriterLockBusyError
 from docket.core.db.models import (
     Chunk,
     EvidenceVersion,
@@ -73,6 +74,7 @@ from docket.services.ingestion.failure import plain_failure_reason
 from docket.services.ingestion.pipeline import SUPPORTED_EXTENSIONS, SourceNotActiveError
 from docket.services.query.classifier import QueryMode
 from docket.services.query.conversation import ConversationTurn
+from docket.services.query.service import QueryService
 from docket.services.sources.manager import (
     InvalidSourceTransitionError,
     SourceCoveredError,
@@ -130,7 +132,7 @@ class RealBackend:
     picker = NativePicker()  # Browse... in Add folder (hidden when unavailable)
     jobs_hint = "files that need attention are listed under each job"
     jobs_note = ""
-    stage_search = "Searching and writing answer"
+    stage_search = "Searching..."
     stage_citations = "Checking citations"
     intro_notice = "Type a question, or press F1 for commands."
 
@@ -856,6 +858,8 @@ class RealBackend:
     def ignore_file(self, source_id: str, rel_path: str) -> int:
         try:
             return self._ctx.maintenance.ignore_file(source_id, rel_path)
+        except WriterLockBusyError as exc:
+            raise BackendError(f"{exc.ui_message}. {exc}") from exc
         except (SourceNotFoundError, ValueError) as exc:
             raise BackendError(f"Error: {exc}") from exc
 
@@ -933,6 +937,7 @@ class RealBackend:
 
     # -- asking --------------------------------------------------------------
     def ask(self, request: AskRequest, on_stage: StageCallback, scope_label: str, mode_label: str) -> AskOutcome:
+        on_stage(self.stage_search)
         ctx = self._ctx
         try:
             snap = ctx.readiness.snapshot()
@@ -950,15 +955,23 @@ class RealBackend:
             return AskOutcome(error="Nothing is indexed yet. Add a folder and let indexing finish.")
         mode = {"auto": None, "fast": QueryMode.FAST, "agent": QueryMode.AGENT}.get(request.mode)
         history = [ConversationTurn(question=t.question, answer=t.answer) for t in request.history]
-        on_stage(self.stage_search)
         started = time.perf_counter()
         try:
             service = self._factory(ctx, table)
             query_scope = self._query_scope(request.scope, scope_label)
+            progress = {}
+            if isinstance(service, QueryService):
+                labels = {
+                    "scope_resolve": "Searching...", "rewrite": "Rewriting question...",
+                    "search": "Searching...", "resolve_evidence": "Reading evidence...",
+                    "prompt_assembly": "Preparing answer...", "generation": "Writing answer...",
+                    "citation_validation": self.stage_citations, "compute": "Checking numbers...",
+                }
+                progress["on_progress"] = lambda phase: on_stage(labels.get(phase, "Searching..."))
             if query_scope is None:
-                result = service.ask(request.question, mode=mode, history=history)
+                result = service.ask(request.question, mode=mode, history=history, **progress)
             else:
-                result = service.ask(request.question, mode=mode, history=history, scope=query_scope)
+                result = service.ask(request.question, mode=mode, history=history, scope=query_scope, **progress)
         except Exception as exc:  # noqa: BLE001
             return AskOutcome(error=describe_error(exc, self.default_model))
         elapsed = time.perf_counter() - started
