@@ -660,6 +660,12 @@ class SourcesOverlay(Overlay):
     def entries(self) -> list[Entry]:
         q = self.filter_text.strip().lower()
         out = []
+        if not self.ui.world.sources and not q:
+            for path, n, types in getattr(self.ui, "suggested_folders", ()):
+                name = path.rstrip("/").rsplit("/", 1)[-1] or path
+                sub = f"{n} document{'s' if n != 1 else ''}" + (f" ({types})" if types else "")
+                out.append(Entry(path, name, sub, "", MUTED, True, data=("suggest", path)))
+            return out
         for s in self.ui.world.sources:
             if q and q not in s.name.lower() and q not in s.path.lower():
                 continue
@@ -677,7 +683,8 @@ class SourcesOverlay(Overlay):
 
     def _selected(self):
         es = self.entries()
-        return es[min(self.sel, len(es) - 1)].data if es else None
+        data = es[min(self.sel, len(es) - 1)].data if es else None
+        return None if isinstance(data, tuple) else data
 
     def buttons(self) -> list[Btn]:
         s = self._selected()
@@ -870,6 +877,9 @@ class SourcesOverlay(Overlay):
             super().press(key)
 
     def activate(self, entry: Entry) -> None:
+        if isinstance(entry.data, tuple):  # a suggested folder (empty library)
+            self.ui.open_folder(entry.data[1])
+            return
         self.expanded = not self.expanded
 
 
@@ -969,6 +979,8 @@ class AddFolderOverlay(Overlay):
 
     def __init__(self, ui: Any) -> None:
         self.broad_ok = False
+        self.waiting = False  # a native folder dialog is open (Browse...)
+        self._wait_token = 0
         super().__init__(ui)
 
     def entries(self) -> list[Entry]:
@@ -997,6 +1009,9 @@ class AddFolderOverlay(Overlay):
             MUTED,
         )
         rows.append([])
+        if self.waiting:
+            rows.append([("class:attention", "Waiting for the folder dialog... Esc stops waiting.")])
+            rows.append([])
         return rows
 
     def build_body(self, iw: int):
@@ -1009,10 +1024,51 @@ class AddFolderOverlay(Overlay):
         return rows, sel
 
     def buttons(self) -> list[Btn]:
-        return [Btn("add", "Add and index"), Btn("cancel", "Cancel")]
+        out = [Btn("add", "Add and index")]
+        if self.ui.picker_available():
+            out.append(Btn("browse", "Browse...", not self.waiting, "The folder dialog is already open."))
+        out.append(Btn("cancel", "Cancel"))
+        return out
 
     def hint(self) -> str:
         return "Paste or type a path (quotes and spaces are fine) · Enter add · Esc cancel"
+
+    def consume_escape(self) -> bool:
+        """Esc while waiting for the dialog only stops waiting; a dialog that
+        is still open is left to the user."""
+        if self.waiting:
+            self.waiting = False
+            self._wait_token += 1
+            self.msg = "Stopped waiting. If the dialog is still open, close it there."
+            return True
+        return False
+
+    def _browse(self) -> None:
+        if self.waiting:
+            return
+        self.waiting = True
+        self._wait_token += 1
+        token = self._wait_token
+        self.ui.browse_folder(self._path(), lambda res: self._picked(token, res))
+
+    def _picked(self, token: int, res: Any) -> None:
+        if token != self._wait_token or not self.waiting:
+            return  # stopped waiting; the late answer is ignored
+        self.waiting = False
+        if getattr(res, "path", None):
+            self.submit_path(res.path)
+        elif getattr(res, "cancelled", False):
+            self.msg = "No folder was chosen."
+        else:
+            why = getattr(res, "error", "") or getattr(res, "unavailable", "") or "The folder dialog could not be used."
+            self.msg = f"{why} You can still type the path."
+
+    def submit_path(self, path: str) -> None:
+        """Fill the path and run the same check/plan flow as Enter."""
+        self.filter_text = path
+        self.sel = 0
+        self.broad_ok = False
+        self._submit()
 
     def on_enter_input(self) -> None:
         es = self.entries()
@@ -1025,6 +1081,8 @@ class AddFolderOverlay(Overlay):
     def press(self, key: str) -> None:
         if key == "add":
             self._submit()
+        elif key == "browse":
+            self._browse()
         else:
             self.ui.close_top()
 
@@ -1613,9 +1671,24 @@ class WelcomeOverlay(Overlay):
 
     def __init__(self, ui: Any, blocked: bool = False) -> None:
         plan = getattr(ui, "session_plan", None)
-        self.suggestions: tuple[tuple[str, int], ...] = tuple(getattr(plan, "suggestions", ()) or ())
-        self.has_list = bool(self.suggestions)  # an empty library offers folders to start from
+        self.plan_suggestions: tuple[tuple[str, int], ...] = tuple(getattr(plan, "suggestions", ()) or ())
         super().__init__(ui)
+
+    @property
+    def suggestions(self) -> tuple[tuple[str, int, str], ...]:
+        """(path, documents, type summary): the launch folder's subfolders
+        first, then what the background look at well-known places found."""
+        out: list[tuple[str, int, str]] = [(p, n, "") for p, n in self.plan_suggestions]
+        seen = {p for p, _n, _t in out}
+        for p, n, t in getattr(self.ui, "suggested_folders", ()):
+            if p not in seen:
+                out.append((p, n, t))
+                seen.add(p)
+        return tuple(out)
+
+    @property
+    def has_list(self) -> bool:  # type: ignore[override]
+        return bool(self.suggestions)
 
     @property
     def blocked(self) -> bool:
@@ -1623,9 +1696,10 @@ class WelcomeOverlay(Overlay):
 
     def entries(self) -> list[Entry]:
         out: list[Entry] = []
-        for path, n in self.suggestions:
+        for path, n, types in self.suggestions:
             name = path.rstrip("/").rsplit("/", 1)[-1] or path
-            out.append(Entry(path, name, f"{n} document{'s' if n != 1 else ''}", data=path))
+            sub = f"{n} document{'s' if n != 1 else ''}" + (f" ({types})" if types else "")
+            out.append(Entry(path, name, sub, data=path))
         return out
 
     def activate(self, entry: Entry) -> None:
@@ -1664,7 +1738,7 @@ class WelcomeOverlay(Overlay):
         es = self.entries()
         if es:
             rows.append([])
-            rows.append([(MUTED, "Folders here that hold documents:")])
+            rows.append([(MUTED, "Folders that look like they hold documents:")])
             self._clamp_sel()
             for i, e in enumerate(es):
                 if i == self.sel:

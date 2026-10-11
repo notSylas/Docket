@@ -308,7 +308,7 @@ def test_library_with_suggestions_starts_a_folder_on_enter():
 
     async def go(h, b):
         text = h.text()
-        assert "Folders here that hold documents" in text
+        assert "Folders that look like they hold documents" in text
         assert "taxes" in text and "3 documents" in text
         await h.press("enter")  # first suggestion
         assert b.planned == ["/home/u/Downloads/taxes"]

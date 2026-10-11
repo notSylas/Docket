@@ -155,7 +155,10 @@ class _Session:
                 bare = BARE_WORDS.get(line.lower())
                 if bare is not None:
                     line = "/" + bare
-                if line.startswith("/"):
+                dropped = self._dropped(line)
+                if dropped is not None:
+                    source_commands.offer_dropped_path(self, dropped)
+                elif line.startswith("/"):
                     if self.command(line):
                         return
                 else:
@@ -165,6 +168,17 @@ class _Session:
                 self.say("(interrupted)", style="dim")
             except Exception as exc:  # last resort: never crash the session
                 handle_error(self, exc)
+
+    def _dropped(self, line: str) -> Any:
+        """The folder or file a pasted/dragged `line` names, or None. A real
+        slash command always wins over a path that starts with `/`."""
+        from docket.interfaces.cli.dropped import parse_dropped_path
+
+        if line.startswith("/"):
+            head = line[1:].split(None, 1)[0] if line[1:].strip() else ""
+            if head and (self.registry.resolve(head) is not None or self.registry.prefix_matches(head)):
+                return None
+        return parse_dropped_path(line)
 
     # -- commands ----------------------------------------------------------
 

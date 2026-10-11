@@ -38,6 +38,7 @@ from docket.core.db.models import (
 )
 from docket.infra.retrieval.resolver import ChunkNotFoundError, ResolvedEvidence
 from docket.interfaces.cli.interactive.render import number_citations
+from docket.interfaces.cli.picker import NativePicker
 from docket.interfaces.cli.quiet import (
     condense_error,
     display_path,
@@ -126,6 +127,7 @@ class RealBackend:
         "The answer model and thinking level are not connected yet."
     )
     freshness_supported = True
+    picker = NativePicker()  # Browse... in Add folder (hidden when unavailable)
     jobs_hint = "files that need attention are listed under each job"
     jobs_note = ""
     stage_search = "Searching and writing answer"
@@ -433,6 +435,19 @@ class RealBackend:
             return [str(parent / n) for n in sorted(names, key=str.lower)[:6] if str(parent / n) != t]
         except OSError:
             return []
+
+    def discover_folders(self) -> list[Any]:
+        """Folders that look like they hold documents (`FolderSuggestion`s),
+        from a bounded, time-limited look at well-known places. Blocking: call
+        it from a worker."""
+        from docket.services.sources.suggest import suggest_folders
+
+        roots = [
+            s.path
+            for s in self._ctx.source_manager.list_sources()
+            if s.status in (SourceStatus.ACTIVE, SourceStatus.MISSING)
+        ]
+        return suggest_folders(registered=roots)
 
     def is_broad_location(self, path: str) -> bool:
         if path in (".", "~", "/"):

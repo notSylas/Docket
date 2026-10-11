@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import os
 import sys
 import threading
 import time
@@ -212,6 +213,12 @@ class TuiApp:
         self._refresh_queue: dict[str, dict[Path, None]] = {}
         self._fresh_started = False
         self._catching_up = False
+        # CP7: native folder dialog (an object with available()/pick(start), or
+        # None) and folders suggested for an empty library
+        # ((path, documents, type summary), most documents first).
+        self.picker = None if backend.demo else getattr(backend, "picker", None)
+        self.suggested_folders: tuple[tuple[str, int, str], ...] = ()
+        self._suggest_started = False
 
         self._seed()
         self.composer = Buffer(multiline=True, name="composer", on_text_changed=lambda _b: self._clear_hint())
@@ -270,6 +277,95 @@ class TuiApp:
             self.push(ov.SourcesOverlay(self))
         else:
             self.push(ov.WelcomeOverlay(self))
+
+    # ---- CP7: add from the library view -------------------------------------
+    def picker_available(self) -> bool:
+        if self.picker is None:
+            return False
+        try:
+            return bool(self.picker.available())
+        except Exception:  # noqa: BLE001 -- a probe must never break the overlay
+            return False
+
+    def browse_folder(self, typed: str, on_done: Callable[[Any], None]) -> None:
+        """Run the native dialog on a worker; `on_done(PickResult)` runs on
+        the UI loop. The UI stays live meanwhile."""
+        picker = self.picker
+        start = typed if typed and os.path.isdir(os.path.expanduser(typed)) else str(Path.home())
+
+        def work() -> None:
+            try:
+                res = picker.pick(start)
+            except Exception as exc:  # noqa: BLE001
+                from docket.interfaces.cli.picker import PickResult
+
+                res = PickResult(error=f"The folder dialog failed: {exc}")
+            self._post(lambda: on_done(res))
+
+        self._spawn("browse", work)
+
+    def add_from_path(self, path: str) -> None:
+        """Open the add flow with `path` (a pasted or dragged folder): the
+        same check, broad-location and consent/preview steps as typing it."""
+        top = self.overlays[-1] if self.overlays else None
+        if top is None or top.name != "add":
+            top = ov.AddFolderOverlay(self)
+            self.push(top)
+        top.submit_path(path)
+        self.invalidate()
+
+    def offer_folder_for_file(self, file_path: str) -> None:
+        from docket.interfaces.cli.dropped import FILE_OFFER
+
+        parent = str(Path(file_path).parent)
+        self.push(
+            ov.ConfirmOverlay(
+                self,
+                "Docket works with folders",
+                f"{FILE_OFFER} {parent}",
+                [("Use this folder", lambda: self.add_from_path(parent)), ("Cancel", None)],
+            )
+        )
+
+    def handle_dropped_path(self, text: str) -> bool:
+        """True when `text` was a pasted/dragged path and was handled."""
+        from docket.interfaces.cli.dropped import parse_dropped_path
+
+        if self.backend.demo:
+            return False
+        if text.startswith("/"):
+            head = text[1:].split(None, 1)[0] if text[1:].strip() else ""
+            if head and self.registry.resolve(head) is not None:
+                return False  # a real slash command wins
+        dropped = parse_dropped_path(text)
+        if dropped is None:
+            return False
+        if dropped.is_dir:
+            self.add_from_path(dropped.path)
+        else:
+            self.offer_folder_for_file(dropped.path)
+        return True
+
+    def ensure_folder_suggestions(self) -> None:
+        """Look for folders with documents (worker, bounded) once, while the
+        library is empty."""
+        if self._suggest_started or self.backend.demo or self.world.sources:
+            return
+        discover = getattr(self.backend, "discover_folders", None)
+        if discover is None or self._loop is None:
+            return
+        self._suggest_started = True
+
+        def work() -> None:
+            try:
+                found = tuple(
+                    (s.path, s.documents, s.type_summary) for s in discover()
+                )
+            except Exception:  # noqa: BLE001 -- suggestions are a nicety
+                found = ()
+            self._post(lambda: setattr(self, "suggested_folders", found))
+
+        self._spawn("suggest", work)
 
     def open_folder(self, path: str) -> None:
         """Open Docket on a folder chosen at run time (a suggestion): the same
@@ -861,6 +957,11 @@ class TuiApp:
         if not self.overlays:
             return
         top = self.overlays[-1]
+        if not force:
+            consume = getattr(top, "consume_escape", None)
+            if callable(consume) and consume():
+                self.invalidate()
+                return
         if not force and not top.can_close():
             self.push(
                 ov.ConfirmOverlay(
@@ -1367,6 +1468,10 @@ class TuiApp:
             if self.marker_visible():
                 self.open_evidence(self.focus_answer, 0)
             return
+        if self.handle_dropped_path(text):
+            self.composer.reset()
+            self.invalidate()
+            return
         if text.startswith("/") or text.lower() in BARE_WORDS:
             self.composer.reset()
             self.run_text(text)
@@ -1404,6 +1509,7 @@ class TuiApp:
         self.open_palette()
 
     def cmd_sources(self, arg: str) -> None:
+        self.ensure_folder_suggestions()
         self.push(ov.SourcesOverlay(self))
 
     def cmd_add(self, arg: str) -> None:
@@ -1987,6 +2093,7 @@ class TuiApp:
             self._run_pending_start()
         self.refresh_health()
         self.start_freshness()
+        self.ensure_folder_suggestions()
 
     async def _ticker(self) -> None:
         while True:
