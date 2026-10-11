@@ -2058,7 +2058,7 @@ class JobsOverlay(Overlay):
         details = e.extra or ()
         if details:
             rows.append([])
-            rows.append([(MUTED, "Files that still need attention:")])
+            rows.append([(MUTED, "Files in this run:")])
             for line in details:
                 rows.extend(wrap_text("  " + line, iw, "class:attention"))
         return rows

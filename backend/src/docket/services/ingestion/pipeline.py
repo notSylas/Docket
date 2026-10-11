@@ -141,6 +141,8 @@ from docket.infra.inference.gateway import InferenceGateway
 from docket.services.ingestion.chunk_writer import ChunkWriter
 from docket.infra.parsing.filecheck import InvalidFileError, check_file_signature
 from docket.services.ingestion.ignore import DiscoveryReport, IgnoreRules
+from docket.services.ingestion.job_results import JobFiles
+
 from docket.services.ingestion.failure import condense_error
 from docket.services.ingestion.ignore import discover as discover_files
 from docket.services.ingestion.formula_transcriber import FormulaTranscriber
@@ -911,6 +913,8 @@ class IngestionPipeline:
     def _finalize_job(
         self, job_id: str, status: IngestionJobStatus, error: str | None, stats: dict
     ) -> None:
+        JobFiles(self._session_factory).finish(job_id)
+        stats = {**stats, "file_details_version": 1}
         with self._session_factory() as session:
             job = session.get(IngestionJob, job_id)
             job.status = status
@@ -1000,6 +1004,7 @@ class IngestionPipeline:
                 source_id=source_id,
                 status=IngestionJobStatus.RUNNING,
                 started_at=_utcnow(),
+                stats_json='{"file_details_version": 1}',
             )
             session.add(job)
             session.commit()
@@ -1023,7 +1028,9 @@ class IngestionPipeline:
                 "chunks_written": sum(r.chunks_written for r in results),
             }
 
-        targets = [Path(p) for p in paths]
+        targets = list(dict.fromkeys(Path(p) for p in paths))
+        job_files = JobFiles(self._session_factory)
+        job_files.prepare(job_id, targets)
         file_results: list[FileIngestResult] = []
         try:
             if not self._check_root_reachable(source):
@@ -1046,11 +1053,13 @@ class IngestionPipeline:
             total = len(targets)
             for index, path in enumerate(targets, start=1):
                 emit(ProgressEvent("start", index, total, path))
+                job_files.update(job_id, path)
                 try:
                     result = self._ingest_path(source_id, path, root, rules, missing=missing)
                 except Exception as exc:  # noqa: BLE001 -- one bad file must not abort the batch
                     result = FileIngestResult(path=path, status="failed", error=str(exc))
                 file_results.append(result)
+                job_files.update(job_id, path, result)
                 emit(ProgressEvent("done", index, total, path, result))
             if any(r.status not in ("unchanged", "skipped") for r in file_results):
                 self._index_manager.reconcile_source(
@@ -1100,6 +1109,7 @@ class IngestionPipeline:
                 source_id=source_id,
                 status=IngestionJobStatus.RUNNING,
                 started_at=_utcnow(),
+                stats_json='{"file_details_version": 1}',
             )
             session.add(job)
             session.commit()
@@ -1141,15 +1151,19 @@ class IngestionPipeline:
             discovery = self._discover(
                 Path(source.path), getattr(source, "rules_json", None)
             )
-            files = discovery.files
+            files = list(dict.fromkeys(discovery.files))
+            job_files = JobFiles(self._session_factory)
+            job_files.prepare(job_id, files)
             total = len(files)
             for index, path in enumerate(files, start=1):
                 emit(ProgressEvent("start", index, total, path))
+                job_files.update(job_id, path)
                 try:
                     result = self._ingest_one_file(source_id, path)
                 except Exception as exc:  # noqa: BLE001 -- one bad file must not abort the batch
                     result = FileIngestResult(path=path, status="failed", error=str(exc))
                 file_results.append(result)
+                job_files.update(job_id, path, result)
                 emit(ProgressEvent("done", index, total, path, result))
 
             # Single end-of-run reconcile pass -- see module docstring for why
