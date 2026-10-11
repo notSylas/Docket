@@ -96,7 +96,9 @@ def test_flag_off_is_identical(env: Env, monkeypatch) -> None:
     gw_off = PlanAwareGateway(_sum_plan(env), "Total is 9335 [x].")
     default = _service(env, gw_default, monkeypatch).ask(QUESTION)
     off = _service(env, gw_off, monkeypatch, compute_stage_enabled=False).ask(QUESTION)
-    assert default.model_dump() == off.model_dump()
+    # Wall-clock observations vary, while every answer/compute field stays identical.
+    timing_fields = {"latency_by_phase", "latency_s"}
+    assert default.model_dump(exclude=timing_fields) == off.model_dump(exclude=timing_fields)
     assert off.compute is None
     assert len(gw_off.generate_calls) == len(gw_off.answer_calls) >= 1
     assert gw_off.plan_calls == []
@@ -179,7 +181,9 @@ def test_failures_fall_back_unchanged(env: Env, monkeypatch, plan_builder, reaso
     baseline_gateway = PlanAwareGateway(None, answer)
     baseline = _service(env, baseline_gateway, monkeypatch).ask(QUESTION)
     assert baseline_gateway.answer_calls[0]["prompt"] == gateway.answer_calls[0]["prompt"]
-    assert baseline.model_copy(update={"compute": result.compute}) == result
+    timing_fields = {"latency_by_phase", "latency_s"}
+    compared = baseline.model_copy(update={"compute": result.compute})
+    assert compared.model_dump(exclude=timing_fields) == result.model_dump(exclude=timing_fields)
 
 
 def test_planner_error_falls_back(env: Env, monkeypatch) -> None:

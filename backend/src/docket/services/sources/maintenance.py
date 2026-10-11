@@ -44,6 +44,7 @@ from typing import Any, Callable
 
 from sqlalchemy import func, select
 
+from docket.core.writer_lock import WriterLock, lock_for_sessions, writer_operation
 from docket.core.db.models import (
     Chunk,
     EvidenceVersion,
@@ -219,12 +220,14 @@ class LibraryMaintenance:
         embed_model: str = "",
         scan: Callable[..., Any] = scan_folder,
         seconds_per_file: Callable[[], float | None] | None = None,
+        writer_lock: WriterLock | None = None,
     ) -> None:
         """`pipeline` is the ingestion pipeline or a zero-argument callable
         returning it (building the document parser is slow, so it is only
         asked for when a source actually has indexed files to inspect or work
         to do). `reindex` performs the whole-index rebuild and returns what
         `infra/index/reindex.reindex` returns."""
+        self._writer_lock = writer_lock or lock_for_sessions(session_factory)
         self._session_factory = session_factory
         self._sources = source_manager
         self._prune = prune_service
@@ -434,6 +437,7 @@ class LibraryMaintenance:
         )
 
     # -- run ----------------------------------------------------------------
+    @writer_operation("updating the library")
     def run(
         self,
         plan: MaintenancePlan,
@@ -575,6 +579,7 @@ class LibraryMaintenance:
         emit(STEP_REINDEX, "")
 
     # -- single-file and narrowing helpers ----------------------------------
+    @writer_operation("removing a file from the index")
     def ignore_file(self, source_id: str, relative_path: str) -> int:
         """Stop reading one file: append it to the source's `ignored_files`
         rule and take its indexed versions (a FAILED one included) out of the
@@ -588,6 +593,7 @@ class LibraryMaintenance:
         self._prune.apply_candidates(matches)
         return len(matches)
 
+    @writer_operation("updating folder coverage")
     def narrow(
         self,
         source_id: str,

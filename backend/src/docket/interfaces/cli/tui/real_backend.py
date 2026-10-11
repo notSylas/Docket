@@ -27,10 +27,12 @@ from typing import Any, Callable
 
 from sqlalchemy import func, select
 
+from docket.core.writer_lock import WriterLockBusyError
 from docket.core.db.models import (
     Chunk,
     EvidenceVersion,
     IngestionJob,
+    IngestionFileResult,
     IngestionJobStatus,
     Source,
     SourceStatus,
@@ -73,6 +75,7 @@ from docket.services.ingestion.failure import plain_failure_reason
 from docket.services.ingestion.pipeline import SUPPORTED_EXTENSIONS, SourceNotActiveError
 from docket.services.query.classifier import QueryMode
 from docket.services.query.conversation import ConversationTurn
+from docket.services.query.service import QueryService
 from docket.services.sources.manager import (
     InvalidSourceTransitionError,
     SourceCoveredError,
@@ -85,7 +88,7 @@ _STATUS_MAP = {
     SourceStatus.MISSING: fd.FAILED,
     SourceStatus.REVOKED: fd.DISCONNECTED,
 }
-_FORMATS = "PDF, Word, Excel, PowerPoint, text and Markdown"
+_FORMATS = "PDF, Word, Excel, PowerPoint, text, Markdown, CSV, HTML and email (.eml, .mbox)"
 _MAX_JOBS = 20
 
 
@@ -130,7 +133,7 @@ class RealBackend:
     picker = NativePicker()  # Browse... in Add folder (hidden when unavailable)
     jobs_hint = "files that need attention are listed under each job"
     jobs_note = ""
-    stage_search = "Searching and writing answer"
+    stage_search = "Searching..."
     stage_citations = "Checking citations"
     intro_notice = "Type a question, or press F1 for commands."
 
@@ -143,6 +146,7 @@ class RealBackend:
     ) -> None:
         self._ctx = context
         settings = context.settings
+        self.feedback_enabled = getattr(settings, "feedback_enabled", False)
         if query_service_factory is None:
             from docket.interfaces.cli.interactive.session import _default_factory
 
@@ -184,9 +188,21 @@ class RealBackend:
             ("settings", "answering, appearance, history, system", ""),
             ("details", "details of the latest answer", ""),
             ("update", "bring the library up to date", ""),
+            ("feedback", "rate the focused answer privately (F9)", ""),
         )
 
     # -- models ------------------------------------------------------------
+    def save_feedback(self, question: str, answer: AnswerView, label: str, correction: str = "", *, answer_text: str | None = None) -> str:
+        from docket.core.writer_lock import lock_for_sessions
+        from docket.services.feedback import FeedbackStore
+
+        return FeedbackStore(self._ctx.settings.data_dir, self.feedback_enabled,
+                             writer_lock=lock_for_sessions(self._ctx.session_factory)).capture(
+            question, answer.text if answer_text is None else answer_text,
+            [{"chunk_id": c.chunk_id, "evidence_version_id": c.evidence_version_id} for c in answer.citations],
+            label, correction,
+        )
+
     @property
     def answer_models(self) -> tuple[tuple[str, bool, str], ...]:
         name = self.default_model
@@ -225,11 +241,38 @@ class RealBackend:
                 ).all()
             )
         names = self._names(sources)
+        # Rank in SQL so history does not grow the current-file view indefinitely.
+        with sf() as session:
+            ranked = select(
+                IngestionJob.source_id.label("source_id"), IngestionFileResult.path,
+                IngestionFileResult.outcome, IngestionFileResult.failure_reason,
+                func.coalesce(IngestionFileResult.finished_at, IngestionJob.started_at).label("observed"),
+                func.row_number().over(partition_by=(IngestionJob.source_id, IngestionFileResult.path),
+                                       order_by=IngestionJob.started_at.desc()).label("rank"),
+            ).join(IngestionJob, IngestionJob.id == IngestionFileResult.job_id).subquery()
+            file_rows = session.execute(select(ranked).where(ranked.c.rank == 1)).all()
         latest: dict[tuple[str, str], tuple[datetime, VersionStatus, int, str | None]] = {}
         for source_id, file_path, status, observed, n_chunks, reason in versions:
             key = (source_id, file_path or "")
             if key not in latest or observed >= latest[key][0]:
                 latest[key] = (observed, status, int(n_chunks), reason)
+        from docket.services.ingestion.ignore import IgnoreRules
+        rules = {source.id: (IgnoreRules.for_root(Path(source.path), source.rules_json)
+                             if getattr(self._ctx.settings, "ingest_ignore_enabled", True) else IgnoreRules())
+                 for source in sources}
+        source_roots = {source.id: Path(source.path) for source in sources}
+        for sid, path, outcome, reason, observed, _rank in file_rows:
+            if sid not in source_roots:
+                continue
+            try:
+                rel = Path(path).relative_to(source_roots[sid])
+            except ValueError:
+                continue
+            if rules[sid].path_ignored(rel):
+                continue  # Ignoring a file must not resurrect its historical failure.
+            key = (sid, path)
+            if outcome in ("failed", "interrupted") and (key not in latest or observed >= latest[key][0]):
+                latest[key] = (observed, VersionStatus.FAILED, 0, reason)
         by_source: dict[str, list[FileView]] = {}
         roots = {s.id: s.path for s in sources}
         for (source_id, file_path), (_obs, status, n_chunks, reason) in sorted(latest.items(), key=lambda kv: kv[0]):
@@ -318,10 +361,13 @@ class RealBackend:
             sources = list(session.execute(select(Source)).scalars().all())
             jobs = list(session.execute(select(IngestionJob).order_by(IngestionJob.started_at.desc()).limit(_MAX_JOBS)).scalars().all())
         names = self._names(sources)
-        try:
-            failed_files = self.failed_file_lines()
-        except Exception:  # noqa: BLE001 -- details are a nicety
-            failed_files = {}
+        by_job: dict[str, list[IngestionFileResult]] = {}
+        with sf() as session:
+            for row in session.execute(select(IngestionFileResult).where(
+                IngestionFileResult.job_id.in_([job.id for job in jobs])
+            ).order_by(IngestionFileResult.path)).scalars():
+                by_job.setdefault(row.job_id, []).append(row)
+        roots = {source.id: source.path for source in sources}
         out: list[JobRecord] = []
         for job in jobs:
             if job.status in (IngestionJobStatus.RUNNING, IngestionJobStatus.PENDING):
@@ -335,6 +381,7 @@ class RealBackend:
             else:
                 state = "Interrupted" if (job.error or "").strip() == "interrupted" else "Failed"
             summary = ""
+            stats = {}
             try:
                 import json
 
@@ -349,9 +396,18 @@ class RealBackend:
                 summary = "Stopped when the process exited; refresh to finish."
             elif job.error and state != "Completed":
                 summary = (summary + " — " if summary else "") + condense_error(job.error)
-            details: tuple[str, ...] = ()
-            if state in ("Partial", "Failed"):
-                details = failed_files.get(job.source_id, ())
+            rows = by_job.get(job.id, [])
+            if rows:
+                details = tuple(
+                    f"{display_path(Path(row.path), Path(roots.get(job.source_id, '/')))}: "
+                    f"{row.outcome} · {row.chunks_written} chunks"
+                    + (f" — {row.failure_reason}" if row.failure_reason else "")
+                    + f" · {_local_time(row.started_at)} → {_local_time(row.finished_at)}"
+                    for row in rows
+                )
+            else:
+                details = ("No files were processed in this run" if stats.get("file_details_version")
+                           else "File details unavailable for this older run",)
             out.append(
                 JobRecord(
                     names.get(job.source_id, job.source_id),
@@ -364,41 +420,16 @@ class RealBackend:
         return out
 
     def failed_file_lines(self, source_id: str | None = None, limit: int = 5) -> dict[str, tuple[str, ...]]:
-        """Per source: the files whose latest version is FAILED, each as
-        "relative/path: plain reason" (at most `limit` lines, then a count)."""
-        sf = self._ctx.session_factory
-        with sf() as session:
-            q = (
-                select(
-                    EvidenceVersion.source_id,
-                    EvidenceVersion.file_path,
-                    EvidenceVersion.status,
-                    EvidenceVersion.observed_at,
-                    EvidenceVersion.failure_reason,
-                    Source.path,
-                )
-                .join(Source, Source.id == EvidenceVersion.source_id)
-                .where(EvidenceVersion.status != VersionStatus.SUPERSEDED)
-            )
-            if source_id is not None:
-                q = q.where(EvidenceVersion.source_id == source_id)
-            rows = session.execute(q).all()
-        latest: dict[tuple[str, str], tuple[datetime, VersionStatus, str | None, str]] = {}
-        for sid, file_path, status, observed, reason, root in rows:
-            key = (sid, file_path or "")
-            if key not in latest or observed >= latest[key][0]:
-                latest[key] = (observed, status, reason, root)
-        grouped: dict[str, list[str]] = {}
-        for (sid, file_path), (_o, status, reason, root) in sorted(latest.items()):
-            if status != VersionStatus.FAILED or not file_path:
-                continue
-            rel = display_path(Path(file_path), Path(root))
-            grouped.setdefault(sid, []).append(f"{rel}: {plain_failure_reason(reason, rel)}")
+        """Current stored failures, including errors before evidence creation."""
         out: dict[str, tuple[str, ...]] = {}
-        for sid, lines in grouped.items():
+        for source in self.load_world().sources:
+            if source_id is not None and source.id != source_id:
+                continue
+            lines = [f"{file.path}: {file.error}" for file in source.files if file.status == fd.FILE_FAILED]
             if len(lines) > limit:
                 lines = [*lines[:limit], f"and {len(lines) - limit} more"]
-            out[sid] = tuple(lines)
+            if lines:
+                out[source.id] = tuple(lines)
         return out
 
     def system_rows(self, world: World, readiness: ReadinessReport) -> list[tuple[str, str]]:
@@ -856,6 +887,8 @@ class RealBackend:
     def ignore_file(self, source_id: str, rel_path: str) -> int:
         try:
             return self._ctx.maintenance.ignore_file(source_id, rel_path)
+        except WriterLockBusyError as exc:
+            raise BackendError(f"{exc.ui_message}. {exc}") from exc
         except (SourceNotFoundError, ValueError) as exc:
             raise BackendError(f"Error: {exc}") from exc
 
@@ -933,6 +966,7 @@ class RealBackend:
 
     # -- asking --------------------------------------------------------------
     def ask(self, request: AskRequest, on_stage: StageCallback, scope_label: str, mode_label: str) -> AskOutcome:
+        on_stage(self.stage_search)
         ctx = self._ctx
         try:
             snap = ctx.readiness.snapshot()
@@ -950,15 +984,23 @@ class RealBackend:
             return AskOutcome(error="Nothing is indexed yet. Add a folder and let indexing finish.")
         mode = {"auto": None, "fast": QueryMode.FAST, "agent": QueryMode.AGENT}.get(request.mode)
         history = [ConversationTurn(question=t.question, answer=t.answer) for t in request.history]
-        on_stage(self.stage_search)
         started = time.perf_counter()
         try:
             service = self._factory(ctx, table)
             query_scope = self._query_scope(request.scope, scope_label)
+            progress = {}
+            if isinstance(service, QueryService):
+                labels = {
+                    "scope_resolve": "Searching...", "rewrite": "Rewriting question...",
+                    "search": "Searching...", "resolve_evidence": "Reading evidence...",
+                    "prompt_assembly": "Preparing answer...", "generation": "Writing answer...",
+                    "citation_validation": self.stage_citations, "compute": "Checking numbers...",
+                }
+                progress["on_progress"] = lambda phase: on_stage(labels.get(phase, "Searching..."))
             if query_scope is None:
-                result = service.ask(request.question, mode=mode, history=history)
+                result = service.ask(request.question, mode=mode, history=history, **progress)
             else:
-                result = service.ask(request.question, mode=mode, history=history, scope=query_scope)
+                result = service.ask(request.question, mode=mode, history=history, scope=query_scope, **progress)
         except Exception as exc:  # noqa: BLE001
             return AskOutcome(error=describe_error(exc, self.default_model))
         elapsed = time.perf_counter() - started
@@ -1149,6 +1191,7 @@ class RealBackend:
                     indexed=_local_time(observed) if observed else "unknown",
                     chunk_id=c.chunk_id,
                     source=source_name,
+                    evidence_version_id=ev.evidence_version_id,
                 )
             )
         return out

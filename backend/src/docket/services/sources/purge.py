@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
+from docket.core.writer_lock import WriterLock, lock_for_sessions, writer_operation
 from docket.core.db.models import EvidenceVersion, Source, SourceStatus
 from docket.infra.evidence.references import count_blob_references, delete_blob_references_for
 from docket.infra.evidence.store import ContentAddressedStore
@@ -72,11 +73,14 @@ class SourcePurgeService:
         store: ContentAddressedStore,
         *,
         index_manager: IndexManager | None = None,
+        writer_lock: WriterLock | None = None,
     ) -> None:
+        self._writer_lock = writer_lock or lock_for_sessions(session_factory)
         self._session_factory = session_factory
         self._store = store
         self._index_manager = index_manager
 
+    @writer_operation("purging stored evidence")
     def purge_source(self, source_id: str, *, reason: str | None = None) -> PurgeResult:
         """Permanently delete `source_id`'s evidence rows and (where safe)
         its blobs, then flip it to `DELETED`.

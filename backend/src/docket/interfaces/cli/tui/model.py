@@ -38,6 +38,7 @@ class Message:
     scope_label: str = ""
     uid: int = 0
     history_answer: str = ""  # tagged answer text kept for follow-up context
+    question: str = ""  # the question for this answer, including older focused answers
 
 
 @dataclass
@@ -52,7 +53,7 @@ class IndexJob:
     indexed: int = 0
     unchanged: int = 0
     failed: int = 0
-    state: str = "running"  # running | stopping | done | stopped | failed
+    state: str = "running"  # running | stopping | done | stopped | failed | busy
     reason: str = ""
     failures: list[tuple[str, str]] = field(default_factory=list)
     on_done: str = ""  # "ready" -> mark source ready on completion

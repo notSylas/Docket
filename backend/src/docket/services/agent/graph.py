@@ -64,6 +64,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_ollama import ChatOllama
 from langgraph.graph import END, StateGraph
 
+from docket.services.query.timing import phase
 from docket.services.agent.policy_gateway import AgentState, make_policy_gateway
 from docket.core.db.engine import get_session_factory
 from docket.infra.evidence.store import ContentAddressedStore
@@ -156,7 +157,8 @@ def build_agent(
 
     def call_model(state: AgentState) -> dict:
         started = time.perf_counter()
-        response = llm_with_tools.invoke(state["messages"])
+        with phase("generation"):
+            response = llm_with_tools.invoke(state["messages"])
         if trace_callback is not None:
             trace_callback({
                 "event": "model_call", "messages": list(state["messages"]),

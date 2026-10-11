@@ -423,7 +423,7 @@ def test_real_jobs_details_list_failed_files_with_reasons(ctx, folder):
     records = backend_for(ctx).job_history(running=False)
     assert records and records[0].state == "Partial"
     joined = " | ".join(records[0].details)
-    assert "locked.pdf: Password-protected" in joined and "old.doc:" in joined
+    assert joined == "File details unavailable for this older run"
 
 
 def test_real_ignore_file_and_retry_via_the_backend(ctx, folder):

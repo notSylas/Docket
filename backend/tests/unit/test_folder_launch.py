@@ -86,7 +86,7 @@ def tree(tmp_path: Path) -> Path:
     doc(root / "node_modules" / "x" / "e.pdf")
     doc(root / ".hidden" / "f.pdf")
     fake_doc(root / "fake.pdf")
-    (root / "notes.txt").write_text("not a supported type")
+    (root / "notes.bin").write_text("not a supported type")
     return root
 
 
@@ -179,7 +179,7 @@ def test_scan_broad_by_first_level_entries(tmp_path):
     root = tmp_path / "dump"
     root.mkdir()
     for i in range(2001):
-        (root / f"n{i}.txt").write_text("")
+        (root / f"n{i}.bin").write_text("")
     doc(root / "one.pdf")
     r = scan_folder(root)
     assert r.documents == 1 and r.broad and "top level" in r.broad_reason
@@ -286,7 +286,7 @@ def test_new_large_folder_needs_a_preview(ctx, home, tmp_path):
 def test_empty_folder_and_only_invalid_files(ctx, home, tmp_path):
     empty = tmp_path / "empty"
     empty.mkdir()
-    (empty / "notes.txt").write_text("hi")
+    (empty / "notes.bin").write_text("hi")
     p = plan_for(ctx, empty, home)
     assert p.kind == KIND_EMPTY and "no supported documents" in p.reason
     bad = tmp_path / "bad"

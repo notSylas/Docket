@@ -7,6 +7,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="DOCKET_")
 
     data_dir: Path = Path.home() / ".local" / "share" / "docket"
+    # Explicit local opt-in. No capture, export, logging or training happens automatically.
+    feedback_enabled: bool = False
 
     gen_model: str = "qwen3:14b"
     embed_model: str = "qwen3-embedding:0.6b"
@@ -26,6 +28,9 @@ class Settings(BaseSettings):
     # node_modules, Office lock files, `.docketignore`). Escape hatch:
     # DOCKET_INGEST_IGNORE_ENABLED=false walks everything, as before.
     ingest_ignore_enabled: bool = True
+    # Snapshot size is a hard limit; count overflow is explicit partial intake.
+    mail_max_bytes: int = 64 * 1024 * 1024
+    mail_max_messages: int = 1000
 
     # Off by default, same posture as `visual_index_enabled`: this checkpoint
     # builds the formula-region crop + VLM transcription + storage

@@ -492,14 +492,16 @@ def test_each_question_reopens_the_vector_table_and_sees_concurrent_writes(tmp_p
 def test_worker_threads_use_their_own_database_sessions(ctx, folder):
     src = ctx.source_manager.register_source(folder)
     add_file(ctx, src, "a.md")
-    opened: list[tuple[int, int]] = []
+    # Retain the actual objects, then compare identity. Object ids may be
+    # reused after collection, so numeric ids cannot prove session sharing.
+    opened: list[tuple[int, object]] = []
     lock = threading.Lock()
     real = ctx.session_factory
 
     def spy():
         s = real()
         with lock:
-            opened.append((threading.get_ident(), id(s)))
+            opened.append((threading.get_ident(), s))
         return s
 
     ctx.session_factory = spy
@@ -520,9 +522,9 @@ def test_worker_threads_use_their_own_database_sessions(ctx, folder):
         assert be.ask(AskRequest("q", "auto"), lambda s: None, "All", "Auto").answer is not None
     t.join(10)
     assert not errors and not t.is_alive()
-    by_thread: dict[int, set[int]] = {}
-    for tid, sid in opened:
-        by_thread.setdefault(tid, set()).add(sid)
+    by_thread: dict[int, list[object]] = {}
+    for tid, session in opened:
+        by_thread.setdefault(tid, []).append(session)
     assert len(by_thread) == 2  # the writer thread and this one
     a, b = by_thread.values()
-    assert not (a & b), "no session object is shared across threads"
+    assert all(left is not right for left in a for right in b), "no session object is shared across threads"

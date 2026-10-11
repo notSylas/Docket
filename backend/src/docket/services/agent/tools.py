@@ -37,6 +37,7 @@ from docket.prompts.agent import (
     SEARCH_KNOWLEDGE_DESCRIPTION,
 )
 from docket.services.agent.calculator import safe_calculate
+from docket.services.query.timing import timed_phase
 from docket.infra.retrieval.hybrid import hybrid_search
 from docket.infra.retrieval.resolver import ChunkNotFoundError, EvidenceResolver
 
@@ -77,6 +78,7 @@ def make_search_knowledge_tool(
     """
 
     @tool(description=SEARCH_KNOWLEDGE_DESCRIPTION)
+    @timed_phase("search")
     def search_knowledge(query: str) -> str:
         """Model-facing description lives in `docket.prompts.agent.SEARCH_KNOWLEDGE_DESCRIPTION`."""
         extra = (extra_queries_provider() if extra_queries_provider else None) or []
@@ -131,6 +133,7 @@ def make_read_evidence_tool(
     """
 
     @tool(description=READ_EVIDENCE_DESCRIPTION)
+    @timed_phase("resolve_evidence")
     def read_evidence(chunk_id: str) -> str:
         """Model-facing description lives in `docket.prompts.agent.READ_EVIDENCE_DESCRIPTION`."""
         try:
@@ -169,6 +172,7 @@ def make_read_range_tool(*, reader: WorkbookReader) -> BaseTool:
     missing sheet, ...) so a bad argument never crashes the agent loop."""
 
     @tool(description=READ_RANGE_DESCRIPTION)
+    @timed_phase("resolve_evidence")
     def read_range(chunk_id: str, range: str, sheet: str | None = None) -> str:  # noqa: A002
         """Model-facing description lives in `docket.prompts.agent.READ_RANGE_DESCRIPTION`."""
         try:
@@ -196,6 +200,7 @@ def make_calculate_tool(*, reader: WorkbookReader) -> BaseTool:
     tool reads its own inputs through `reader`, the model only names cells."""
 
     @tool(description=CALCULATE_DESCRIPTION)
+    @timed_phase("compute")
     def calculate(operation: str, refs: list[CalculateRef], round_to: int | None = 2) -> str:
         """Model-facing description lives in `docket.prompts.agent.CALCULATE_DESCRIPTION`."""
         try:

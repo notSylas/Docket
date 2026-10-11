@@ -23,6 +23,7 @@ from docket.services.agent.run_context import (
 from docket.services.query.classifier import QueryMode
 from docket.services.query.prompts import ABSTENTION_PHRASE
 from docket.services.query.service import QueryService
+from docket.services.query.timing import QuestionTiming, _timing, timed_phase
 
 N = 4
 
@@ -59,10 +60,11 @@ def test_concurrent_asks_do_not_see_each_others_run_state() -> None:
         scope_version_ids=[f"ev-{q}"], scope_files=[f"file-{q}"]
     )
     errors: list[BaseException] = []
+    results = {}
 
     def run(i: int) -> None:
         try:
-            service.ask(f"q{i}", mode=QueryMode.AGENT)
+            results[i] = service.ask(f"q{i}", mode=QueryMode.AGENT)
         except BaseException as exc:  # noqa: BLE001
             errors.append(exc)
 
@@ -72,6 +74,10 @@ def test_concurrent_asks_do_not_see_each_others_run_state() -> None:
 
     assert not errors, errors
     assert len(agent.seen) == N
+    assert len({id(r.latency_by_phase) for r in results.values()}) == N
+    for result in results.values():
+        assert all(value >= 0 for value in result.latency_by_phase.values())
+        assert abs(sum(result.latency_by_phase.values()) - result.latency_s) < 1e-8
     for i in range(N):
         assert agent.seen[f"q{i}"] == ([f"standalone-q{i}"], [f"ev-q{i}"])
     # Nothing leaks onto the shared instance or into the calling context.
@@ -85,6 +91,7 @@ def test_providers_reach_graph_tool_nodes_per_thread(mocker) -> None:
     barrier = threading.Barrier(2)
 
     @tool
+    @timed_phase("search")
     def search_knowledge(query: str) -> str:
         """Fake search that reports the active run's state."""
         barrier.wait(timeout=10)
@@ -101,13 +108,20 @@ def test_providers_reach_graph_tool_nodes_per_thread(mocker) -> None:
             {"name": "search_knowledge", "args": {"query": "x"}, "id": "c1"}])
     )
     out: dict[int, str] = {}
+    timings = {}
 
     def run(i: int) -> None:
-        with bind_run_context(RunContext(extra_queries=[f"e{i}"], scope_ids=[f"s{i}"])):
-            state = agent.invoke({
-                "messages": [HumanMessage(content="q")], "iterations": 0,
-                "tool_calls_made": 0, "blocked_calls": [],
-            })
+        recorder = QuestionTiming()
+        token = _timing.set(recorder)
+        try:
+            with bind_run_context(RunContext(extra_queries=[f"e{i}"], scope_ids=[f"s{i}"])):
+                state = agent.invoke({
+                    "messages": [HumanMessage(content="q")], "iterations": 0,
+                    "tool_calls_made": 0, "blocked_calls": [],
+                })
+            timings[i] = recorder.finish()
+        finally:
+            _timing.reset(token)
         out[i] = next(m.content for m in state["messages"] if m.type == "tool")
 
     threads = [threading.Thread(target=run, args=(i,)) for i in range(2)]
@@ -116,3 +130,6 @@ def test_providers_reach_graph_tool_nodes_per_thread(mocker) -> None:
 
     for i in range(2):
         assert json.loads(out[i]) == {"extra": [f"e{i}"], "scope": [f"s{i}"]}
+        phases, total = timings[i]
+        assert phases["search"] > 0 and phases["generation"] > 0
+        assert abs(sum(phases.values()) - total) < 1e-8

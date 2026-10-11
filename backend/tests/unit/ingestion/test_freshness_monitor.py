@@ -164,7 +164,7 @@ def test_events_are_debounced_filtered_and_batched(fx):
     assert _wait(lambda: m.mode(fx.source.id) == "watching")
 
     a, b = fx.root / "a.pdf", fx.root / "sub" / "b.docx"
-    watch.push(("added", str(a)), ("added", str(fx.root / "drafts" / "x.pdf")), ("added", str(fx.root / "n.txt")))
+    watch.push(("added", str(a)), ("added", str(fx.root / "drafts" / "x.pdf")), ("added", str(fx.root / "n.bin")))
     time.sleep(0.15)
     clock.now += 2
     watch.push(("modified", str(b)), ("modified", str(a)), ("added", str(fx.root / ".git" / "y.pdf")))

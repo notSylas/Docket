@@ -42,6 +42,7 @@ KEYS = {
     "f6": "\x1b[17~",
     "f7": "\x1b[18~",
     "f8": "\x1b[19~",
+    "f9": "\x1b[20~",
     "ctrl-end": "\x1b[1;5F",
     "alt-up": "\x1b\x1b[A",
     "alt-down": "\x1b\x1b[B",

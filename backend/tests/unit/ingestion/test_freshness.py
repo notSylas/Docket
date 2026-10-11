@@ -119,10 +119,10 @@ def test_ignored_paths_never_show_up_or_get_ingested(env):
 
 
 def test_unsupported_and_not_real_documents_are_skipped_not_failed(env):
-    (env.folder / "notes.txt").write_text("plain")
+    (env.folder / "notes.bin").write_text("plain")
     fake = env.folder / "fake.xlsx"
     fake.write_bytes(b"this is not a zip at all")
-    job = env.pipeline.run_ingestion_for_paths(env.source.id, [env.folder / "notes.txt", fake], missing="skip")
+    job = env.pipeline.run_ingestion_for_paths(env.source.id, [env.folder / "notes.bin", fake], missing="skip")
     assert [r.status for r in job.file_results] == ["skipped", "skipped"]
     assert _catch_up(env).empty  # discovery agrees: neither is a candidate
 

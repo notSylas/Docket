@@ -12,6 +12,7 @@ import os
 import re
 from typing import Any
 
+from docket.core.writer_lock import WriterLockBusyError
 from docket.infra.inference.gateway import (
     InferenceError,
     InferenceUnavailableError,
@@ -26,7 +27,9 @@ def handle_error(session: Any, exc: BaseException) -> None:
         import traceback
 
         session.error(traceback.format_exc())
-    if isinstance(exc, InferenceUnavailableError):
+    if isinstance(exc, WriterLockBusyError):
+        session.error(str(exc))
+    elif isinstance(exc, InferenceUnavailableError):
         session.error("Can't reach Ollama — is it running? (ollama serve)")
         session.say(str(exc), style="dim")
     elif isinstance(exc, ModelNotFoundError):

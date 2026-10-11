@@ -123,6 +123,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
+from docket.core.writer_lock import WriterLock, lock_for_sessions, writer_operation
 from docket.core.config import Settings
 from docket.core.config import settings as _default_settings
 from docket.core.db.models import (
@@ -140,6 +141,8 @@ from docket.infra.inference.gateway import InferenceGateway
 from docket.services.ingestion.chunk_writer import ChunkWriter
 from docket.infra.parsing.filecheck import InvalidFileError, check_file_signature
 from docket.services.ingestion.ignore import DiscoveryReport, IgnoreRules
+from docket.services.ingestion.job_results import JobFiles
+
 from docket.services.ingestion.failure import condense_error
 from docket.services.ingestion.ignore import discover as discover_files
 from docket.services.ingestion.formula_transcriber import FormulaTranscriber
@@ -149,14 +152,20 @@ from docket.infra.parsing.chunker import chunk_document
 from docket.infra.parsing.docling_wrapper import DoclingParser
 from docket.infra.parsing.pptx_chunker import chunk_presentation
 from docket.infra.parsing.pptx_wrapper import PptxParser
+from docket.infra.parsing.text_family import TEXT_EXTENSIONS, TextFamilyParser, chunk_text
+from docket.infra.parsing.mail_family import MAIL_EXTENSIONS, MailParser, chunk_mail
 from docket.infra.parsing.recipes import (
     FAMILY_DOCLING,
     FAMILY_PPTX,
     FAMILY_XLSX,
+    FAMILY_TEXT,
+    FAMILY_MAIL,
+    mail_recipe as build_mail_recipe,
     ChunkRecipe,
     pptx_recipe as build_pptx_recipe,
     recipe_family,
     xlsx_recipe as build_xlsx_recipe,
+    text_recipe as build_text_recipe,
 )
 from docket.infra.parsing.xlsx_chunker import chunk_workbook
 from docket.infra.parsing.xlsx_wrapper import XlsxParser
@@ -177,7 +186,7 @@ XLSX_EXTENSION = ".xlsx"
 # `docket.infra.parsing.pptx_wrapper`/`pptx_chunker`).
 PPTX_EXTENSION = ".pptx"
 
-SUPPORTED_EXTENSIONS = DOCLING_EXTENSIONS | {XLSX_EXTENSION, PPTX_EXTENSION}
+SUPPORTED_EXTENSIONS = DOCLING_EXTENSIONS | {XLSX_EXTENSION, PPTX_EXTENSION} | TEXT_EXTENSIONS | MAIL_EXTENSIONS
 
 # Recognized Excel-family extensions this pipeline explicitly refuses rather
 # than silently never discovering (doc 02 section 3: "Unsupported ... inputs
@@ -262,6 +271,7 @@ class FileIngestResult:
     status: str
     error: str | None = None
     chunks_written: int = 0
+    notice: str | None = None
 
 
 @dataclass(frozen=True)
@@ -332,9 +342,15 @@ class IngestionPipeline:
         pptx_parser: PptxParser | None = None,
         xlsx_recipe: ChunkRecipe | None = None,
         pptx_recipe: ChunkRecipe | None = None,
+        text_parser: TextFamilyParser | None = None,
+        text_recipe: ChunkRecipe | None = None,
         source_manager: SourceManager | None = None,
         manifest_guard: IndexManifestGuard | None = None,
+        writer_lock: WriterLock | None = None,
+        mail_parser: MailParser | None = None,
+        mail_recipe: ChunkRecipe | None = None,
     ) -> None:
+        self._writer_lock = writer_lock or lock_for_sessions(session_factory)
         self._session_factory = session_factory
         self._evidence_manager = evidence_manager
         self._parser = parser
@@ -349,6 +365,7 @@ class IngestionPipeline:
         # loading, so a default instance is cheap enough to build here
         # without requiring every existing caller to pass one explicitly.
         self._pptx_parser = pptx_parser if pptx_parser is not None else PptxParser()
+        self._text_parser = text_parser if text_parser is not None else TextFamilyParser()
         # `gateway`/`visual_index_writer` are only exercised when
         # `settings.visual_index_enabled` is True (see `VisualIndexer`).
         # `settings` defaults to the process-wide singleton (whose
@@ -359,10 +376,16 @@ class IngestionPipeline:
         self._gateway = gateway
         self._visual_index_writer = visual_index_writer
         self._settings = settings if settings is not None else _default_settings
+        self._mail_parser = mail_parser or MailParser(
+            max_bytes=self._settings.mail_max_bytes, max_messages=self._settings.mail_max_messages)
         # One recipe per parser family, each hashing only what its chunker
         # depends on (see `docket.infra.parsing.recipes`). `chunk_recipe` is
         # the Docling text-path recipe.
         self._recipes: dict[str, ChunkRecipe] = {
+            FAMILY_MAIL: mail_recipe or build_mail_recipe(
+                self._settings, self._mail_parser.parser_name, self._mail_parser.parser_version),
+            FAMILY_TEXT: text_recipe or build_text_recipe(
+                self._settings, self._text_parser.parser_name, self._text_parser.parser_version),
             FAMILY_DOCLING: chunk_recipe,
             FAMILY_XLSX: xlsx_recipe
             if xlsx_recipe is not None
@@ -471,6 +494,10 @@ class IngestionPipeline:
         self._chunk_writer.delete_units_and_chunks(evidence_version_id)
 
     def _parse_for_family(self, family: str, source_id: str, path: Path):
+        if family == FAMILY_MAIL:
+            return self._mail_parser.parse(source_id, path)
+        if family == FAMILY_TEXT:
+            return self._text_parser.parse(source_id, path)
         if family == FAMILY_XLSX:
             return self._xlsx_parser.parse(source_id, path)
         if family == FAMILY_PPTX:
@@ -484,7 +511,32 @@ class IngestionPipeline:
         the version's units/chunks (and index entries), and index the new
         chunks. Shared by normal ingestion and `--rechunk`."""
         recipe = self._recipes[family]
-        if family == FAMILY_XLSX:
+        if family == FAMILY_MAIL:
+            units, chunks = chunk_mail(parsed, max_tokens=self._settings.chunk_max_tokens)
+            with self._session_factory() as session:
+                original_hash = session.get(EvidenceVersion, evidence_version_id).content_hash
+            store = self._evidence_manager.store
+            manifest = store.read_manifest(original_hash)
+            manifest["mail"] = {"messages_read": len(parsed.messages), "partial_notice": parsed.notice, "decoded_text_version": 1}
+            store.write_manifest(original_hash, manifest)
+        elif family == FAMILY_TEXT:
+            # The version's original-object manifest also records decoding
+            # for empty documents, which have no evidence-unit locators.
+            import hashlib
+
+            with self._session_factory() as session:
+                original_hash = session.get(EvidenceVersion, evidence_version_id).content_hash
+            store = self._evidence_manager.store
+            manifest = store.read_manifest(original_hash)
+            manifest["decoded_text"] = {
+                "encoding": parsed.decoded.encoding,
+                "lossy": parsed.decoded.lossy,
+                "version": 1,
+                "sha256": hashlib.sha256(parsed.decoded.text.encode("utf-8")).hexdigest(),
+            }
+            store.write_manifest(original_hash, manifest)
+            units, chunks = chunk_text(parsed, max_tokens=self._settings.chunk_max_tokens)
+        elif family == FAMILY_XLSX:
             units, chunks = chunk_workbook(parsed)
         elif family == FAMILY_PPTX:
             units, chunks = chunk_presentation(parsed)
@@ -542,6 +594,11 @@ class IngestionPipeline:
 
     def _ingest_one_file(self, source_id: str, path: Path) -> FileIngestResult:
         suffix = path.suffix.lower()
+
+        if suffix in MAIL_EXTENSIONS:
+            return self._ingest_one_mail_file(source_id, path)
+        if suffix in TEXT_EXTENSIONS:
+            return self._ingest_one_text_file(source_id, path)
 
         if suffix in UNSUPPORTED_EXTENSIONS:
             # Discovered deliberately (see DISCOVERABLE_EXTENSIONS) so this
@@ -736,6 +793,45 @@ class IngestionPipeline:
         self._evidence_manager.mark_version_status(evidence_version.id, VersionStatus.READY)
         return FileIngestResult(path=path, status="ingested", chunks_written=len(records))
 
+    def _ingest_one_text_file(self, source_id: str, path: Path) -> FileIngestResult:
+        check_file_signature(path)
+        before_id = self._chunk_writer.current_version_id(source_id, str(path))
+        version = self._evidence_manager.ingest_file(
+            source_id, path, parser_name=self._text_parser.parser_name,
+            parser_version=self._text_parser.parser_version)
+        self._drop_superseded_index_entries(before_id, version)
+        if version.id == before_id and version.status == VersionStatus.READY:
+            return FileIngestResult(path=path, status="unchanged")
+        try:
+            parsed = self._text_parser.parse(source_id, path)
+            records = self._chunk_and_index_version(FAMILY_TEXT, source_id, version.id, parsed)
+        except Exception as exc:
+            self._evidence_manager.mark_version_status(
+                version.id, VersionStatus.FAILED, failure_reason=condense_error(exc))
+            raise
+        self._evidence_manager.mark_version_status(version.id, VersionStatus.READY)
+        return FileIngestResult(path=path, status="ingested", chunks_written=len(records))
+
+    def _ingest_one_mail_file(self, source_id: str, path: Path) -> FileIngestResult:
+        snapshot = self._mail_parser.snapshot(path)
+        check_file_signature(path)
+        before_id = self._chunk_writer.current_version_id(source_id, str(path))
+        version = self._evidence_manager.ingest_file(source_id, path,
+            parser_name=self._mail_parser.parser_name, parser_version=self._mail_parser.parser_version, snapshot=snapshot)
+        self._drop_superseded_index_entries(before_id, version)
+        recipe_ids = self._chunk_writer.chunk_recipe_ids_by_version(source_id).get(version.id, set())
+        if version.id == before_id and version.status == VersionStatus.READY and recipe_ids == {self._recipes[FAMILY_MAIL].id}:
+            notice = self._evidence_manager.store.read_manifest(version.content_hash).get("mail", {}).get("partial_notice")
+            return FileIngestResult(path, "unchanged", notice=notice)
+        try:
+            parsed = self._mail_parser.parse(source_id, path, snapshot=snapshot)
+            records = self._chunk_and_index_version(FAMILY_MAIL, source_id, version.id, parsed)
+        except Exception as exc:
+            self._evidence_manager.mark_version_status(version.id, VersionStatus.FAILED, failure_reason=condense_error(exc))
+            raise
+        self._evidence_manager.mark_version_status(version.id, VersionStatus.READY)
+        return FileIngestResult(path, "ingested", chunks_written=len(records), notice=parsed.notice)
+
     # -- recipe drift / re-chunk -------------------------------------------
 
     def _classify_versions(self, source_id: str) -> tuple[list[RechunkCandidate], int]:
@@ -785,6 +881,7 @@ class IngestionPipeline:
     def find_rechunk_candidates(self, source_id: str) -> tuple[list[RechunkCandidate], int]:
         return self._classify_versions(source_id)
 
+    @writer_operation("re-preparing a document")
     def rechunk_version(self, source_id: str, candidate: RechunkCandidate) -> FileIngestResult:
         """Re-chunk one version from its STORED original bytes (never the
         live file): PENDING -> parse + chunk with the current recipe ->
@@ -818,8 +915,10 @@ class IngestionPipeline:
             )
             return FileIngestResult(path=candidate.path, status="failed", error=str(exc))
         self._evidence_manager.mark_version_status(candidate.version_id, VersionStatus.READY)
-        return FileIngestResult(path=candidate.path, status="ingested", chunks_written=len(records))
+        return FileIngestResult(path=candidate.path, status="ingested", chunks_written=len(records),
+                                notice=getattr(parsed, "notice", None))
 
+    @writer_operation("re-preparing documents", dry_run=True)
     def rechunk_source(
         self,
         source_id: str,
@@ -857,6 +956,8 @@ class IngestionPipeline:
     def _finalize_job(
         self, job_id: str, status: IngestionJobStatus, error: str | None, stats: dict
     ) -> None:
+        JobFiles(self._session_factory).finish(job_id)
+        stats = {**stats, "file_details_version": 1}
         with self._session_factory() as session:
             job = session.get(IngestionJob, job_id)
             job.status = status
@@ -907,6 +1008,7 @@ class IngestionPipeline:
             pass  # unreadable: reported per file by the ingest below
         return self._ingest_one_file(source_id, path)
 
+    @writer_operation("refreshing library files")
     def run_ingestion_for_paths(
         self,
         source_id: str,
@@ -945,6 +1047,7 @@ class IngestionPipeline:
                 source_id=source_id,
                 status=IngestionJobStatus.RUNNING,
                 started_at=_utcnow(),
+                stats_json='{"file_details_version": 1}',
             )
             session.add(job)
             session.commit()
@@ -968,7 +1071,9 @@ class IngestionPipeline:
                 "chunks_written": sum(r.chunks_written for r in results),
             }
 
-        targets = [Path(p) for p in paths]
+        targets = list(dict.fromkeys(Path(p) for p in paths))
+        job_files = JobFiles(self._session_factory)
+        job_files.prepare(job_id, targets)
         file_results: list[FileIngestResult] = []
         try:
             if not self._check_root_reachable(source):
@@ -991,11 +1096,13 @@ class IngestionPipeline:
             total = len(targets)
             for index, path in enumerate(targets, start=1):
                 emit(ProgressEvent("start", index, total, path))
+                job_files.update(job_id, path)
                 try:
                     result = self._ingest_path(source_id, path, root, rules, missing=missing)
                 except Exception as exc:  # noqa: BLE001 -- one bad file must not abort the batch
                     result = FileIngestResult(path=path, status="failed", error=str(exc))
                 file_results.append(result)
+                job_files.update(job_id, path, result)
                 emit(ProgressEvent("done", index, total, path, result))
             if any(r.status not in ("unchanged", "skipped") for r in file_results):
                 self._index_manager.reconcile_source(
@@ -1031,6 +1138,7 @@ class IngestionPipeline:
             file_results=file_results,
         )
 
+    @writer_operation("indexing a folder")
     def run_ingestion_for_source(
         self,
         source_id: str,
@@ -1044,6 +1152,7 @@ class IngestionPipeline:
                 source_id=source_id,
                 status=IngestionJobStatus.RUNNING,
                 started_at=_utcnow(),
+                stats_json='{"file_details_version": 1}',
             )
             session.add(job)
             session.commit()
@@ -1085,15 +1194,19 @@ class IngestionPipeline:
             discovery = self._discover(
                 Path(source.path), getattr(source, "rules_json", None)
             )
-            files = discovery.files
+            files = list(dict.fromkeys(discovery.files))
+            job_files = JobFiles(self._session_factory)
+            job_files.prepare(job_id, files)
             total = len(files)
             for index, path in enumerate(files, start=1):
                 emit(ProgressEvent("start", index, total, path))
+                job_files.update(job_id, path)
                 try:
                     result = self._ingest_one_file(source_id, path)
                 except Exception as exc:  # noqa: BLE001 -- one bad file must not abort the batch
                     result = FileIngestResult(path=path, status="failed", error=str(exc))
                 file_results.append(result)
+                job_files.update(job_id, path, result)
                 emit(ProgressEvent("done", index, total, path, result))
 
             # Single end-of-run reconcile pass -- see module docstring for why

@@ -90,6 +90,12 @@ def test_full_run_records_everything(gold, fixtures_dir, tmp_path):
     assert vacation.system and "ONLY from the provided" in vacation.system
     assert vacation.prompt_eval_count == 500
     assert vacation.latency_s > 0
+    assert vacation.latency_by_phase is not None
+    assert vacation.latency_by_phase["search"] >= 0
+    assert vacation.latency_by_phase["generation"] >= 0
+    assert all(value >= 0 for value in vacation.latency_by_phase.values())
+    # Runner wall time includes its own call/recording overhead.
+    assert sum(vacation.latency_by_phase.values()) <= vacation.latency_s
     assert vacation.spans_indexed == [True]
     assert vacation.mode == "fast"
 

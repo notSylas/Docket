@@ -240,16 +240,17 @@ def test_none_scope_is_identical_to_previous_behaviour(fx, monkeypatch) -> None:
     q = "what is the roadmap?"
     base = svc.ask(q, mode=QueryMode.FAST)
     explicit = svc.ask(q, mode=QueryMode.FAST, scope=None)
-    assert base.model_dump() == explicit.model_dump()
+    timing_fields = {"latency_by_phase", "latency_s"}
+    assert base.model_dump(exclude=timing_fields) == explicit.model_dump(exclude=timing_fields)
     assert base.scope_label is None and base.scope_file_count is None
     assert base.abstention_reason is None
     assert all("scope_version_ids" not in c for c in spy.calls)
     # "everything" searches the same way and only adds the scope fields
     everything = svc.ask(q, mode=QueryMode.FAST, scope=QueryScope.everything("All"))
     assert "scope_version_ids" not in spy.calls[-1]
-    dumped = everything.model_dump()
+    dumped = everything.model_dump(exclude=timing_fields)
     assert dumped.pop("scope_label") == "All" and dumped.pop("scope_file_count") == 3
-    expected = base.model_dump()
+    expected = base.model_dump(exclude=timing_fields)
     expected.pop("scope_label"), expected.pop("scope_file_count")
     assert dumped == expected
 

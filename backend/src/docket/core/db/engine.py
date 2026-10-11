@@ -18,6 +18,10 @@ def get_engine(sqlite_path: Path) -> Engine:
     sqlite_path.parent.mkdir(parents=True, exist_ok=True)
 
     engine = create_engine(f"sqlite:///{sqlite_path}", future=True)
+    # Long-lived windows must not write through pre-restore connections.
+    # Writer services carry this identity even when constructed lazily.
+    directory_stat = sqlite_path.parent.stat()
+    engine._docket_directory_identity = (directory_stat.st_dev, directory_stat.st_ino)
 
     @event.listens_for(engine, "connect")
     def _set_sqlite_pragmas(dbapi_connection, connection_record) -> None:  # noqa: ANN001

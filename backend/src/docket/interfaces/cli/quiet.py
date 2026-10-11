@@ -153,7 +153,16 @@ def quiet_streams(log_path: Path | str | None = None) -> Iterator[None]:
     owned = None
     if debug_enabled() and log_path is not None:
         try:
-            owned = open(log_path, "a", encoding="utf-8")  # noqa: SIM115
+            from docket.core.privacy import RedactedLogStream
+
+            fd = os.open(log_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+            try:
+                os.fchmod(fd, 0o600)
+                raw = os.fdopen(fd, "a", encoding="utf-8")
+            except BaseException:
+                os.close(fd)
+                raise
+            owned = RedactedLogStream(raw)
             sink = owned
         except OSError:
             owned = None
@@ -208,6 +217,8 @@ def ignore_notices(result: object, prune_service: object, source_id: str) -> lis
         for line in (skipped_summary(skipped), invalid_summary(invalid))
         if line is not None
     ]
+    notices.extend(f"{getattr(item, 'path', 'Mailbox')}: {item.notice}"
+                   for item in getattr(result, "file_results", ()) if getattr(item, "notice", None))
     try:
         count = int(prune_service.count(source_id))  # type: ignore[attr-defined]
     except Exception:  # noqa: BLE001 -- a hint must never break ingestion output

@@ -40,6 +40,7 @@ from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.processors import BeforeInput, ConditionalProcessor
 from prompt_toolkit.styles import DynamicStyle
 
+from docket.core.writer_lock import WriterLockBusyError
 from docket.interfaces.cli.interactive.commands import (
     BARE_WORDS,
     CommandRegistry,
@@ -477,6 +478,8 @@ class TuiApp:
             if a and a.citations:
                 actions += [("class:chip", "[Evidence F5]"), (" ", " "), ("class:chip", "[Ctrl+E]"), (" ", " ")]
             actions.append(("class:chip", "[Details F6]"))
+            if getattr(self.backend, "feedback_enabled", False):
+                actions.extend([(" ", " "), ("class:chip", "[Feedback F9]")])
             rows.extend(indent_rows(wrap_tokens([("class:muted", " · ".join(meta) + "   ")] + actions, width - 2), "  "))
             if a and a.citations:
                 rows.extend(
@@ -851,6 +854,7 @@ class TuiApp:
             ("f6", lambda: self.cmd_details("")),
             ("f7", lambda: self.cmd_jobs("")),
             ("f8", lambda: self.push(ov.SettingsOverlay(self))),
+            ("f9", lambda: self.cmd_feedback("")),
         ):
             add(key, eager=True)(lambda event, fn=fn: fn())
 
@@ -1055,7 +1059,7 @@ class TuiApp:
 
     def active_workers(self) -> list[threading.Thread]:
         """Indexing workers still running (an answer in flight is abandoned on exit)."""
-        return [t for t in self._threads if t.is_alive() and t.name == "docket-ui-index"]
+        return [t for t in self._threads if t.is_alive() and t.name in ("docket-ui-index", "docket-ui-feedback")]
 
     def wait_for_workers(self, timeout: float | None = None) -> bool:
         """Join indexing workers after the UI exits (they stop after the current file)."""
@@ -1161,6 +1165,8 @@ class TuiApp:
                 with quiet_ingest():
                     run = runner or self.backend.run_index
                     outcome = run(src.id, on_progress, stop.is_set)
+            except WriterLockBusyError as exc:
+                outcome = IndexOutcome("busy", IndexProgress(), reason=f"{exc.ui_message}. {exc}")
             except Exception as exc:  # noqa: BLE001 -- surfaced as a failed job
                 outcome = IndexOutcome("failed", IndexProgress(), reason=describe_error(exc))
             self._post(lambda: self._real_job_done(job, outcome))
@@ -1289,6 +1295,8 @@ class TuiApp:
         if j.state == "done":
             level = "attention" if j.failed else "info"
             self.notice(f"Indexing {j.source_name} finished: {j.indexed} indexed, {j.unchanged} unchanged, {j.failed} failed.", level)
+        elif j.state == "busy":
+            self.notice(j.reason, "attention")
         elif j.state == "stopped":
             self.notice(f"Indexing {j.source_name} stopped after {j.file_index} of {j.total} files. Completed files were kept.", "attention")
         else:
@@ -1332,7 +1340,7 @@ class TuiApp:
         a = outcome.answer
         if a.index_coverage is None and q.coverage is not None:
             a = replace(a, index_coverage=q.coverage)  # a backend that did not record it (the demo)
-        self.add_message(Message("assistant", a.text, answer=a, mode_label=a.mode_label, elapsed=a.elapsed, scope_label=a.scope_label, history_answer=outcome.history_answer))
+        self.add_message(Message("assistant", a.text, answer=a, mode_label=a.mode_label, elapsed=a.elapsed, scope_label=a.scope_label, history_answer=outcome.history_answer, question=q.question))
         turn = Turn(q.question, outcome.history_answer or a.text)
         idx = self.retry_turn_index
         if q.retry and idx is not None and idx < len(self.history):
@@ -1629,6 +1637,43 @@ class TuiApp:
     def cmd_settings(self, arg: str) -> None:
         self.push(ov.SettingsOverlay(self))
 
+    def cmd_feedback(self, arg: str) -> None:
+        if not getattr(self.backend, "feedback_enabled", False):
+            self.notice("Feedback capture is off. Set DOCKET_FEEDBACK_ENABLED=true to opt in to private local capture.", "attention")
+            return
+        answers = self.answers()
+        if not answers:
+            self.notice("Ask a question before rating an answer.", "attention")
+            return
+        pos = self.focus_answer if 0 <= self.focus_answer < len(answers) else len(answers) - 1
+        message = answers[pos]
+        if not message.question:
+            self.notice("This older answer has no saved question and cannot be rated.", "attention")
+            return
+        self.push(ov.FeedbackOverlay(self, message))
+
+    def save_feedback(self, message: Message, label: str, correction: str = "") -> None:
+        if getattr(self, "_feedback_pending", False):
+            self.notice("Feedback is already being saved.", "attention")
+            return
+        self._feedback_pending = True
+        self.notice("Saving private feedback...")
+        def done(ok: bool, item_id: str = "") -> None:
+            self._feedback_pending = False
+            self.notice(f"Feedback saved privately (ID {item_id}). It has not been accepted into a test set or used for training." if ok
+                        else "Feedback could not be saved. Wait for any library update to finish, then retry.",
+                        "info" if ok else "attention")
+        def worker() -> None:
+            try:
+                item_id = self.backend.save_feedback(message.question, message.answer, label, correction,
+                                           answer_text=message.history_answer or message.answer.text)
+            except Exception:
+                # Feedback text and exception payloads must never reach logs.
+                self._post(lambda: done(False))
+            else:
+                self._post(lambda: done(True, item_id))
+        self._spawn("feedback", worker)
+
     def cmd_details(self, arg: str) -> None:
         answers = self.answers()
         if not answers:
@@ -1738,7 +1783,9 @@ class TuiApp:
 
     def _maintenance_finished(self, j: IndexJob) -> None:
         """End of an update or single-file retry: say what happened, then look again."""
-        if j.state == "failed":
+        if j.state == "busy":
+            self.notice(j.reason, "attention")
+        elif j.state == "failed":
             self.notice(f"The update did not finish: {j.reason or 'something went wrong.'}", "error")
         elif j.state == "stopped":
             self.notice("Update stopped. What finished was kept; the rest is still listed.", "attention")
@@ -1953,7 +2000,9 @@ class TuiApp:
     def _refresh_finished(self, j: IndexJob) -> None:
         """A background update ended: say so quietly, and only loudly when
         something could not be read."""
-        if j.state == "failed":
+        if j.state == "busy":
+            self.notice(j.reason, "attention")
+        elif j.state == "failed":
             self.notice(f"Could not update {j.source_name}: {j.reason or 'something went wrong.'}", "attention")
         elif j.state == "stopped":
             self.notice("Update stopped. Changes not yet read are picked up the next time Docket checks.", "attention")

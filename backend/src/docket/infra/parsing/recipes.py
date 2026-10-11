@@ -49,12 +49,20 @@ PPTX_SPLITTER = "pptx_unit_tokcap2"
 FAMILY_DOCLING = "docling"
 FAMILY_XLSX = "xlsx"
 FAMILY_PPTX = "pptx"
+FAMILY_TEXT = "text"
+FAMILY_MAIL = "mail"
 
 
 def recipe_family(file_path: str | None) -> str:
     """Parser family for a stored file path (by extension; unknown/legacy
     paths are the Docling text path, matching how ingestion routes files)."""
     suffix = Path(file_path).suffix.lower() if file_path else ""
+    from docket.infra.parsing.text_family import TEXT_EXTENSIONS
+
+    if suffix in {".eml", ".mbox"}:
+        return FAMILY_MAIL
+    if suffix in TEXT_EXTENSIONS:
+        return FAMILY_TEXT
     if suffix == ".xlsx":
         return FAMILY_XLSX
     if suffix == ".pptx":
@@ -98,3 +106,17 @@ def pptx_recipe(settings, parser_name: str, parser_version: str) -> ChunkRecipe:
         parser_name=parser_name,
         parser_version=parser_version,
     )
+
+
+def text_recipe(settings, parser_name: str, parser_version: str) -> ChunkRecipe:
+    from docket.infra.parsing.text_family import DECODED_TEXT_VERSION
+
+    return ChunkRecipe(0, 0,
+        f"text_exact_v1:max_tokens={settings.chunk_max_tokens}:decoded_v={DECODED_TEXT_VERSION}",
+        parser_name, parser_version)
+
+
+def mail_recipe(settings, parser_name: str, parser_version: str) -> ChunkRecipe:
+    return ChunkRecipe(0, 0,
+        f"mail_exact_v1:max_tokens={settings.chunk_max_tokens}:messages={settings.mail_max_messages}"
+        f":bytes={settings.mail_max_bytes}:decoded_v=1", parser_name, parser_version)

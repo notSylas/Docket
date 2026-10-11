@@ -125,3 +125,11 @@ def test_load_records_reports_bad_line(tmp_path):
     path.write_text('{"question_id": "a", "repeat": 0}\n\nnot json\n', encoding="utf-8")
     with pytest.raises(GoldSetError, match=r"r\.jsonl:3"):
         load_records(path)
+
+
+def test_old_record_without_phase_timings_still_loads(tmp_path):
+    path = tmp_path / "old-runs.jsonl"
+    path.write_text('{"question_id": "old", "repeat": 0, "latency_s": 12.3}\n')
+    record, = load_records(path)
+    assert record.latency_s == 12.3
+    assert record.latency_by_phase is None

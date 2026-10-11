@@ -1126,9 +1126,9 @@ class IndexingOverlay(Overlay):
         if j.state == "stopping":
             return [Btn("hide", "Hide progress", hot="h"), Btn("stop", "Stop indexing", False, "Stop was already requested.")]
         out = [Btn("ask", "Start asking", j.state in ("done", "stopped"), "Nothing is searchable yet.", "a")]
-        if j.kind == "update" and j.state in ("failed", "stopped"):
+        if j.kind == "update" and j.state in ("failed", "stopped", "busy"):
             out.append(Btn("retry", "Update again", hot="r"))
-        elif j.kind == "index" and (j.failed or j.state in ("failed", "stopped")):
+        elif j.kind == "index" and (j.failed or j.state in ("failed", "stopped", "busy")):
             out.append(Btn("retry", "Retry indexing", hot="r"))
         out.append(Btn("close", "Close"))
         return out
@@ -1173,6 +1173,10 @@ class IndexingOverlay(Overlay):
                 else:
                     rows.append([("class:attention", "Stopping after the current operation...")])
                     rows.append([(MUTED, "Completed files are kept. Unfinished files stay unavailable and can be retried.")])
+            return rows, None
+        if j.state == "busy":
+            rows.extend(wrap_text(j.reason, iw, "class:attention"))
+            rows.append([(MUTED, "No files were changed by this request. Retry when the other window finishes.")])
             return rows, None
         if j.state == "failed":
             rows.append([("class:failed", "Failed: "), (TEXT, j.reason or "Indexing could not start.")])
@@ -1757,7 +1761,8 @@ class WelcomeOverlay(Overlay):
             super().press(key)
 
 
-_TYPE_LABELS = {".pdf": "PDF", ".docx": "Word", ".xlsx": "Excel", ".pptx": "PowerPoint"}
+_TYPE_LABELS = {".pdf": "PDF", ".docx": "Word", ".xlsx": "Excel", ".pptx": "PowerPoint",
+                ".txt": "Text", ".md": "Markdown", ".csv": "CSV", ".html": "HTML", ".htm": "HTML", ".eml": "Email", ".mbox": "Mailbox"}
 
 
 def _plural(n: int, noun: str) -> str:
@@ -1986,6 +1991,41 @@ class ConfirmOverlay(Overlay):
             cb()
 
 
+class FeedbackOverlay(Overlay):
+    name = "feedback"
+    title = "Private feedback"
+    filterable = True
+    placeholder = "optional one-line correction"
+
+    def __init__(self, ui, message):
+        self.message = message
+        super().__init__(ui)
+
+    def build_body(self, iw):
+        return wrap_text("Rate this answer. Your question, answer and cited passage versions stay in the private local feedback folder. Nothing is sent or trained.", iw, TEXT), None
+
+    def filter_row(self, iw):
+        return [(MUTED, "Correction: "), (TEXT, truncate(self.filter_text or self.placeholder, iw - 12))]
+
+    def text(self, s):
+        super().text(" ".join(s.splitlines()))
+        self.filter_text = self.filter_text[:500]
+
+    def buttons(self):
+        return [Btn("good", "Good"), Btn("not_good", "Not good"), Btn("cancel", "Cancel")]
+
+    def on_enter_input(self):
+        self.stop = 1  # choose a label explicitly; typing a correction does not submit it
+
+    def hint(self):
+        return "Tab choose label · Enter save · Esc cancel"
+
+    def press(self, key):
+        self.ui.close_top(force=True)
+        if key != "cancel":
+            self.ui.save_feedback(self.message, key, self.filter_text)
+
+
 class JobsOverlay(Overlay):
     name = "jobs"
     title = "Jobs"
@@ -2053,7 +2093,7 @@ class JobsOverlay(Overlay):
         details = e.extra or ()
         if details:
             rows.append([])
-            rows.append([(MUTED, "Files that still need attention:")])
+            rows.append([(MUTED, "Files in this run:")])
             for line in details:
                 rows.extend(wrap_text("  " + line, iw, "class:attention"))
         return rows

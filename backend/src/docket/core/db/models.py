@@ -40,6 +40,7 @@ __all__ = [
     "ChunkRecipe",
     "Chunk",
     "IngestionJob",
+    "IngestionFileResult",
     "compute_recipe_id",
     "compute_chunk_id",
 ]
@@ -429,3 +430,18 @@ class IngestionJob(Base):
     stats_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     source: Mapped["Source"] = relationship(back_populates="ingestion_jobs")
+
+
+class IngestionFileResult(Base):
+    """Durable outcomes, independent of evidence creation and later retries."""
+
+    __tablename__ = "ingestion_file_results"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: _new_id("file"))
+    job_id: Mapped[str] = mapped_column(ForeignKey("ingestion_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    path: Mapped[str] = mapped_column(Text, nullable=False)
+    outcome: Mapped[str] = mapped_column(String, nullable=False, default="pending")
+    chunks_written: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    __table_args__ = (UniqueConstraint("job_id", "path", name="uq_ingestion_file_job_path"),)

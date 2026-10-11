@@ -136,6 +136,8 @@ StageCallback = Callable[[str], None]
 
 
 class TuiBackend(Protocol):
+    feedback_enabled: bool
+    def save_feedback(self, question: str, answer: AnswerView, label: str, correction: str = "", *, answer_text: str | None = None) -> str: ...
     demo: bool  # True: invented data, timer-driven simulated operations
     scope_enforced: bool  # False: a chosen scope is display-only (see Upgrade/16)
     can_open_original: bool
@@ -223,6 +225,7 @@ class FakeBackend:
     """Invented data only. Nothing here reads the file system, a model or a database."""
 
     demo = True
+    feedback_enabled = False
     scope_enforced = True
     can_open_original = True
     intro_notice = fd.INTRO_NOTICE

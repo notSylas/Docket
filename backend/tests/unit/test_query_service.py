@@ -169,6 +169,82 @@ def _service(
     )
 
 
+def _assert_phase_timings(result):
+    from docket.services.query.timing import PHASES
+    assert set(PHASES) <= result.latency_by_phase.keys()
+    assert all(value >= 0 for value in result.latency_by_phase.values())
+    assert sum(result.latency_by_phase.values()) == pytest.approx(result.latency_s, abs=1e-8)
+
+
+def test_phase_timings_cover_rewrite_search_generation_and_repair(
+    migrated_sqlite_engine, tmp_path, built, monkeypatch,
+):
+    from itertools import count
+    from docket.services.query import timing
+    # Deterministic monotonic clock verifies accounting without sleeps or GPU.
+    ticks = count()
+    monkeypatch.setattr(timing.time, "perf_counter", lambda: next(ticks) / 1000)
+    gateway = FakeInferenceGateway()
+    table = _index_chunk(migrated_sqlite_engine, tmp_path, gateway, built)
+    service = _service(migrated_sqlite_engine, table, gateway, built)
+    label = service._resolver.resolve(built["chunk_id"]).citation_label
+    responses = iter(["How does rank fusion work?", "An uncited draft.", f"RRF fuses lists {label}."])
+    calls = []
+    def generate(**kwargs):
+        calls.append(kwargs)
+        return next(responses)
+    monkeypatch.setattr(gateway, "generate", generate)
+    events = []
+    result = service.ask(
+        "How does it work?", mode=QueryMode.FAST,
+        history=[ConversationTurn(question="What is RRF?", answer="Rank fusion.")],
+        on_progress=events.append,
+    )
+    _assert_phase_timings(result)
+    assert not result.abstained and len(calls) == 3
+    assert result.latency_by_phase["generation"] == pytest.approx(0.002)
+    assert all(result.latency_by_phase[p] > 0 for p in (
+        "rewrite", "search", "resolve_evidence", "prompt_assembly", "citation_validation",
+    ))
+    assert events[0] == "scope_resolve"
+    assert events.index("search") < events.index("generation")
+    assert events.count("generation") == 2
+
+
+def test_early_scope_abstention_still_has_zero_skipped_phase_timings(
+    migrated_sqlite_engine, built,
+):
+    from docket.services.query.scope import QueryScope
+    gateway = FakeInferenceGateway()
+    service = _service(migrated_sqlite_engine, None, gateway, built)
+    result = service.ask("A question", mode=QueryMode.FAST, scope=QueryScope.for_source("absent"))
+    _assert_phase_timings(result)
+    assert result.abstained
+    assert result.latency_by_phase["scope_resolve"] > 0
+    assert result.latency_by_phase["search"] == result.latency_by_phase["generation"] == 0
+    assert gateway.generate_calls == []
+
+
+def test_progress_callback_failure_does_not_change_answer(migrated_sqlite_engine, built, monkeypatch):
+    from docket.services.query import service as query_module
+    monkeypatch.setattr(query_module, "hybrid_search", lambda **kwargs: [])
+    def broken(_phase):
+        raise ValueError("display failed")
+    service = _service(migrated_sqlite_engine, None, FakeInferenceGateway(), built)
+    result = service.ask("A question", mode=QueryMode.FAST, on_progress=broken)
+    _assert_phase_timings(result)
+    assert result.abstained
+
+
+def test_query_result_without_timing_fields_is_compatible():
+    from docket.services.query.service import QueryResult
+    result = QueryResult(
+        question="q", answer="a", citations=[], abstained=False,
+        validation_warnings=[], mode="fast",
+    )
+    assert result.latency_by_phase is None and result.latency_s is None
+
+
 # ---------------------------------------------------------------------------
 # Empty retrieval -> abstain without calling the gateway.
 # ---------------------------------------------------------------------------

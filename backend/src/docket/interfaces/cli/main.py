@@ -10,6 +10,7 @@ import typer.core
 import typer.main
 
 from docket import __version__
+from docket.core.writer_lock import LibraryReplacedError, WriterLockBusyError
 from docket.infra.index.manifest import IndexManifestMismatchError
 from docket.infra.index.reindex import reindex as run_reindex
 from docket.infra.inference.gateway import InferenceError
@@ -76,6 +77,13 @@ class _LazyEvalGroup(typer.core.TyperGroup):
     does.
     """
 
+    def invoke(self, ctx: click.Context):
+        try:
+            return super().invoke(ctx)
+        except (WriterLockBusyError, LibraryReplacedError) as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from None
+
     def list_commands(self, ctx: click.Context) -> list[str]:
         return sorted({*super().list_commands(ctx), _EVAL_COMMAND_NAME})
 
@@ -106,12 +114,200 @@ app = typer.Typer(
     help=(
         "Local-first, evidence-backed work intelligence assistant. "
         "Run `docket` with no arguments in a terminal (or `docket chat`) for an interactive session."
+        " New settings: DOCKET_FEEDBACK_ENABLED=false (opt in with true), "
+        "DOCKET_MAIL_MAX_BYTES=67108864 and DOCKET_MAIL_MAX_MESSAGES=1000 "
+        "(email snapshot limits; message overflow is a partial import)."
     ),
 )
 sources_app = typer.Typer(help="Manage registered sources (local folders).")
 app.add_typer(sources_app, name="sources")
 formulas_app = typer.Typer(help="Verify a sample of formula transcriptions against their source crops.")
 app.add_typer(formulas_app, name="formulas")
+library_app = typer.Typer(help="Maintain stored library data.")
+app.add_typer(library_app, name="library")
+feedback_app = typer.Typer(help="Review private feedback and export draft evaluation cases.")
+app.add_typer(feedback_app, name="feedback")
+
+
+@app.command("mcp")
+def mcp_command() -> None:
+    """Serve read-only MCP over stdio using model-free lexical search.
+
+    No answer model, library writes or writer lock. Only active sources and
+    ready evidence are visible. Citation handles keep their search scope.
+
+    Local client example:
+    {"mcpServers": {"docket": {"command": "docket", "args": ["mcp"]}}}
+    """
+    from docket.core.config import Settings
+    from docket.interfaces.mcp import LibraryTools, readonly_engine, serve
+
+    engine = readonly_engine(Settings().sqlite_path)
+    try:
+        serve(LibraryTools(engine), sys.stdin, sys.stdout)
+    finally:
+        engine.dispose()
+
+
+@feedback_app.command("review")
+def feedback_review(
+    item_id: str = typer.Argument(..., help="Full saved feedback ID."),
+    expected: str = typer.Option("", "--expected", help="Manually checked expected fact."),
+    spans: list[str] = typer.Option([], "--span", help="Verbatim cited quote, 20–60 characters; repeatable."),
+    unanswerable: bool = typer.Option(False, "--unanswerable", help="Explicitly review this question as unanswerable."),
+) -> None:
+    """Review one capture against its stored evidence; this does not accept gold."""
+    from docket.core.writer_lock import lock_for_sessions
+    from docket.services.feedback import FeedbackError, FeedbackStore
+
+    context = build_context()
+    try:
+        FeedbackStore(context.settings.data_dir, writer_lock=lock_for_sessions(context.session_factory)).review(
+            item_id, context.resolver, expected=expected, spans=spans, answerable=not unanswerable)
+    except FeedbackError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+    typer.echo("Feedback reviewed. Any export remains DRAFT with reviewed: false; no training was performed.")
+
+
+@feedback_app.command("export")
+def feedback_export(
+    gold_draft: bool = typer.Option(False, "--gold-draft", help="Export explicitly reviewed items as unaccepted gold drafts."),
+    out: Path | None = typer.Option(None, "--out", help="New private YAML file; otherwise write to standard output."),
+) -> None:
+    """Export DRAFT cases only, never raw feedback or automatic training data."""
+    import os
+    from docket.services.feedback import FeedbackError, FeedbackStore
+
+    if not gold_draft:
+        typer.echo("Choose --gold-draft to export reviewed items. Raw feedback is kept private.", err=True)
+        raise typer.Exit(1)
+    context = build_context()
+    try:
+        content, skipped = FeedbackStore(context.settings.data_dir).export_gold(context.resolver)
+        if out is None:
+            typer.echo(content, nl=False)
+        else:
+            fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            typer.echo(f"DRAFT gold saved to {out}.")
+    except FeedbackError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+    except OSError:
+        typer.echo("Draft could not be written. Choose a new file in a writable folder.", err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"DRAFT only: reviewed: false. {skipped} reviewed items skipped because evidence is unavailable or invalid.", err=True)
+
+
+@app.command("doctor")
+def doctor_command() -> None:
+    """Check local setup without changing the library or loading models."""
+    from docket.core.config import Settings
+    from docket.services.doctor import checks
+
+    results = checks(Settings())
+    for result in results:
+        typer.echo(f"{result.status} · {result.name}: {result.detail}")
+        if result.fix:
+            typer.echo(f"  Fix: {result.fix}")
+    if any(result.status == "BLOCK" for result in results):
+        raise typer.Exit(1)
+
+
+def _cleanup(context):
+    from docket.services.library_cleanup import LibraryCleanup
+
+    return LibraryCleanup(context.session_factory, context.source_manager, context.purge_service,
+                          context.store, context.settings)
+
+
+@sources_app.command("purge")
+def sources_purge(
+    name: str = typer.Argument(..., help="Disconnected folder name, number or ID."),
+    yes: bool = typer.Option(False, "--yes", help="Skip the deletion confirmation."),
+) -> None:
+    """Delete a disconnected folder's stored evidence and index entries."""
+    from docket.services.library_cleanup import CleanupError
+    from docket.services.sources.manager import InvalidSourceTransitionError
+    from docket.services.sources.purge import SourceNotPurgeableError
+
+    context = build_context()
+    source = _resolve_ref(context, name)
+    if source.status not in (SourceStatus.REVOKED, SourceStatus.HARD_DELETE_PENDING):
+        typer.echo("Disconnect this folder before purging it. Original user files are never touched.", err=True)
+        raise typer.Exit(1)
+    typer.echo("Deletes stored passages, versions and index entries for this folder. "
+               "Unshared stored originals enter trash before permanent cleanup; shared originals remain. "
+               "Job history is retained. Original user files are never touched.")
+    if not yes and not typer.confirm(f"Purge stored evidence for {name}?", default=False):
+        typer.echo("Cancelled. Nothing was purged.")
+        return
+    try:
+        result = _cleanup(context).purge_disconnected(source.id)
+    except (CleanupError, InvalidSourceTransitionError, SourceNotPurgeableError, SourceNotFoundError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+    except (WriterLockBusyError, LibraryReplacedError):
+        raise
+    except Exception:
+        typer.echo("The purge could not finish. Check data-folder permissions and disk space, then retry.", err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"Purged {result.versions_deleted} stored versions; {len(result.blobs_trashed)} originals moved to trash.")
+
+
+@library_app.command("clean")
+def library_clean(
+    apply: bool = typer.Option(False, "--apply", help="Apply the previewed retention and trash cleanup."),
+) -> None:
+    """Preview expired retention and evidence trash cleanup by default."""
+    try:
+        plan = _cleanup(build_context()).clean(apply=apply)
+    except (WriterLockBusyError, LibraryReplacedError):
+        raise
+    except Exception:
+        typer.echo("Cleanup could not finish. Check data-folder permissions and disk space, then retry.", err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"{'Cleaned' if apply else 'Preview'}: {len(plan.source_ids)} expired or pending folders; "
+               f"{len(plan.trash_objects)} trash objects {'deleted' if apply else 'eligible for deletion'}.")
+    typer.echo("Original user files are never touched. Disconnected folders are retained unless explicitly purged.")
+    if not apply:
+        typer.echo("No evidence was deleted. Run docket library clean --apply to apply this cleanup.")
+
+
+@app.command("backup")
+def backup_command(destination: Path | None = typer.Argument(None, help="New backup directory or .zip archive.")) -> None:
+    """Save a verified snapshot of this local library."""
+    from docket.core.config import Settings
+    from docket.services.backup import BackupError, backup
+
+    try:
+        saved = backup(Settings().data_dir, destination)
+    except BackupError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"Library backup saved to {saved}")
+
+
+@app.command("restore")
+def restore_command(
+    path: Path = typer.Argument(..., help="Backup directory or .zip archive."),
+    force: bool = typer.Option(False, "--force", help="Keep the current library as a dated side copy and replace it."),
+) -> None:
+    """Verify and restore a local library snapshot."""
+    from docket.core.config import Settings
+    from docket.services.backup import BackupError, restore
+
+    try:
+        previous = restore(Settings().data_dir, path, force=force)
+    except BackupError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"Library restored. Previous data kept at {previous}")
+    typer.echo("Restart any other Docket windows to use the restored library.")
 
 
 @app.callback(invoke_without_command=True)

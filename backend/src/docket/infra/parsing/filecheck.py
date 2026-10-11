@@ -30,6 +30,25 @@ def check_file_signature(path: Path) -> None:
     """Raise `InvalidFileError` when `path`'s magic bytes contradict its
     extension. Extensions without a known signature are never rejected."""
     suffix = Path(path).suffix.lower()
+    from docket.infra.parsing.text_family import TEXT_EXTENSIONS, is_text_bytes
+
+    if suffix in {".eml", ".mbox"}:
+        with open(path, "rb") as fh:
+            head = fh.read(65536)
+        if head and (not is_text_bytes(head) or (suffix == ".mbox" and not head.startswith(b"From "))
+                     or (suffix == ".eml" and not any(
+                         line.lower().startswith((b"from:", b"to:", b"subject:", b"date:", b"mime-version:", b"message-id:"))
+                         for line in head.splitlines()))):
+            raise InvalidFileError(Path(path), "email document")
+        return
+    if suffix in TEXT_EXTENSIONS:
+        with open(path, "rb") as fh:
+            head = fh.read(65536)
+        # A sample may cut a multi-byte character; replacement decoding is
+        # acceptable for this binary-control check, not for the actual parse.
+        if not is_text_bytes(head):
+            raise InvalidFileError(Path(path), "text document")
+        return
     label = _LABELS.get(suffix)
     if label is None:
         return
