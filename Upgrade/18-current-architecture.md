@@ -1,0 +1,331 @@
+# Current Architecture
+
+Status: **Current.** Describes what is implemented on `main` (commit `bf40b43`, 2026-10-11), verified against the source. Items that exist but are not connected are marked **Not wired**. Nothing here is a proposal; later parts (06 orchestration, 07 trust, 17 library, 19 answer-architecture research) build on this picture.
+
+How to read the diagrams: grey cards are components, a green card is a component this document calls out, a dashed card is behind a flag that is off by default, and arrows show the direction data or control moves. Every diagram is one idea; paths under each diagram are relative to `backend/src/docket/`.
+
+---
+
+## 1. System at a glance
+
+```mermaid
+%%{init: {'theme':'base','flowchart':{'curve':'basis','nodeSpacing':40,'rankSpacing':46},'themeVariables':{'primaryColor':'#F3F4F6','primaryBorderColor':'#E5E7EB','primaryTextColor':'#111827','lineColor':'#6B7280','fontFamily':'ui-sans-serif, system-ui, sans-serif'}}}%%
+flowchart TB
+    A["<b>Interfaces</b><br/>launcher · full-screen UI · classic prompt · one-shot CLI"]
+    B["<b>Services</b><br/>sources · ingestion · query · agent"]
+    C["<b>Infrastructure</b><br/>parsing · evidence · index · retrieval · inference"]
+    D["<b>Storage</b><br/>SQLite · LanceDB · evidence store · preferences"]
+    E["<b>Ollama</b><br/>generation · embeddings · vision (optional)"]
+    A --> B --> C --> D
+    C --> E
+    classDef card fill:#F3F4F6,stroke:#E5E7EB,color:#111827;
+    classDef key fill:#ECFDF5,stroke:#16A34A,stroke-width:1.5px,color:#111827;
+    class A,C,D,E card;
+    class B key;
+```
+
+Docket is a local-first Python application. Everything runs on one PC: the interfaces call services, services use infrastructure adapters, and the only external process is the local Ollama server. Data lives under one data directory (`~/.local/share/docket`, overridable with `DOCKET_DATA_DIR`).
+
+| Layer | Packages |
+| --- | --- |
+| Interfaces | `interfaces/cli` (`main.py`, `launcher.py`, `picker.py`, `interactive/`, `tui/`) |
+| Services | `services/sources`, `services/ingestion`, `services/query`, `services/agent` |
+| Infrastructure | `infra/parsing`, `infra/evidence`, `infra/index`, `infra/retrieval`, `infra/inference` |
+| Core | `core/config.py` (settings), `core/db` (models, engine, migrations 0001-0012) |
+
+---
+
+## 2. Launch and process model
+
+```mermaid
+%%{init: {'theme':'base','flowchart':{'curve':'basis','nodeSpacing':40,'rankSpacing':44},'themeVariables':{'primaryColor':'#F3F4F6','primaryBorderColor':'#E5E7EB','primaryTextColor':'#111827','lineColor':'#6B7280','fontFamily':'ui-sans-serif, system-ui, sans-serif'}}}%%
+flowchart TB
+    A["<b>docket [folder]</b><br/>typed in a terminal, or the app icon"]
+    B["<b>Launcher</b><br/>finds a terminal, opens a detached window"]
+    C["<b>docket ui --in-window</b><br/>the full-screen interface"]
+    D["<b>Session plan</b><br/>library · covered folder · new folder · empty"]
+    E["<b>Consent or preview</b><br/>asked once; preview only for broad folders"]
+    F["<b>Chat</b><br/>questions scoped to the folder"]
+    G["<b>Runs in place</b><br/>SSH, no display, DOCKET_NO_WINDOW"]
+    A --> B --> C --> D --> E --> F
+    B -. fallback .-> G
+    classDef card fill:#F3F4F6,stroke:#E5E7EB,color:#111827;
+    classDef key fill:#ECFDF5,stroke:#16A34A,stroke-width:1.5px,color:#111827;
+    classDef off fill:#FFFFFF,stroke:#9CA3AF,stroke-dasharray:4 3,color:#6B7280;
+    class A,B,C,E,F card;
+    class D key;
+    class G off;
+```
+
+A bare `docket` opens its own window and returns the shell. `DOCKET_CLASSIC=1` or `docket chat` runs the classic prompt instead. The session plan decides what happens next: an existing source covering the folder is reused with a folder scope and no re-indexing; a new folder asks once for consent (or shows a preview when it is broad or large); home and other broad places open the library.
+
+Files: `interfaces/cli/main.py`, `interfaces/cli/launcher.py`, `services/sources/session.py`, `services/sources/scan.py`.
+
+---
+
+## 3. Ingestion: from a file to searchable evidence
+
+```mermaid
+%%{init: {'theme':'base','flowchart':{'curve':'basis','nodeSpacing':40,'rankSpacing':42},'themeVariables':{'primaryColor':'#F3F4F6','primaryBorderColor':'#E5E7EB','primaryTextColor':'#111827','lineColor':'#6B7280','fontFamily':'ui-sans-serif, system-ui, sans-serif'}}}%%
+flowchart TB
+    A["<b>Discover</b><br/>ignore rules, .docketignore, signature check"]
+    B["<b>Evidence manager</b><br/>hash, store the original, new version if changed"]
+    C["<b>Parse</b><br/>Docling (PDF, Word) · openpyxl · python-pptx"]
+    D["<b>Chunk</b><br/>recipe per family, token cap, spreadsheet context"]
+    E["<b>Index</b><br/>FTS5 text + LanceDB vectors (+ pages if enabled)"]
+    F["<b>READY</b><br/>version is searchable"]
+    G["<b>FAILED</b><br/>plain reason stored on the version"]
+    A --> B --> C --> D --> E --> F
+    C -. error .-> G
+    classDef card fill:#F3F4F6,stroke:#E5E7EB,color:#111827;
+    classDef key fill:#ECFDF5,stroke:#16A34A,stroke-width:1.5px,color:#111827;
+    classDef off fill:#FFFFFF,stroke:#9CA3AF,stroke-dasharray:4 3,color:#6B7280;
+    class A,B,C,D,E card;
+    class F key;
+    class G off;
+```
+
+Unchanged files cost one hash and are never re-parsed. A changed file supersedes the previous version, and its index entries are deleted. At the end of a run the index is reconciled, so stale rows disappear. The parser, chunk recipe and embedding model are recorded so a later upgrade can tell what is out of date.
+
+Files: `services/ingestion/pipeline.py`, `ignore.py`, `chunk_writer.py`; `infra/evidence/manager.py`, `infra/parsing/*`, `infra/index/manager.py`.
+
+---
+
+## 4. Keeping the library healthy
+
+```mermaid
+%%{init: {'theme':'base','flowchart':{'curve':'basis','nodeSpacing':36,'rankSpacing':42},'themeVariables':{'primaryColor':'#F3F4F6','primaryBorderColor':'#E5E7EB','primaryTextColor':'#111827','lineColor':'#6B7280','fontFamily':'ui-sans-serif, system-ui, sans-serif'}}}%%
+flowchart TB
+    A["<b>On launch: catch-up</b><br/>compare disk with the index by path, size and time"]
+    B["<b>While open: watcher</b><br/>debounced file events (5 s quiet, 60 s max)"]
+    C["<b>Path-level ingest</b><br/>only new, changed or deleted files"]
+    D["<b>Maintenance plan</b><br/>prune → refresh → rechunk → reindex"]
+    E["<b>Indexing slot</b><br/>pauses between files for a question"]
+    F["<b>Library up to date</b>"]
+    A --> C
+    B --> C
+    C --> E
+    D --> E
+    E --> F
+    classDef card fill:#F3F4F6,stroke:#E5E7EB,color:#111827;
+    classDef key fill:#ECFDF5,stroke:#16A34A,stroke-width:1.5px,color:#111827;
+    class A,B,C,D card;
+    class E,F key;
+```
+
+Freshness handles day-to-day change; maintenance handles upgrades (new chunking recipe, new embedding format) and cleanup of files that are no longer read. Both run as the indexing job, and a question always gets priority over a file in progress. Nothing runs after the window closes.
+
+Files: `services/sources/freshness.py`, `maintenance.py`, `prune.py`; `docket sync`.
+
+---
+
+## 5. A question: the fast path
+
+```mermaid
+%%{init: {'theme':'base','flowchart':{'curve':'basis','nodeSpacing':36,'rankSpacing':40},'themeVariables':{'primaryColor':'#F3F4F6','primaryBorderColor':'#E5E7EB','primaryTextColor':'#111827','lineColor':'#6B7280','fontFamily':'ui-sans-serif, system-ui, sans-serif'}}}%%
+flowchart TB
+    A["<b>Scope</b><br/>everything, folder or source; empty scope abstains"]
+    B["<b>Understand</b><br/>follow-up rewrite · named file · period ambiguity"]
+    C["<b>Hybrid search</b><br/>full-text + vector, rank fusion"]
+    D["<b>Resolve + fit</b><br/>evidence, labels, token budget"]
+    E["<b>Compute stage</b><br/>numeric plan over cells (flag, off)"]
+    F["<b>Generate</b><br/>local model writes a cited answer"]
+    G["<b>Validate</b><br/>citations checked, one repair, else abstain"]
+    A --> B --> C --> D --> E --> F --> G
+    classDef card fill:#F3F4F6,stroke:#E5E7EB,color:#111827;
+    classDef key fill:#ECFDF5,stroke:#16A34A,stroke-width:1.5px,color:#111827;
+    classDef off fill:#FFFFFF,stroke:#9CA3AF,stroke-dasharray:4 3,color:#6B7280;
+    class A,B,D,F card;
+    class C,G key;
+    class E off;
+```
+
+Defaults: 8 chunks per question (a 30-per-leg pool with 12 sent is an opt-in flag, `DOCKET_RETRIEVAL_POOL_K`), answer sampling temperature 0.6 with thinking on, a context of 8192 tokens with 1024 reserved for the answer. Chunks that do not fit the budget are dropped from the bottom of the ranking and recorded. A citation tag the model invents, or an uncited answer, gets one repair attempt and otherwise becomes the fixed abstention message.
+
+Files: `services/query/service.py`, `scope.py`, `signals.py`, `citations.py`, `compute.py`; `infra/retrieval/hybrid.py`, `resolver.py`.
+
+---
+
+## 6. A question: the agent path
+
+```mermaid
+%%{init: {'theme':'base','flowchart':{'curve':'basis','nodeSpacing':36,'rankSpacing':42},'themeVariables':{'primaryColor':'#F3F4F6','primaryBorderColor':'#E5E7EB','primaryTextColor':'#111827','lineColor':'#6B7280','fontFamily':'ui-sans-serif, system-ui, sans-serif'}}}%%
+flowchart TB
+    A["<b>Classifier</b><br/>regex rules; most questions stay on the fast path"]
+    B["<b>Investigation agent</b><br/>8 steps, 14 tool calls at most"]
+    C["<b>Policy gateway</b><br/>only allow-listed tools run"]
+    D["<b>Tools</b><br/>search · read evidence · read range · calculate"]
+    E["<b>Citations rebuilt</b><br/>from tool results, inside the scope"]
+    F["<b>Validate</b><br/>same checks as the fast path"]
+    A --> B --> C --> D
+    D --> B
+    B --> E --> F
+    classDef card fill:#F3F4F6,stroke:#E5E7EB,color:#111827;
+    classDef key fill:#ECFDF5,stroke:#16A34A,stroke-width:1.5px,color:#111827;
+    class A,B,D,E card;
+    class C,F key;
+```
+
+Measured on the extended set, forcing this path scored 47% against 82% for the fast path, because the local model rarely uses the numeric tools. That is why routing stays conservative. The richer router (`routing.classify_route`) exists and is tested but is **Not wired**.
+
+Files: `services/query/classifier.py`, `services/agent/graph.py`, `policy_gateway.py`, `tools.py`, `run_context.py`.
+
+---
+
+## 7. Where data lives
+
+```mermaid
+%%{init: {'theme':'base','flowchart':{'curve':'basis','nodeSpacing':30,'rankSpacing':40},'themeVariables':{'primaryColor':'#F3F4F6','primaryBorderColor':'#E5E7EB','primaryTextColor':'#111827','lineColor':'#6B7280','fontFamily':'ui-sans-serif, system-ui, sans-serif'}}}%%
+flowchart TB
+    R["<b>Data directory</b><br/>~/.local/share/docket"]
+    A["<b>docket.sqlite3</b><br/>sources, versions, chunks, jobs, full-text index"]
+    B["<b>lancedb/</b><br/>chunk vectors, page descriptions"]
+    C["<b>evidence_store/</b><br/>original bytes by content hash, trash"]
+    D["<b>index_manifest.json</b><br/>embedding model and format"]
+    E["<b>preferences.json</b><br/>consent, auto-refresh"]
+    R --> A
+    R --> B
+    R --> C
+    R --> D
+    R --> E
+    classDef card fill:#F3F4F6,stroke:#E5E7EB,color:#111827;
+    classDef key fill:#ECFDF5,stroke:#16A34A,stroke-width:1.5px,color:#111827;
+    class A,B,C,D,E card;
+    class R key;
+```
+
+| Store | What it holds |
+| --- | --- |
+| SQLite | `sources` (status, display name, rules), `evidence_versions` (hash, size, mtime, status, failure reason), `evidence_units`, `chunks`, `chunk_recipes`, `evidence_blob_references`, `ingestion_jobs`, FTS5 table `fts_chunks` |
+| LanceDB | `chunks` table (vectors), `pages` table (only when visual indexing is on) |
+| Evidence store | `objects/` (original files and page images), `manifests/`, `trash/` (7-day grace) |
+| Manifest | embedding model, dimension and index format; a mismatch refuses queries instead of mixing vector spaces |
+
+Files: `core/db/models.py`, `core/config.py`, `infra/index/*`, `infra/evidence/*`.
+
+---
+
+## 8. How the full-screen UI stays responsive
+
+```mermaid
+%%{init: {'theme':'base','flowchart':{'curve':'basis','nodeSpacing':36,'rankSpacing':42},'themeVariables':{'primaryColor':'#F3F4F6','primaryBorderColor':'#E5E7EB','primaryTextColor':'#111827','lineColor':'#6B7280','fontFamily':'ui-sans-serif, system-ui, sans-serif'}}}%%
+flowchart TB
+    A["<b>UI loop</b><br/>one prompt_toolkit application, overlays, input"]
+    B["<b>Controller</b><br/>routes commands, owns the two slots"]
+    C["<b>Question slot</b><br/>one answer at a time, worker thread"]
+    D["<b>Indexing slot</b><br/>index, refresh or update job"]
+    E["<b>YieldGate</b><br/>holds indexing between files during an answer"]
+    F["<b>Backend</b><br/>real services, or fake data for the demo"]
+    A --> B
+    B --> C
+    B --> D
+    C --> E
+    D --> E
+    C --> F
+    D --> F
+    classDef card fill:#F3F4F6,stroke:#E5E7EB,color:#111827;
+    classDef key fill:#ECFDF5,stroke:#16A34A,stroke-width:1.5px,color:#111827;
+    class A,B,C,D,F card;
+    class E key;
+```
+
+Workers never touch the screen: they post immutable results back to the loop. Each worker uses its own database session. Stopping an indexing job takes effect after the current file; a model call that is already running cannot be interrupted.
+
+Files: `interfaces/cli/tui/app.py`, `yield_gate.py`, `backend.py`, `real_backend.py`, `overlays.py`.
+
+---
+
+## 9. Models and important settings
+
+```mermaid
+%%{init: {'theme':'base','flowchart':{'curve':'basis','nodeSpacing':36,'rankSpacing':40},'themeVariables':{'primaryColor':'#F3F4F6','primaryBorderColor':'#E5E7EB','primaryTextColor':'#111827','lineColor':'#6B7280','fontFamily':'ui-sans-serif, system-ui, sans-serif'}}}%%
+flowchart TB
+    O["<b>Ollama</b><br/>local model server"]
+    G["<b>qwen3:14b</b><br/>answers, rewrite, compute plan"]
+    E["<b>qwen3-embedding:0.6b</b><br/>chunk and query vectors"]
+    V["<b>qwen2.5vl:7b</b><br/>page and formula reading (off)"]
+    J["<b>qwen3:30b + gemma3:12b</b><br/>evaluation judge only"]
+    O --> G
+    O --> E
+    O --> V
+    O --> J
+    classDef card fill:#F3F4F6,stroke:#E5E7EB,color:#111827;
+    classDef key fill:#ECFDF5,stroke:#16A34A,stroke-width:1.5px,color:#111827;
+    classDef off fill:#FFFFFF,stroke:#9CA3AF,stroke-dasharray:4 3,color:#6B7280;
+    class O,J card;
+    class G,E key;
+    class V off;
+```
+
+| Setting (`DOCKET_` prefix) | Default |
+| --- | --- |
+| `GEN_MODEL` / `EMBED_MODEL` | `qwen3:14b` / `qwen3-embedding:0.6b` |
+| `DEFAULT_TOP_K` / `RETRIEVAL_POOL_K` | 8 / unset |
+| `NUM_CTX` / `ANSWER_TOKEN_RESERVE` | 8192 / 1024 |
+| `ANSWER_TEMPERATURE` / `ANSWER_THINK` | 0.6 / on |
+| `COMPUTE_STAGE_ENABLED` | off |
+| `INGEST_IGNORE_ENABLED` | on |
+| `QUERY_SCOPE_ENABLED` / `QUERY_AMBIGUITY_ENABLED` | on / on |
+| `VISUAL_INDEX_ENABLED` / `FORMULA_TRANSCRIPTION_ENABLED` | off / off |
+| `MAX_AGENT_ITERATIONS` / `MAX_AGENT_TOOL_CALLS` | 8 / 14 |
+
+---
+
+## 10. How accuracy is measured
+
+```mermaid
+%%{init: {'theme':'base','flowchart':{'curve':'basis','nodeSpacing':36,'rankSpacing':40},'themeVariables':{'primaryColor':'#F3F4F6','primaryBorderColor':'#E5E7EB','primaryTextColor':'#111827','lineColor':'#6B7280','fontFamily':'ui-sans-serif, system-ui, sans-serif'}}}%%
+flowchart TB
+    A["<b>Gold sets</b><br/>original 33 · extended 55 · G1 numeric 49 · G2 · G4 · G5"]
+    B["<b>Runner</b><br/>ingests a corpus into a scratch directory, asks every question"]
+    C["<b>Scoring</b><br/>facts, citations, abstention, retrieval hit"]
+    D["<b>Judge</b><br/>only for answers the rules cannot decide"]
+    E["<b>Report + compare</b><br/>intervals, failure mix, paired test"]
+    F["<b>Gate</b><br/>original set: recall 33/33, 0 wrongful abstentions"]
+    A --> B --> C --> D --> E --> F
+    classDef card fill:#F3F4F6,stroke:#E5E7EB,color:#111827;
+    classDef key fill:#ECFDF5,stroke:#16A34A,stroke-width:1.5px,color:#111827;
+    class A,B,C,D,E card;
+    class F key;
+```
+
+The evaluation never touches your real data: the runner works in a throwaway directory, and the test suite refuses to run against `~/.local/share/docket`. Any change to chunking, retrieval, prompts or ingestion must pass the gate before it ships. Details are in part 08.
+
+Files: `eval/runner.py`, `scoring.py`, `judge.py`, `report.py`, `compare.py`; `backend/eval-public/`.
+
+---
+
+## 11. What exists but is not connected
+
+```mermaid
+%%{init: {'theme':'base','flowchart':{'curve':'basis','nodeSpacing':30,'rankSpacing':38},'themeVariables':{'primaryColor':'#F3F4F6','primaryBorderColor':'#E5E7EB','primaryTextColor':'#111827','lineColor':'#6B7280','fontFamily':'ui-sans-serif, system-ui, sans-serif'}}}%%
+flowchart TB
+    A["<b>Router</b><br/>routing.classify_route, 67/67 on its own test set"]
+    B["<b>Trust layer</b><br/>claim and verification types, answer status"]
+    C["<b>Plan mode</b><br/>shown as unavailable in the UI"]
+    D["<b>Job history</b><br/>per-file results are not stored"]
+    E["<b>Cross-process lock</b><br/>two windows can ingest at once"]
+    F["<b>Purge and retention</b><br/>services exist, no command reaches them"]
+    classDef off fill:#FFFFFF,stroke:#9CA3AF,stroke-dasharray:4 3,color:#111827;
+    class A,B,C,D,E,F off;
+    A ~~~ B ~~~ C
+    D ~~~ E ~~~ F
+```
+
+| Item | State |
+| --- | --- |
+| `services/query/routing.py` | Built and tested, not imported by the query service (the old classifier still routes) |
+| `services/query/trust.py` | Types only; `AbstentionReason` is the one part in use, for empty or outside-scope answers |
+| Plan mode (part 06) | Not implemented; the UI says so |
+| Per-file job results | Only aggregates are stored; failure text is stored per version |
+| Locking across processes | None; SQLite WAL is the only protection |
+| Purge, retention sweep, trash sweep | Services exist; no interface calls them |
+| UI model and thinking level | Display only |
+| Visual retrieval, formula transcription | Built, off by default |
+
+---
+
+## Sources and related parts
+
+- Part 03 evidence storage, part 04 chunking and indexing, part 05 query understanding, part 06 orchestration, part 07 trust, part 08 evaluation, part 17 library and ingestion experience.
+- The map in this document was read from the source at the commit above; if the code has moved on, treat the code as the authority and update this file.
