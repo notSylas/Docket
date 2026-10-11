@@ -153,7 +153,16 @@ def quiet_streams(log_path: Path | str | None = None) -> Iterator[None]:
     owned = None
     if debug_enabled() and log_path is not None:
         try:
-            owned = open(log_path, "a", encoding="utf-8")  # noqa: SIM115
+            from docket.core.privacy import RedactedLogStream
+
+            fd = os.open(log_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+            try:
+                os.fchmod(fd, 0o600)
+                raw = os.fdopen(fd, "a", encoding="utf-8")
+            except BaseException:
+                os.close(fd)
+                raise
+            owned = RedactedLogStream(raw)
             sink = owned
         except OSError:
             owned = None

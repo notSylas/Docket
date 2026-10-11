@@ -11,6 +11,7 @@ import uuid
 
 import yaml
 from docket.core.writer_lock import WriterLock
+from docket.core.privacy import redact_text
 from docket.eval.schema import GoldSet, Question
 
 
@@ -149,13 +150,16 @@ class FeedbackStore:
                     raise FeedbackError("Evidence no longer matches.")
                 questions.append(Question(
                     id="feedback-" + item["id"], type="single_fact" if item["answerable"] else "out_of_corpus",
-                    question=item["question"], answerable=item["answerable"],
-                    must_contain=[item["expected"]] if item["answerable"] else [], gold_spans=spans,
-                    reviewed=False, split="dev", origin="DRAFT from privately reviewed feedback; manual gold review required",
-                    source_documents=sorted({Path(ev.source_display_name).name for ev in evidence}),
+                    question=redact_text(item["question"]), answerable=item["answerable"],
+                    must_contain=[redact_text(item["expected"])] if item["answerable"] else [],
+                    gold_spans=[redact_text(span) for span in spans],
+                    reviewed=False, split="dev", origin="DRAFT redacted derivative of private feedback; review against a sanitized corpus",
+                    source_documents=sorted({redact_text(Path(ev.source_display_name).name) for ev in evidence}),
                 ))
             except (FeedbackError, ValueError, KeyError):
                 skipped += 1
         gold = GoldSet(population="private_feedback_draft", questions=questions)
-        return "# DRAFT — never auto-accepted or used for training\n" + yaml.safe_dump(
+        return ("# DRAFT — never auto-accepted or used for training\n"
+                "# Redacted derivative. Recheck quotes against a sanitized corpus before acceptance.\n"
+                "# Pattern masking cannot remove every kind of personal data.\n") + yaml.safe_dump(
             gold.model_dump(mode="json"), allow_unicode=True, sort_keys=False), skipped

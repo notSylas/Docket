@@ -96,3 +96,32 @@ def test_partial_final_append_keeps_prior_items_and_symlinks_are_refused(tmp_pat
     with pytest.raises(FeedbackError, match="symbolic"):
         capture(FeedbackStore(linked, True))
     assert list(other.iterdir()) == []
+
+
+def test_export_redacts_identifiers_and_secrets_without_changing_private_capture(tmp_path):
+    store = FeedbackStore(tmp_path / "data", True)
+    quote = "Contact helena@example.com about the approved meeting date."
+    ev = SimpleNamespace(text=quote, evidence_version_id="v1", source_display_name="helena@example.com.txt")
+    resolver = SimpleNamespace(resolve=lambda cid: ev)
+    fid = store.capture("Email helena@example.com account 12345678901 api_key=privateValue?", "PRIVATE answer", [
+        {"chunk_id": "c1", "evidence_version_id": "v1"}], "not_good", "PRIVATE correction")
+    store.review(fid, resolver, expected="helena@example.com", spans=[quote])
+    before = store.path.read_bytes()
+    text, skipped = store.export_gold(resolver)
+    assert skipped == 0
+    assert all(secret not in text for secret in ("helena@example.com", "12345678901", "privateValue", "PRIVATE answer", "PRIVATE correction"))
+    assert "[email]" in text and "[digits]" in text and "[secret]" in text
+    path = tmp_path / "DRAFT.yml"; path.write_text(text)
+    assert load_gold_set(path).questions[0].reviewed is False
+    assert "sanitized corpus" in text and store.path.read_bytes() == before
+
+
+def test_redaction_that_invalidates_gold_span_length_skips_the_draft(tmp_path):
+    store = FeedbackStore(tmp_path, True)
+    quote = "helena@example.com 12345678901"
+    resolver = SimpleNamespace(resolve=lambda cid: SimpleNamespace(
+        text=quote, evidence_version_id="v1", source_display_name="notes.txt"))
+    fid = store.capture("Who was contacted?", "Private", [{"chunk_id": "c1", "evidence_version_id": "v1"}], "good")
+    store.review(fid, resolver, expected="helena@example.com", spans=[quote])
+    text, skipped = store.export_gold(resolver)
+    assert skipped == 1 and "questions: []" in text and "helena@example.com" not in text
