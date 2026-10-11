@@ -30,7 +30,8 @@ MAX_CANDIDATES = 60
 DEFAULT_LIMIT = 6
 
 _TYPE_NAMES = {".pdf": "PDF", ".docx": "Word", ".xlsx": "Excel", ".pptx": "PowerPoint",
-               ".txt": "Text", ".md": "Markdown", ".csv": "CSV", ".html": "HTML", ".htm": "HTML"}
+               ".txt": "Text", ".md": "Markdown", ".csv": "CSV", ".html": "HTML", ".htm": "HTML",
+               ".eml": "Email", ".mbox": "Mailbox"}
 
 
 @dataclass(frozen=True)

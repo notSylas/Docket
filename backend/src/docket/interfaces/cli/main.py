@@ -114,6 +114,9 @@ app = typer.Typer(
     help=(
         "Local-first, evidence-backed work intelligence assistant. "
         "Run `docket` with no arguments in a terminal (or `docket chat`) for an interactive session."
+        " New settings: DOCKET_FEEDBACK_ENABLED=false (opt in with true), "
+        "DOCKET_MAIL_MAX_BYTES=67108864 and DOCKET_MAIL_MAX_MESSAGES=1000 "
+        "(email snapshot limits; message overflow is a partial import)."
     ),
 )
 sources_app = typer.Typer(help="Manage registered sources (local folders).")
@@ -124,6 +127,26 @@ library_app = typer.Typer(help="Maintain stored library data.")
 app.add_typer(library_app, name="library")
 feedback_app = typer.Typer(help="Review private feedback and export draft evaluation cases.")
 app.add_typer(feedback_app, name="feedback")
+
+
+@app.command("mcp")
+def mcp_command() -> None:
+    """Serve read-only MCP over stdio using model-free lexical search.
+
+    No answer model, library writes or writer lock. Only active sources and
+    ready evidence are visible. Citation handles keep their search scope.
+
+    Local client example:
+    {"mcpServers": {"docket": {"command": "docket", "args": ["mcp"]}}}
+    """
+    from docket.core.config import Settings
+    from docket.interfaces.mcp import LibraryTools, readonly_engine, serve
+
+    engine = readonly_engine(Settings().sqlite_path)
+    try:
+        serve(LibraryTools(engine), sys.stdin, sys.stdout)
+    finally:
+        engine.dispose()
 
 
 @feedback_app.command("review")

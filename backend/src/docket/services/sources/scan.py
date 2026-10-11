@@ -23,7 +23,7 @@ from docket.services.ingestion.ignore import discover
 # Document types a scan counts (the formats ingestion can read). Kept here as
 # a literal so a scan never has to import the parser stack.
 SCAN_EXTENSIONS: frozenset[str] = frozenset({
-    ".pdf", ".docx", ".xlsx", ".pptx", ".txt", ".md", ".csv", ".html", ".htm"})
+    ".pdf", ".docx", ".xlsx", ".pptx", ".txt", ".md", ".csv", ".html", ".htm", ".eml", ".mbox"})
 
 # Per-file indexing cost in seconds, used only when no recent ingestion job
 # gives a measured rate. Rough single-machine figures for a typical file, not
@@ -38,6 +38,8 @@ SECONDS_PER_TYPE: dict[str, float] = {
     ".csv": 0.2,
     ".html": 0.2,
     ".htm": 0.2,
+    ".eml": 0.2,
+    ".mbox": 4.0,
 }
 
 # A folder is "broad" above this many documents, or this many entries directly
