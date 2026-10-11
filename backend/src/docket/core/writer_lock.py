@@ -25,6 +25,13 @@ LOCK_FILENAME = "library-writer.lock"
 DEFAULT_WAIT_SECONDS = 5.0
 
 
+class LibraryReplacedError(RuntimeError):
+    """A window's handles belong to the retained, pre-restore directory."""
+
+    def __init__(self):
+        super().__init__("The library was restored by another Docket window. Restart this window before updating the library.")
+
+
 class WriterLockBusyError(RuntimeError):
     """A bounded wait expired before this operation made any changes."""
 
@@ -69,11 +76,16 @@ os.register_at_fork(after_in_child=_after_fork)
 
 
 class WriterLock:
-    def __init__(self, data_dir: Path | str, *, timeout: float = DEFAULT_WAIT_SECONDS):
+    def __init__(self, data_dir: Path | str, *, timeout: float = DEFAULT_WAIT_SECONDS,
+                 expected_directory_identity: tuple[int, int] | None = None):
         if not math.isfinite(timeout) or timeout < 0:
             raise ValueError("writer lock timeout must be finite and non-negative")
         self.path = Path(data_dir).expanduser().resolve() / LOCK_FILENAME
         self.timeout = timeout
+        self._directory_identity = expected_directory_identity
+        if self._directory_identity is None and self.path.parent.exists():
+            directory_stat = self.path.parent.stat()
+            self._directory_identity = (directory_stat.st_dev, directory_stat.st_ino)
 
     def _owner(self) -> dict:
         try:
@@ -110,6 +122,11 @@ class WriterLock:
                         if remaining <= 0:
                             raise WriterLockBusyError(self._owner(), self.timeout) from None
                         time.sleep(min(0.05, remaining))
+                directory_stat = self.path.parent.stat()
+                identity = (directory_stat.st_dev, directory_stat.st_ino)
+                if self._directory_identity is not None and identity != self._directory_identity:
+                    raise LibraryReplacedError()
+                self._directory_identity = identity
                 owner = {
                     "pid": os.getpid(),
                     "started_at": datetime.now(timezone.utc).isoformat(),
@@ -140,7 +157,7 @@ def lock_for_sessions(session_factory) -> WriterLock:
     bind = getattr(session_factory, "kw", {}).get("bind")
     database = bind.url.database if isinstance(bind, Engine) else None
     data_dir = Path(database).parent if database and database != ":memory:" else settings.data_dir
-    return WriterLock(data_dir)
+    return WriterLock(data_dir, expected_directory_identity=getattr(bind, "_docket_directory_identity", None))
 
 
 def writer_operation(operation: str, *, dry_run: bool = False) -> Callable:

@@ -10,7 +10,7 @@ import typer.core
 import typer.main
 
 from docket import __version__
-from docket.core.writer_lock import WriterLockBusyError
+from docket.core.writer_lock import LibraryReplacedError, WriterLockBusyError
 from docket.infra.index.manifest import IndexManifestMismatchError
 from docket.infra.index.reindex import reindex as run_reindex
 from docket.infra.inference.gateway import InferenceError
@@ -80,7 +80,7 @@ class _LazyEvalGroup(typer.core.TyperGroup):
     def invoke(self, ctx: click.Context):
         try:
             return super().invoke(ctx)
-        except WriterLockBusyError as exc:
+        except (WriterLockBusyError, LibraryReplacedError) as exc:
             typer.echo(str(exc), err=True)
             raise typer.Exit(code=1) from None
 
@@ -120,6 +120,38 @@ sources_app = typer.Typer(help="Manage registered sources (local folders).")
 app.add_typer(sources_app, name="sources")
 formulas_app = typer.Typer(help="Verify a sample of formula transcriptions against their source crops.")
 app.add_typer(formulas_app, name="formulas")
+
+
+@app.command("backup")
+def backup_command(destination: Path | None = typer.Argument(None, help="New backup directory or .zip archive.")) -> None:
+    """Save a verified snapshot of this local library."""
+    from docket.core.config import Settings
+    from docket.services.backup import BackupError, backup
+
+    try:
+        saved = backup(Settings().data_dir, destination)
+    except BackupError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"Library backup saved to {saved}")
+
+
+@app.command("restore")
+def restore_command(
+    path: Path = typer.Argument(..., help="Backup directory or .zip archive."),
+    force: bool = typer.Option(False, "--force", help="Keep the current library as a dated side copy and replace it."),
+) -> None:
+    """Verify and restore a local library snapshot."""
+    from docket.core.config import Settings
+    from docket.services.backup import BackupError, restore
+
+    try:
+        previous = restore(Settings().data_dir, path, force=force)
+    except BackupError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"Library restored. Previous data kept at {previous}")
+    typer.echo("Restart any other Docket windows to use the restored library.")
 
 
 @app.callback(invoke_without_command=True)
