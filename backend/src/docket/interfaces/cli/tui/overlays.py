@@ -1761,7 +1761,8 @@ class WelcomeOverlay(Overlay):
             super().press(key)
 
 
-_TYPE_LABELS = {".pdf": "PDF", ".docx": "Word", ".xlsx": "Excel", ".pptx": "PowerPoint"}
+_TYPE_LABELS = {".pdf": "PDF", ".docx": "Word", ".xlsx": "Excel", ".pptx": "PowerPoint",
+                ".txt": "Text", ".md": "Markdown", ".csv": "CSV", ".html": "HTML", ".htm": "HTML"}
 
 
 def _plural(n: int, noun: str) -> str:

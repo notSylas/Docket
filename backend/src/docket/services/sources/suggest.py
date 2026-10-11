@@ -29,7 +29,8 @@ PER_FOLDER_SECONDS = 0.6
 MAX_CANDIDATES = 60
 DEFAULT_LIMIT = 6
 
-_TYPE_NAMES = {".pdf": "PDF", ".docx": "Word", ".xlsx": "Excel", ".pptx": "PowerPoint"}
+_TYPE_NAMES = {".pdf": "PDF", ".docx": "Word", ".xlsx": "Excel", ".pptx": "PowerPoint",
+               ".txt": "Text", ".md": "Markdown", ".csv": "CSV", ".html": "HTML", ".htm": "HTML"}
 
 
 @dataclass(frozen=True)

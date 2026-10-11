@@ -220,7 +220,7 @@ QUERY_STAGES = ("Searching documents", "Reading evidence", "Writing answer", "Ch
 INDEX_TOTAL_FILES = 24
 INDEX_FAILED_AT = (11, 17)
 INDEX_UNCHANGED_AT = (3, 9, 14)
-SUPPORTED_FORMATS = "PDF, Word, Excel, PowerPoint, text and Markdown"
+SUPPORTED_FORMATS = "PDF, Word, Excel, PowerPoint, text, Markdown, CSV and HTML"
 
 FOLDER_SUGGESTIONS = (
     "/demo/work/reports",

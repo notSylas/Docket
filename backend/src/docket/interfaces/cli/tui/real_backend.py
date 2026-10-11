@@ -87,7 +87,7 @@ _STATUS_MAP = {
     SourceStatus.MISSING: fd.FAILED,
     SourceStatus.REVOKED: fd.DISCONNECTED,
 }
-_FORMATS = "PDF, Word, Excel, PowerPoint, text and Markdown"
+_FORMATS = "PDF, Word, Excel, PowerPoint, text, Markdown, CSV and HTML"
 _MAX_JOBS = 20
 
 

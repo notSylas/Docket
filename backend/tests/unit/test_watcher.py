@@ -81,7 +81,7 @@ def test_watch_ignores_unsupported_hidden_and_ignored_paths(monkeypatch, tmp_pat
         monkeypatch,
         lambda p: [
             {
-                ("added", str(p / "notes.txt")),  # not a supported document
+                ("added", str(p / "notes.bin")),  # not a supported document
                 ("added", str(p / ".hidden.pdf")),
                 ("added", str(p / "node_modules" / "x.pdf")),
                 ("added", str(p / "drafts" / "y.pdf")),

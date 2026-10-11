@@ -112,6 +112,19 @@ def format_location(
         if locator.get("range"):
             text += f", range {_clean(locator['range'])}"
         return text + part
+    if "record" in locator:
+        return (f"Location: {_clean(file_name)} > Record {_clean(locator['record'])}, "
+                f"column {_clean(locator.get('column_name', locator.get('column')))}" + part)
+    if "line_start" in locator or "block" in locator:
+        trail = locator.get("heading_path", [])
+        text = f"Location: {_clean(file_name)}"
+        if isinstance(trail, list) and trail:
+            text += " > " + " > ".join(_clean(h) for h in trail if isinstance(h, str))
+        if "block" in locator:
+            text += f", visible block {_clean(locator['block'])}"
+        else:
+            text += f", lines {_clean(locator['line_start'])}-{_clean(locator['line_end'])}"
+        return text + part
     if "slide" in locator:
         text = f"Location: {_clean(file_name)} > Slide {_clean(locator['slide'])}"
         name = locator.get("shape_name")
