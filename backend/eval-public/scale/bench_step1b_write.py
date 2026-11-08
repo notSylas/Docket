@@ -163,7 +163,7 @@ def lance_stats(lance_dir: Path) -> dict:
     try:
         import lancedb
 
-        frags = lancedb.connect(str(lance_dir)).open_table("chunks").stats().fragment_stats.num_fragments
+        frags = lancedb.connect(str(lance_dir)).open_table("chunks").stats()["fragment_stats"]["num_fragments"]
     except Exception:  # noqa: BLE001
         frags = None
     return {"live_fragments": frags, "data_files": len(list((lance_dir / "chunks.lance" / "data").glob("*"))), "versions": len(list(vdir.glob("*"))) if vdir.exists() else None,
