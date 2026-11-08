@@ -259,7 +259,7 @@ class DoclingParser:
     and reused across ``parse()`` calls, mirroring the spike's usage.
     """
 
-    def __init__(self, generate_page_images: bool = True) -> None:
+    def __init__(self, generate_page_images: bool = True, max_pages: int = 0) -> None:
         from docling.document_converter import DocumentConverter, PdfFormatOption
         from docling.datamodel.base_models import InputFormat
         from docling.datamodel.pipeline_options import PdfPipelineOptions
@@ -278,6 +278,7 @@ class DoclingParser:
             images_scale=PAGE_IMAGES_SCALE,
         )
         self._generate_page_images = generate_page_images
+        self._max_pages = max_pages
         self._converter = DocumentConverter(
             format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=options)}
         )
@@ -313,7 +314,12 @@ class DoclingParser:
             # Cheap magic-byte check first: a text file named *.pdf is
             # reported as "not a valid PDF file" without invoking Docling.
             check_file_signature(path)
-            result = self._converter.convert(str(path))
+            converter = self._converter
+            max_pages = getattr(self, "_max_pages", 0)
+            if max_pages and max_pages > 0:
+                result = converter.convert(str(path), max_num_pages=max_pages)
+            else:
+                result = converter.convert(str(path))
             markdown = result.document.export_to_markdown()
             # Marker insertion runs on the raw (still-escaped) markdown --
             # see `_insert_page_markers`'s docstring for why -- then

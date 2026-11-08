@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -29,6 +30,14 @@ class Settings(BaseSettings):
     # transcription. They are generated and stored only when one of those is
     # on, or when this is set explicitly (DOCKET_STORE_PAGE_IMAGES=true).
     store_page_images: bool = False
+
+    # Parse worker pool (heavy Docling parser only). 1 = sequential, in-process.
+    # DOCKET_PARSE_WORKERS / DOCKET_PARSE_TIMEOUT_S / DOCKET_MAX_FILE_BYTES /
+    # DOCKET_PARSE_MAX_PAGES (0 = no page cap).
+    parse_workers: int = max(1, min(4, (os.cpu_count() or 4) // 4))
+    parse_timeout_s: float = 600.0
+    max_file_bytes: int = 512 * 1024 * 1024
+    parse_max_pages: int = 0
 
     # Discovery ignore rules (hidden folders, virtualenvs, site-packages,
     # node_modules, Office lock files, `.docketignore`). Escape hatch:

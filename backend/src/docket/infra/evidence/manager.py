@@ -68,12 +68,16 @@ class EvidenceManager:
         snapshot: bytes | None = None,
     ) -> EvidenceVersion:
         path = Path(path)
-        data = path.read_bytes() if snapshot is None else snapshot
         try:
             source_mtime: float | None = path.stat().st_mtime
         except OSError:
             source_mtime = None
-        content_hash = hashlib.sha256(data).hexdigest()
+        if snapshot is None:
+            # Stream the hash: large files are never held in memory.
+            content_hash, byte_size = self.store.hash_file(path)
+        else:
+            content_hash = hashlib.sha256(snapshot).hexdigest()
+            byte_size = len(snapshot)
         file_path = str(path)
 
         with self.session_factory() as session:
@@ -109,11 +113,16 @@ class EvidenceManager:
                 session.add(current)
 
             # Store bytes (globally deduped; no-op if content already exists).
-            self.store.put(data)
+            if snapshot is None:
+                stored_hash = self.store.put_file(path)
+                if stored_hash != content_hash:
+                    raise OSError(f"{path} changed while it was being ingested")
+            else:
+                self.store.put(snapshot)
 
             mime_type, _ = mimetypes.guess_type(str(path))
             manifest = {
-                "byte_size": len(data),
+                "byte_size": byte_size,
                 "mime_type": mime_type,
                 "original_filename": path.name,
             }
@@ -123,7 +132,7 @@ class EvidenceManager:
                 source_id=source_id,
                 file_path=file_path,
                 content_hash=content_hash,
-                byte_size=len(data),
+                byte_size=byte_size,
                 mime_type=mime_type,
                 observed_at=_utcnow(),
                 source_mtime=source_mtime,
@@ -154,6 +163,24 @@ class EvidenceManager:
             session.commit()
             session.refresh(evidence_version)
             return evidence_version
+
+    def looks_unchanged(self, source_id: str, path: Path) -> bool:
+        """Cheap pre-check (no hashing): the file's current version is READY
+        and its size and mtime match. Used only to avoid speculative parsing
+        of files that will turn out to be no-ops; the authoritative check is
+        still the content hash in `ingest_file`."""
+        try:
+            st = Path(path).stat()
+        except OSError:
+            return False
+        with self.session_factory() as session:
+            current = self._current_version(session, source_id, str(path))
+            return (
+                current is not None
+                and current.status == VersionStatus.READY
+                and current.byte_size == st.st_size
+                and current.source_mtime == st.st_mtime
+            )
 
     def mark_version_status(
         self,

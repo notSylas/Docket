@@ -349,7 +349,12 @@ class IngestionPipeline:
         writer_lock: WriterLock | None = None,
         mail_parser: MailParser | None = None,
         mail_recipe: ChunkRecipe | None = None,
+        parse_pool=None,
     ) -> None:
+        # Optional `ParsePool`: Docling-family files are parsed ahead of the
+        # writer in worker processes; everything else (and every write) stays
+        # on this thread, in discovery order.
+        self._parse_pool = parse_pool
         self._writer_lock = writer_lock or lock_for_sessions(session_factory)
         self._session_factory = session_factory
         self._evidence_manager = evidence_manager
@@ -444,6 +449,44 @@ class IngestionPipeline:
         )
 
     # -- internal helpers ---------------------------------------------------
+
+    def _is_pooled_family(self, path: Path) -> bool:
+        return path.suffix.lower() in DOCLING_EXTENSIONS
+
+    def _reset_pool(self) -> None:
+        if self._parse_pool is not None:
+            self._parse_pool.reset()
+
+    def _prefetch(self, source_id: str, files: list[Path], index: int) -> None:
+        """Keep the parse pool's look-ahead window full (index is 0-based, the
+        file about to be ingested). Skips files that look unchanged."""
+        pool = self._parse_pool
+        if pool is None:
+            return
+        for path in files[index : index + pool.window]:
+            if pool.in_flight() >= pool.window:
+                break
+            if self._is_pooled_family(path) and not self._evidence_manager.looks_unchanged(
+                source_id, path
+            ):
+                pool.submit(source_id, path)
+
+    def _parse_docling(self, source_id: str, path: Path):
+        if self._parse_pool is not None:
+            parsed = self._parse_pool.take(source_id, path)
+            if parsed is not None:
+                return parsed
+        return self._parser.parse(source_id, path)
+
+    def _check_file_size(self, path: Path) -> None:
+        cap = getattr(self._settings, "max_file_bytes", 0)
+        if cap and cap > 0:
+            try:
+                size = path.stat().st_size
+            except OSError:
+                return
+            if size > cap:
+                raise ValueError(f"file too large: {size} bytes exceeds the {cap} byte limit")
 
     def _load_active_source(self, source_id: str) -> Source:
         with self._session_factory() as session:
@@ -594,6 +637,7 @@ class IngestionPipeline:
 
     def _ingest_one_file(self, source_id: str, path: Path) -> FileIngestResult:
         suffix = path.suffix.lower()
+        self._check_file_size(path)
 
         if suffix in MAIL_EXTENSIONS:
             return self._ingest_one_mail_file(source_id, path)
@@ -644,7 +688,7 @@ class IngestionPipeline:
                     # Only this branch re-parses (and so re-renders
                     # pages) -- something is genuinely missing that can
                     # only come from Docling.
-                    parsed = self._parser.parse(source_id, path)
+                    parsed = self._parse_docling(source_id, path)
                     if needs_formula_backfill:
                         self._formula_transcriber.save_regions(
                             evidence_version.id, parsed.formula_regions
@@ -690,7 +734,7 @@ class IngestionPipeline:
         # try/except exists only to record FAILED before letting that
         # exception propagate, not to change how it's handled.
         try:
-            parsed = self._parser.parse(source_id, path)
+            parsed = self._parse_docling(source_id, path)
             self._formula_transcriber.save_regions(evidence_version.id, parsed.formula_regions)
             # Page images are only generated/stored when something consumes
             # them (`Settings.page_images_needed`); otherwise
@@ -1105,6 +1149,7 @@ class IngestionPipeline:
                 rules = IgnoreRules()
             total = len(targets)
             for index, path in enumerate(targets, start=1):
+                self._prefetch(source_id, targets, index - 1)
                 emit(ProgressEvent("start", index, total, path))
                 job_files.update(job_id, path)
                 try:
@@ -1122,6 +1167,7 @@ class IngestionPipeline:
                     current_version_ids=self._chunk_writer.ready_version_ids_for_source(source_id),
                 )
         except BaseException as exc:
+            self._reset_pool()
             self._finalize_job(
                 job_id,
                 IngestionJobStatus.FAILED,
@@ -1130,6 +1176,7 @@ class IngestionPipeline:
             )
             raise
 
+        self._reset_pool()
         files_failed = sum(1 for r in file_results if r.status == "failed")
         files_processed = len(file_results)
         error: str | None = None
@@ -1214,6 +1261,7 @@ class IngestionPipeline:
             job_files.prepare(job_id, files)
             total = len(files)
             for index, path in enumerate(files, start=1):
+                self._prefetch(source_id, files, index - 1)
                 emit(ProgressEvent("start", index, total, path))
                 job_files.update(job_id, path)
                 try:
@@ -1234,6 +1282,7 @@ class IngestionPipeline:
                 current_version_ids=self._chunk_writer.ready_version_ids_for_source(source_id),
             )
         except BaseException as exc:
+            self._reset_pool()
             # Interrupted (Ctrl-C etc.): don't leave the job row RUNNING forever.
             self._finalize_job(
                 job_id,
@@ -1247,6 +1296,7 @@ class IngestionPipeline:
             )
             raise
 
+        self._reset_pool()
         files_failed = sum(1 for r in file_results if r.status == "failed")
         files_processed = len(file_results)
 
