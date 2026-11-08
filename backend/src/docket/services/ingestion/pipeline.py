@@ -471,6 +471,38 @@ class IngestionPipeline:
             ):
                 pool.submit(source_id, path)
 
+    def _try_clone_duplicate(self, source_id: str, path: Path, evidence_version) -> int | None:
+        """If another READY version holds identical bytes (a copy under a
+        different path), clone its parsed units/chunks (and reuse its vectors
+        when the index text is unchanged) instead of parsing and embedding
+        again. Provenance stays per path: the new version keeps its own
+        `file_path`, units and chunk ids. Skipped when the visual index or
+        formula transcription is on (those need per-version page work)."""
+        s = self._settings
+        if not getattr(s, "reuse_duplicate_content", True):
+            return None
+        if s.visual_index_enabled or s.formula_transcription_enabled:
+            return None
+        recipe = self._recipes[FAMILY_DOCLING]
+        donor_id = self._chunk_writer.find_clone_donor(
+            content_hash=evidence_version.content_hash,
+            exclude_version_id=evidence_version.id,
+            parser_name=self._parser.parser_name,
+            parser_version=self._parser.parser_version,
+            recipe_id=recipe.id,
+        )
+        if donor_id is None:
+            return None
+        self._clear_version_chunks(evidence_version.id)
+        self._chunk_writer.ensure_recipe_row(recipe)
+        records, donors = self._chunk_writer.clone_version(
+            donor_version_id=donor_id, new_version_id=evidence_version.id, recipe=recipe
+        )
+        self._index_manager.upsert_cloned_chunks(records, donors)
+        if self._parse_pool is not None:
+            self._parse_pool.discard(source_id, path)
+        return len(records)
+
     def _parse_docling(self, source_id: str, path: Path):
         if self._parse_pool is not None:
             parsed = self._parse_pool.take(source_id, path)
@@ -734,6 +766,10 @@ class IngestionPipeline:
         # try/except exists only to record FAILED before letting that
         # exception propagate, not to change how it's handled.
         try:
+            cloned = self._try_clone_duplicate(source_id, path, evidence_version)
+            if cloned is not None:
+                self._evidence_manager.mark_version_status(evidence_version.id, VersionStatus.READY)
+                return FileIngestResult(path=path, status="ingested", chunks_written=cloned)
             parsed = self._parse_docling(source_id, path)
             self._formula_transcriber.save_regions(evidence_version.id, parsed.formula_regions)
             # Page images are only generated/stored when something consumes

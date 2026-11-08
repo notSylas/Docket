@@ -181,6 +181,122 @@ class ChunkWriter:
                 for c in chunk_objs
             ]
 
+    def find_clone_donor(
+        self, *, content_hash: str, exclude_version_id: str, parser_name: str,
+        parser_version: str, recipe_id: str,
+    ) -> str | None:
+        """Id of a READY version with identical bytes, parsed by the same
+        parser, whose chunks were all cut with `recipe_id` (and that has
+        its regions/images bookkeeping recorded): a safe source to clone
+        parsed units/chunks from instead of parsing again."""
+        with self._session_factory() as session:
+            stmt = (
+                select(EvidenceVersion.id)
+                .where(
+                    EvidenceVersion.content_hash == content_hash,
+                    EvidenceVersion.id != exclude_version_id,
+                    EvidenceVersion.status == VersionStatus.READY,
+                    EvidenceVersion.parser_name == parser_name,
+                    EvidenceVersion.parser_version == parser_version,
+                    EvidenceVersion.formula_regions_json.is_not(None),
+                )
+                .order_by(EvidenceVersion.observed_at)
+            )
+            for donor_id in session.execute(stmt).scalars().all():
+                recipes = set(
+                    session.execute(
+                        select(Chunk.chunk_recipe_id)
+                        .where(Chunk.evidence_version_id == donor_id)
+                        .distinct()
+                    ).scalars()
+                )
+                if recipes <= {recipe_id}:
+                    return donor_id
+        return None
+
+    def clone_version(
+        self, *, donor_version_id: str, new_version_id: str, recipe: ChunkRecipe | None = None
+    ) -> tuple[list[ChunkRecord], dict[str, ChunkRecord]]:
+        """Copy the donor's units and chunks onto `new_version_id` (new ids,
+        same content), returning the new `ChunkRecord`s (index text computed
+        for the NEW file path) and `{new chunk_id: donor ChunkRecord}` for
+        vector reuse. Also copies the donor's formula-region and page-image
+        bookkeeping (plus blob references)."""
+        import json
+
+        from docket.infra.evidence.references import add_blob_reference
+
+        recipe = recipe or self._chunk_recipe
+        with self._session_factory() as session:
+            donor = session.get(EvidenceVersion, donor_version_id)
+            new = session.get(EvidenceVersion, new_version_id)
+            units = (
+                session.execute(
+                    select(EvidenceUnit)
+                    .where(EvidenceUnit.evidence_version_id == donor_version_id)
+                    .order_by(EvidenceUnit.unit_index)
+                )
+                .scalars()
+                .all()
+            )
+            new_units = {}
+            for u in units:
+                nu = EvidenceUnit(
+                    evidence_version_id=new_version_id, unit_index=u.unit_index,
+                    heading=u.heading, content_hash=u.content_hash, unit_kind=u.unit_kind,
+                    locator_json=u.locator_json,
+                )
+                session.add(nu)
+                new_units[u.id] = nu
+            session.flush()
+            chunks = (
+                session.execute(
+                    select(Chunk).where(Chunk.evidence_version_id == donor_version_id).order_by(Chunk.ordinal)
+                )
+                .scalars()
+                .all()
+            )
+            records: list[ChunkRecord] = []
+            donor_records: dict[str, ChunkRecord] = {}
+            for c in chunks:
+                nid = compute_chunk_id(new_version_id, recipe.id, c.ordinal, c.content_hash)
+                nu = new_units[c.evidence_unit_id]
+                session.add(
+                    Chunk(
+                        id=nid, source_id=new.source_id, evidence_version_id=new_version_id,
+                        evidence_unit_id=nu.id, chunk_recipe_id=recipe.id, ordinal=c.ordinal,
+                        heading=c.heading, text=c.text, content_hash=c.content_hash,
+                        page_start=c.page_start, page_end=c.page_end, provenance=c.provenance,
+                    )
+                )
+                locator = nu.locator_json
+                common = dict(
+                    evidence_unit_id=nu.id, chunk_recipe_id=recipe.id, ordinal=c.ordinal,
+                    heading=c.heading, text=c.text, content_hash=c.content_hash,
+                    page_start=c.page_start, page_end=c.page_end,
+                )
+                rec = ChunkRecord(
+                    chunk_id=nid, source_id=new.source_id, evidence_version_id=new_version_id,
+                    index_text=index_text_for_chunk(new.file_path, locator, c.heading, c.text),
+                    **common,
+                )
+                records.append(rec)
+                donor_records[nid] = ChunkRecord(
+                    chunk_id=c.id, source_id=c.source_id, evidence_version_id=donor_version_id,
+                    index_text=index_text_for_chunk(donor.file_path, locator, c.heading, c.text),
+                    **common,
+                )
+            new.formula_regions_json = donor.formula_regions_json
+            if donor.page_images_json is not None:
+                new.page_images_json = donor.page_images_json
+                for page_no, h in json.loads(donor.page_images_json).items():
+                    add_blob_reference(
+                        session, content_hash=h, referencing_table="evidence_versions",
+                        referencing_id=new_version_id, role=f"page_image:{page_no}",
+                    )
+            session.commit()
+        return records, donor_records
+
     def ready_version_ids_for_source(self, source_id: str) -> set[str]:
         """Ids of `source_id`'s servable (`READY`) versions -- the "should
         still have visual pages indexed" set for the end-of-run reconcile."""

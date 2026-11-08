@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     # Experimental: convert PDFs that already have a text layer with Docling's
     # OCR disabled (DOCKET_PDF_SKIP_OCR_WITH_TEXT_LAYER=true). Off by default.
     pdf_skip_ocr_with_text_layer: bool = False
+    # Reuse the parsed units/chunks/vectors of an identical READY file
+    # instead of parsing it again (DOCKET_REUSE_DUPLICATE_CONTENT=false disables).
+    reuse_duplicate_content: bool = True
 
     # Discovery ignore rules (hidden folders, virtualenvs, site-packages,
     # node_modules, Office lock files, `.docketignore`). Escape hatch:

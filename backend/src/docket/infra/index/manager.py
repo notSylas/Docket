@@ -81,6 +81,39 @@ class IndexManager:
 
         return IndexWriteStats(upserted=len(to_write), skipped_unchanged=skipped, deleted=0)
 
+    def upsert_cloned_chunks(
+        self, records: Sequence[ChunkRecord], donors: dict[str, ChunkRecord]
+    ) -> IndexWriteStats:
+        """Index `records` that are copies of already-indexed `donors`
+        (`{new chunk_id: donor record}`). A copy whose index text equals its
+        donor's reuses the donor's stored vector (no embed call); the rest are
+        embedded as usual. Falls back to a plain `upsert_chunks` when the
+        vector writer cannot return stored vectors."""
+        records = list(records)
+        vectors_for = getattr(self._vector, "vectors_for", None)
+        if not records or vectors_for is None:
+            return self.upsert_chunks(records)
+        same = [
+            r for r in records
+            if (r.index_text or r.text) == (donors[r.chunk_id].index_text or donors[r.chunk_id].text)
+        ]
+        stored = vectors_for([donors[r.chunk_id].chunk_id for r in same])
+        reuse = {r.chunk_id: stored[donors[r.chunk_id].chunk_id] for r in same if donors[r.chunk_id].chunk_id in stored}
+        to_embed = [r for r in records if r.chunk_id not in reuse]
+        fresh: dict[str, list[float]] = {}
+        if to_embed:
+            vecs = embed_texts(
+                self._gateway, [r.index_text or r.text for r in to_embed],
+                batch_size=self._embed_batch_size, sleep=self._sleep,
+            )
+            fresh = {r.chunk_id: v for r, v in zip(to_embed, vecs)}
+        embeddings = [reuse.get(r.chunk_id) or fresh[r.chunk_id] for r in records]
+        if self._manifest_guard is not None:
+            self._manifest_guard.check_write(len(embeddings[0]))
+        self._fts.upsert(records, embeddings)
+        self._vector.upsert(records, embeddings)
+        return IndexWriteStats(upserted=len(records), skipped_unchanged=0, deleted=0)
+
     def reconcile_source(
         self,
         source_id: str,

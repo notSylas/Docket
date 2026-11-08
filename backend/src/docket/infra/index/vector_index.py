@@ -205,6 +205,24 @@ class LanceIndexWriter:
         rows = table.search().where(f"chunk_id IN ({_sql_in_list(chunk_ids)})").to_list()
         return {row["chunk_id"] for row in rows}
 
+    def vectors_for(self, chunk_ids: Sequence[str]) -> dict[str, list[float]]:
+        """Stored embeddings for `chunk_ids` (those that exist)."""
+        chunk_ids = list(chunk_ids)
+        table = self._open_table()
+        if not chunk_ids or table is None:
+            return {}
+        out: dict[str, list[float]] = {}
+        for i in range(0, len(chunk_ids), 500):
+            batch = chunk_ids[i : i + 500]
+            rows = (
+                table.search()
+                .where(f"chunk_id IN ({_sql_in_list(batch)})")
+                .select(["chunk_id", _VECTOR_COLUMN])
+                .to_list()
+            )
+            out.update({r["chunk_id"]: list(r[_VECTOR_COLUMN]) for r in rows})
+        return out
+
     def chunk_ids_for_source(self, source_id: str) -> set[str]:
         table = self._open_table()
         if table is None:
