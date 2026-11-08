@@ -83,6 +83,17 @@ class InferenceGateway(Protocol):
         ...
 
 
+QUERY_INSTRUCTION = "Given a question, retrieve the passages that answer it"
+
+
+def format_query_for_embedding(query: str) -> str:
+    """Query text to embed. With `settings.embed_query_instruct` on, wraps it in
+    Qwen3-Embedding's instruct format; documents are never wrapped."""
+    if settings.embed_query_instruct:
+        return f"Instruct: {QUERY_INSTRUCTION}\nQuery: {query}"
+    return query
+
+
 def embed_texts(
     gateway: InferenceGateway,
     texts: Sequence[str],

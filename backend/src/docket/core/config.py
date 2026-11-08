@@ -129,6 +129,10 @@ class Settings(BaseSettings):
     # (experiment E4: pool 30 / send 12 raises all-spans recall).
     retrieval_pool_k: int | None = 30
 
+    # Qwen3-Embedding recommended query format, applied to QUERY embeddings
+    # only (documents unchanged, no reindex). Env DOCKET_EMBED_QUERY_INSTRUCT.
+    embed_query_instruct: bool = False
+
     # Identifier follow-up retrieval (env DOCKET_ID_FOLLOWUP=0 disables): ids
     # (BL-102, Clause 4.2, Section 3) named in the question or referenced by top
     # chunks, without their own retrieved chunk, get one exact lexical lookup;

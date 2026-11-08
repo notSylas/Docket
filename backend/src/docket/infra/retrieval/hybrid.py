@@ -35,7 +35,7 @@ from docket.core.config import settings
 from docket.core.db.models import SourceStatus, VersionStatus
 from docket.infra.index.manifest import IndexManifestGuard
 from docket.infra.index.vector_index import _sql_in_list
-from docket.infra.inference.gateway import InferenceGateway
+from docket.infra.inference.gateway import InferenceGateway, format_query_for_embedding
 
 _DEFAULT_RRF_K = 60
 
@@ -343,7 +343,7 @@ def vector_search(
 
     With a `manifest_guard`, raises `IndexManifestMismatchError` when the
     index manifest disagrees with the configured embedding model."""
-    query_vector = gateway.embed(with_number_forms(query))
+    query_vector = gateway.embed(format_query_for_embedding(with_number_forms(query)))
     if manifest_guard is not None:
         manifest_guard.check_query(len(query_vector))
     results = _search_eligible(table, engine, query_vector, top_k, scope_version_ids)
