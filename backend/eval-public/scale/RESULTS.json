@@ -1,7 +1,6 @@
 {
  "labels": "VERIFIED = measured here; EXTRAPOLATED = model output, see assumptions",
  "not_yet_measured": [
-  "ingest run pdfmix (PDF mix cuad+arxiv)",
   "CUAD scale curve",
   "MuSiQue distractor scaling"
  ],
@@ -1475,6 +1474,125 @@
      "b_s_per_chunk_per_existing_chunk": 3.6134458504827997e-07
     }
    },
+   "pdfmix": {
+    "label": "cuad30_arxiv30_page_images_on",
+    "raw_MB": 78.4,
+    "files": 60,
+    "failed": 0,
+    "ingest_wall_s": 2560.4,
+    "peak_rss_MB": 12929,
+    "page_images": true,
+    "by_ext": {
+     "pdf": {
+      "files": 60,
+      "failed": 0,
+      "bytes": 78442535,
+      "chunks": 5174,
+      "pages": 1333,
+      "wall_s": 2557.6,
+      "other_s": 0.236,
+      "chunks_per_s_overall": 2.02,
+      "MB_per_s_overall": 0.031,
+      "chunks_per_GB_source": 65959,
+      "parse_pages_per_s": 0.542,
+      "embed_chunks_per_s": 60.3
+     }
+    },
+    "stage_seconds_by_ext": {
+     "-": {
+      "discovery": 0.011
+     },
+     "pdf": {
+      "evidence_copy_hash": 0.283,
+      "parse": 2461.435,
+      "formula_regions": 0.103,
+      "page_images_store": 1.208,
+      "chunk": 3.271,
+      "sqlite_chunks_write": 0.621,
+      "index_existing_check": 0.356,
+      "embed": 85.783,
+      "fts_write": 3.754,
+      "lance_write": 0.547
+     }
+    },
+    "ask_latency": [],
+    "disk": {
+     "data_dir_MB": 675.4,
+     "multiple_of_raw": 8.61,
+     "n_chunks": 5174,
+     "bytes_per_chunk": {
+      "sqlite_chunks_table": 1568,
+      "sqlite_fts5": 2076,
+      "sqlite_other_tables_indexes": 906,
+      "lancedb_total": 4801,
+      "lancedb_data_only": 4763,
+      "evidence_store_total": 121182,
+      "chunk_text_raw": 937
+     },
+     "store_bytes": {
+      "sqlite": 23547904,
+      "fts5": 10739712,
+      "lancedb": 24839060,
+      "evidence_store": {
+       "originals_bytes": 78442535,
+       "originals_objects": 60,
+       "page_png_bytes": 548544229,
+       "page_png_objects": 1355,
+       "other_object_bytes": 0,
+       "manifests_bytes": 7902,
+       "total_bytes": 626994666
+      },
+      "lance_fragments": 60,
+      "lance_versions": 60
+     }
+    },
+    "index_overhead_growth": [
+     {
+      "chunks_before": 0,
+      "index_write_s_per_chunk": 0.00037,
+      "fts_s_per_chunk": 0.00018
+     },
+     {
+      "chunks_before": 996,
+      "index_write_s_per_chunk": 0.00064,
+      "fts_s_per_chunk": 0.00036
+     },
+     {
+      "chunks_before": 1516,
+      "index_write_s_per_chunk": 0.00082,
+      "fts_s_per_chunk": 0.00058
+     },
+     {
+      "chunks_before": 2260,
+      "index_write_s_per_chunk": 0.00096,
+      "fts_s_per_chunk": 0.00076
+     },
+     {
+      "chunks_before": 3213,
+      "index_write_s_per_chunk": 0.00126,
+      "fts_s_per_chunk": 0.00095
+     },
+     {
+      "chunks_before": 3706,
+      "index_write_s_per_chunk": 0.00162,
+      "fts_s_per_chunk": 0.00109
+     },
+     {
+      "chunks_before": 4497,
+      "index_write_s_per_chunk": 0.00161,
+      "fts_s_per_chunk": 0.0013
+     },
+     {
+      "chunks_before": 5054,
+      "index_write_s_per_chunk": 0.00206,
+      "fts_s_per_chunk": 0.00148
+     }
+    ],
+    "index_overhead_fit": {
+     "a_s_per_chunk": 0.00024562852286246666,
+     "b_s_per_chunk_per_existing_chunk": 3.07350950896309e-07
+    }
+   },
    "xlsx": {
     "label": "xlsx_33_normal_files",
     "raw_MB": 6.2,
@@ -1608,68 +1726,68 @@
   ],
   "scenarios": {
    "100GB_M1_office_heavy_pdf_150KB_per_page": {
-    "chunks": 241304308,
-    "embed_hours": 1178.4,
-    "parse_hours": 123.6,
-    "first_index_hours_low(no_N_growth)": 5360.5,
-    "first_index_hours_high(linear_N_growth)": 3414145.7,
-    "first_index_days_high": 142256.1
+    "chunks": 241329186,
+    "embed_hours": 1178.5,
+    "parse_hours": 125.6,
+    "first_index_hours_low(no_N_growth)": 5363.1,
+    "first_index_hours_high(linear_N_growth)": 3414851.4,
+    "first_index_days_high": 142285.5
    },
    "100GB_M1_office_heavy_pdf_20KB_per_page": {
-    "chunks": 245347529,
-    "embed_hours": 1198.2,
-    "parse_hours": 665.8,
-    "first_index_hours_low(no_N_growth)": 5990.5,
-    "first_index_hours_high(linear_N_growth)": 3530009.2,
-    "first_index_days_high": 147083.7
+    "chunks": 245534112,
+    "embed_hours": 1199.1,
+    "parse_hours": 680.8,
+    "first_index_hours_low(no_N_growth)": 6009.5,
+    "first_index_hours_high(linear_N_growth)": 3535392.2,
+    "first_index_days_high": 147308.0
    },
    "100GB_M2_pdf_heavy_pdf_150KB_per_page": {
-    "chunks": 84470204,
-    "embed_hours": 412.5,
-    "parse_hours": 250.3,
-    "first_index_hours_low(no_N_growth)": 2083.5,
-    "first_index_hours_high(linear_N_growth)": 419216.2,
-    "first_index_days_high": 17467.3
+    "chunks": 84539862,
+    "embed_hours": 412.9,
+    "parse_hours": 255.9,
+    "first_index_hours_low(no_N_growth)": 2090.6,
+    "first_index_hours_high(linear_N_growth)": 419912.3,
+    "first_index_days_high": 17496.3
    },
    "100GB_M2_pdf_heavy_pdf_20KB_per_page": {
-    "chunks": 95791221,
-    "embed_hours": 467.8,
-    "parse_hours": 1768.5,
-    "first_index_hours_low(no_N_growth)": 3847.4,
-    "first_index_hours_high(linear_N_growth)": 540419.6,
-    "first_index_days_high": 22517.5
+    "chunks": 96313656,
+    "embed_hours": 470.4,
+    "parse_hours": 1810.5,
+    "first_index_hours_low(no_N_growth)": 3900.8,
+    "first_index_hours_high(linear_N_growth)": 546347.2,
+    "first_index_days_high": 22764.5
    },
    "500GB_M1_office_heavy_pdf_150KB_per_page": {
-    "chunks": 1206521544,
-    "embed_hours": 5892.1,
-    "parse_hours": 618.1,
-    "first_index_hours_low(no_N_growth)": 26802.6,
-    "first_index_hours_high(linear_N_growth)": 85297326.0,
-    "first_index_days_high": 3554055.3
+    "chunks": 1206645933,
+    "embed_hours": 5892.7,
+    "parse_hours": 628.1,
+    "first_index_hours_low(no_N_growth)": 26815.3,
+    "first_index_hours_high(linear_N_growth)": 85314923.3,
+    "first_index_days_high": 3554788.5
    },
    "500GB_M1_office_heavy_pdf_20KB_per_page": {
-    "chunks": 1226737646,
-    "embed_hours": 5990.9,
-    "parse_hours": 3329.2,
-    "first_index_hours_low(no_N_growth)": 29952.4,
-    "first_index_hours_high(linear_N_growth)": 88182165.5,
-    "first_index_days_high": 3674256.9
+    "chunks": 1227670564,
+    "embed_hours": 5995.4,
+    "parse_hours": 3404.2,
+    "first_index_hours_low(no_N_growth)": 30047.6,
+    "first_index_hours_high(linear_N_growth)": 88316399.0,
+    "first_index_days_high": 3679850.0
    },
    "500GB_M2_pdf_heavy_pdf_150KB_per_page": {
-    "chunks": 422351024,
-    "embed_hours": 2062.6,
-    "parse_hours": 1251.6,
-    "first_index_hours_low(no_N_growth)": 10417.7,
-    "first_index_hours_high(linear_N_growth)": 10456550.3,
-    "first_index_days_high": 435689.6
+    "chunks": 422699314,
+    "embed_hours": 2064.3,
+    "parse_hours": 1279.6,
+    "first_index_hours_low(no_N_growth)": 10453.2,
+    "first_index_hours_high(linear_N_growth)": 10473825.4,
+    "first_index_days_high": 436409.4
    },
    "500GB_M2_pdf_heavy_pdf_20KB_per_page": {
-    "chunks": 478956109,
-    "embed_hours": 2339.0,
-    "parse_hours": 8842.5,
-    "first_index_hours_low(no_N_growth)": 19237.0,
-    "first_index_hours_high(linear_N_growth)": 13453744.6,
-    "first_index_days_high": 560572.7
+    "chunks": 481568281,
+    "embed_hours": 2351.8,
+    "parse_hours": 9052.6,
+    "first_index_hours_low(no_N_growth)": 19503.8,
+    "first_index_hours_high(linear_N_growth)": 13600979.2,
+    "first_index_days_high": 566707.5
    }
   },
   "measured_inputs": {
@@ -1683,8 +1801,8 @@
    }
   },
   "pdf_inputs": {
-   "pages_per_s_parse": 0.555,
-   "chunks_per_page": 3.7322033898305085
+   "pages_per_s_parse": 0.542,
+   "chunks_per_page": 3.881470367591898
   }
  },
  "findings": {
