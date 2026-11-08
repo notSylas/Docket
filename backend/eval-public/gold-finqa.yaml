@@ -1,0 +1,539 @@
+# FinQA numeric-reasoning slice over eval-public/external/finqa/corpus (not committed; rebuild with
+# eval-public/build_finqa_slice.py). Source: FinQA test split, MIT licence, github.com/czyssrs/FinQA.
+# GENERATED: expected numbers come from the dataset's executed program, spans are verified single-chunk.
+# PUBLIC DATA, not a milestone population. Do not edit by hand.
+version: 1
+population: public_finqa
+questions:
+- id: finqa-HOLX-2009-page-151-pdf-1
+  type: numeric
+  question: what is the total fair value of non-vested shares as of september 26 , 2009?
+  answerable: true
+  must_contain:
+  - re:(?<![\d.])60829\.20*(?!\d|\.\d)
+  gold_spans:
+  - 'non-vested at september 26, 2009 number of shares: 2770'
+  - non-vested at september 26, 2009 | 2,770 | $21.96
+  reviewed: true
+  origin: FinQA test HOLX/2009/page_151.pdf-1; program multiply(2770, 21.96); dataset answer 60829.2; eval-public/build_finqa_slice.py
+  source_documents:
+  - HOLX-2009-page-151/page.docx
+  - HOLX-2009-page-151/table.xlsx
+  formula_dependent: false
+  split: dev
+- id: finqa-HOLX-2009-page-151-pdf-2
+  type: numeric
+  question: what is the total fair value of non-vested shares as of september 27 , 2008?
+  answerable: true
+  must_contain:
+  - re:(?<![\d.])45627\.030*(?!\d|\.\d)
+  gold_spans:
+  - 'non-vested at september 27, 2008 number of shares: 1461'
+  - 'f shares: 1461 weighted-average grant-date fair value: 31.23'
+  reviewed: true
+  origin: FinQA test HOLX/2009/page_151.pdf-2; program multiply(1461, 31.23); dataset answer 45627.03; eval-public/build_finqa_slice.py
+  source_documents:
+  - HOLX-2009-page-151/page.docx
+  - HOLX-2009-page-151/table.xlsx
+  formula_dependent: false
+  split: dev
+- id: finqa-RSG-2010-page-57-pdf-1
+  type: numeric
+  question: what was the ratio of the 5.000% ( 5.000 % ) to 6.200% ( 6.200 % ) the senior notes in march 2010
+  answerable: true
+  must_contain:
+  - re:(?<![\d.])1\.30*(?!\d|\.\d)|(?<![\d.])1\.30770*(?!\d|\.\d)|(?<![\d.])1\.3080*(?!\d|\.\d)|(?<![\d.])1\.310*(?!\d|\.\d)
+  gold_spans:
+  - n march 2010 , we issued $ 850.0 million of 5.000% ( 5.000 %
+  - enior notes due 2020 and $ 650.0 million of 6.200% ( 6.200 %
+  reviewed: true
+  origin: FinQA test RSG/2010/page_57.pdf-1; program divide(850.0, 650.0); dataset answer 1.31; eval-public/build_finqa_slice.py
+  source_documents:
+  - RSG-2010-page-57/page.docx
+  - RSG-2010-page-57/table.xlsx
+  formula_dependent: false
+  split: dev
+- id: finqa-RSG-2010-page-57-pdf-2
+  type: numeric
+  question: what was the ratio of the remaining discount of the notes due in 2017 to 2016
+  answerable: true
+  must_contain:
+  - re:(?<![\d.])1\.330*(?!\d|\.\d)|(?<![\d.])1\.33490*(?!\d|\.\d)|(?<![\d.])1\.3350*(?!\d|\.\d)
+  gold_spans:
+  - $750.0 million 6.875% senior notes due june 2017 | 86.1
+  - $600.0 million 7.125% senior notes due may 2016 | 64.5
+  reviewed: true
+  origin: FinQA test RSG/2010/page_57.pdf-2; program divide(86.1, 64.5); dataset answer 1.33; eval-public/build_finqa_slice.py
+  source_documents:
+  - RSG-2010-page-57/page.docx
+  - RSG-2010-page-57/table.xlsx
+  formula_dependent: false
+  split: dev
+- id: finqa-GS-2013-page-85-pdf-1
+  type: numeric
+  question: what percentage of total average securities and certain overnight cash deposits that are included in
+    gce during 2013 were non-u.s . dollar-denominated?
+  answerable: true
+  must_contain:
+  - re:(?<![\d.])0\.250*(?!\d|\.\d)|(?<![\d.])0\.25090*(?!\d|\.\d)|(?<![\d.])0\.2510*(?!\d|\.\d)|(?<![\d.])25(?:\.0+)?(?!\d|\.\d)|(?<![\d.])25\.090*(?!\d|\.\d)|(?<![\d.])25\.10*(?!\d|\.\d)
+  gold_spans:
+  - 'dollar-denominated average for theyear ended december: 45826'
+  - 'total average for theyear ended december: 182650'
+  reviewed: true
+  origin: FinQA test GS/2013/page_85.pdf-1; program divide(45826, 182650); dataset answer 25%; eval-public/build_finqa_slice.py
+  source_documents:
+  - GS-2013-page-85/page.docx
+  - GS-2013-page-85/table.xlsx
+  formula_dependent: false
+  split: dev
+- id: finqa-GS-2013-page-85-pdf-3
+  type: numeric
+  question: what percentage of total average securities and certain overnight cash deposits that are included in
+    gce during 2012 were non-u.s . dollar-denominated?
+  answerable: true
+  must_contain:
+  - re:(?<![\d.])0\.270*(?!\d|\.\d)|(?<![\d.])0\.2730*(?!\d|\.\d)|(?<![\d.])27(?:\.0+)?(?!\d|\.\d)|(?<![\d.])27\.30*(?!\d|\.\d)
+  gold_spans:
+  - 'ed average for theyear ended december: 45826 column c: 46984'
+  - ' average for theyear ended december: 182650 column c: 172095'
+  reviewed: true
+  origin: FinQA test GS/2013/page_85.pdf-3; program divide(46984, 172095); dataset answer 27%; eval-public/build_finqa_slice.py
+  source_documents:
+  - GS-2013-page-85/page.docx
+  - GS-2013-page-85/table.xlsx
+  formula_dependent: false
+  split: dev
+- id: finqa-IPG-2008-page-72-pdf-2
+  type: numeric
+  question: what is the net change in the balance of unrecognized tax benefits during 2008?
+  answerable: true
+  must_contain:
+  - re:(?<![\d.])14(?:\.0+)?(?!\d|\.\d)
+  gold_spans:
+  - balance at end of period | $148.8
+  - 'balance at beginning of period 2008: 134.8'
+  reviewed: true
+  origin: FinQA test IPG/2008/page_72.pdf-2; program subtract(148.8, 134.8); dataset answer 14; eval-public/build_finqa_slice.py
+  source_documents:
+  - IPG-2008-page-72/page.docx
+  - IPG-2008-page-72/table.xlsx
+  formula_dependent: false
+  split: dev
+- id: finqa-IPG-2008-page-72-pdf-4
+  type: numeric
+  question: what percentage of balance of unrecognized tax benefits at the end of 2008 would impact the effective
+    tax rate if recognized?
+  answerable: true
+  must_contain:
+  - re:(?<![\d.])0\.88580*(?!\d|\.\d)|(?<![\d.])0\.8860*(?!\d|\.\d)|(?<![\d.])88\.50*(?!\d|\.\d)|(?<![\d.])88\.5750*(?!\d|\.\d)|(?<![\d.])88\.580*(?!\d|\.\d)|(?<![\d.])88\.60*(?!\d|\.\d)
+  gold_spans:
+  - december 31 , 2008 , is $ 131.8 of tax benefits that , if r
+  - balance at end of period | $148.8
+  reviewed: true
+  origin: FinQA test IPG/2008/page_72.pdf-4; program divide(131.8, 148.8); dataset answer 88.6%; eval-public/build_finqa_slice.py
+  source_documents:
+  - IPG-2008-page-72/page.docx
+  - IPG-2008-page-72/table.xlsx
+  formula_dependent: false
+  split: dev
+- id: finqa-PNC-2007-page-92-pdf-1
+  type: numeric
+  question: at december 31 , 2007 , what percentage of the $ 14.4 billion of home equity loans ( included in 201cconsumer
+    201d in the table above ) had a loan-to-value ratio greater than 90%.?
+  answerable: true
+  must_contain:
+  - re:(?<![\d.])0\.18750*(?!\d|\.\d)|(?<![\d.])0\.1880*(?!\d|\.\d)|(?<![\d.])18\.70*(?!\d|\.\d)|(?<![\d.])18\.750*(?!\d|\.\d)|(?<![\d.])18\.80*(?!\d|\.\d)
+  gold_spans:
+  - at december 31 , 2007 , $ 2.7 billion of the $ 14.4 billion
+  - 07 , $ 2.7 billion of the $ 14.4 billion of home equity loan
+  reviewed: true
+  origin: FinQA test PNC/2007/page_92.pdf-1; program divide(2.7, 14.4); dataset answer 18.8%; eval-public/build_finqa_slice.py
+  source_documents:
+  - PNC-2007-page-92/page.docx
+  - PNC-2007-page-92/table.xlsx
+  formula_dependent: false
+  split: dev
+- id: finqa-ALXN-2016-page-153-pdf-2
+  type: numeric
+  question: what is the borrowing under the term loan facility as a percentage of the total contractual maturities
+    of long-term debt obligations due subsequent to december 31 , 2016?
+  answerable: true
+  must_contain:
+  - re:(?<![\d.])113(?:\.0+)?(?!\d|\.\d)|(?<![\d.])113\.60*(?!\d|\.\d)|(?<![\d.])114(?:\.0+)?(?!\d|\.\d)|(?<![\d.])1\.1360*(?!\d|\.\d)|(?<![\d.])1\.140*(?!\d|\.\d)
+  gold_spans:
+  - n june 2015 , we borrowed $ 3500 under the term loan facilit
+  - cember 31 , 2016 , we had $ 3081 outstanding on the term loa
+  reviewed: true
+  origin: FinQA test ALXN/2016/page_153.pdf-2; program divide(3500, 3081); dataset answer 114%; eval-public/build_finqa_slice.py
+  source_documents:
+  - ALXN-2016-page-153/page.docx
+  - ALXN-2016-page-153/table.xlsx
+  formula_dependent: false
+  split: dev
+- id: finqa-BLL-2006-page-67-pdf-1
+  type: numeric
+  question: current assets were what percent of net assets acquired for the can and alcan transactions?
+  answerable: true
+  must_contain:
+  - re:(?<![\d.])25970(?:\.0+)?(?!\d|\.\d)|(?<![\d.])259\.70*(?!\d|\.\d)|(?<![\d.])32\.20*(?!\d|\.\d)
+  gold_spans:
+  - primarily inventories and receivables | 218.8 | 40.7 | 259.5
+  - 'n (metal food & household products packaging, americas): 0.2'
+  reviewed: true
+  origin: FinQA test BLL/2006/page_67.pdf-1; program add(259.5, 0.2); dataset answer 32.2%; eval-public/build_finqa_slice.py
+  source_documents:
+  - BLL-2006-page-67/page.docx
+  - BLL-2006-page-67/table.xlsx
+  formula_dependent: false
+  split: dev
+- id: finqa-BLL-2006-page-67-pdf-2
+  type: numeric
+  question: hard assets are what percent of net assets acquired for the can and alcan acquisitions?
+  answerable: true
+  must_contain:
+  - re:(?<![\d.])0\.2980*(?!\d|\.\d)|(?<![\d.])0\.29840*(?!\d|\.\d)|(?<![\d.])29\.80*(?!\d|\.\d)|(?<![\d.])29\.840*(?!\d|\.\d)|(?<![\d.])29\.8410*(?!\d|\.\d)
+  gold_spans:
+  - '165.7 alcan (plastic packaging, americas): 73.8 total: 239.5'
+  - net assets acquired | $617.9 | $184.7 | $802.6
+  reviewed: true
+  origin: FinQA test BLL/2006/page_67.pdf-2; program divide(239.5, 802.6); dataset answer 29.8%; eval-public/build_finqa_slice.py
+  source_documents:
+  - BLL-2006-page-67/page.docx
+  - BLL-2006-page-67/table.xlsx
+  formula_dependent: false
+  split: dev
+- id: finqa-SNA-2007-page-69-pdf-1
+  type: numeric
+  question: what was the percentage change in the in pretax losses related to foreign exchange transactions in 2007
+  answerable: true
+  must_contain:
+  - re:(?<![\d.])0\.41670*(?!\d|\.\d)|(?<![\d.])0\.4170*(?!\d|\.\d)|(?<![\d.])41\.60*(?!\d|\.\d)|(?<![\d.])41\.6670*(?!\d|\.\d)|(?<![\d.])41\.670*(?!\d|\.\d)|(?<![\d.])41\.70*(?!\d|\.\d)
+  gold_spans:
+  - ulted in pretax losses of $ 1.7 million in 2007 and $ 1.2 mi
+  - $ 1.7 million in 2007 and $ 1.2 million in 2006 , and a pret
+  reviewed: true
+  origin: FinQA test SNA/2007/page_69.pdf-1; program subtract(1.7, 1.2), divide(#0, 1.2); dataset answer 41.7%;
+    eval-public/build_finqa_slice.py
+  source_documents:
+  - SNA-2007-page-69/page.docx
+  - SNA-2007-page-69/table.xlsx
+  formula_dependent: false
+  split: dev
+- id: finqa-SNA-2007-page-69-pdf-2
+  type: numeric
+  question: what is the percentage change in the balance of the minority interests in consolidated subsidiaries
+    from 2006 to 2007?
+  answerable: true
+  must_contain:
+  - re:(?<![\d.])0\.02980*(?!\d|\.\d)|(?<![\d.])0\.030*(?!\d|\.\d)|(?<![\d.])2\.90*(?!\d|\.\d)|(?<![\d.])2\.9760*(?!\d|\.\d)|(?<![\d.])2\.980*(?!\d|\.\d)|(?<![\d.])3(?:\.0+)?(?!\d|\.\d)
+  gold_spans:
+  - solidated subsidiaries of $ 17.3 million as of december 29 ,
+  - december 29 , 2007 , and $ 16.8 million as of december 30 ,
+  reviewed: true
+  origin: FinQA test SNA/2007/page_69.pdf-2; program subtract(17.3, 16.8), divide(#0, 16.8); dataset answer 3.0%;
+    eval-public/build_finqa_slice.py
+  source_documents:
+  - SNA-2007-page-69/page.docx
+  - SNA-2007-page-69/table.xlsx
+  formula_dependent: false
+  split: dev
+- id: finqa-GRMN-2008-page-73-pdf-1
+  type: numeric
+  question: considering the contractual obligations in which payments due by 1-3 years , what is the percentage
+    of the operating leases in relation to the total obligations?
+  answerable: true
+  must_contain:
+  - re:(?<![\d.])0\.85890*(?!\d|\.\d)|(?<![\d.])0\.858910*(?!\d|\.\d)|(?<![\d.])85\.890*(?!\d|\.\d)|(?<![\d.])85\.8910*(?!\d|\.\d)
+  gold_spans:
+  - 'payments due by period: 44048 column c: 7957 column d: 13789'
+  - 'ayments due by period: 95519 column c: 55923 column d: 16054'
+  reviewed: true
+  origin: FinQA test GRMN/2008/page_73.pdf-1; program divide(13789, 16054); dataset answer 85.89%; eval-public/build_finqa_slice.py
+  source_documents:
+  - GRMN-2008-page-73/page.docx
+  - GRMN-2008-page-73/table.xlsx
+  formula_dependent: false
+  split: dev
+- id: finqa-CB-2008-page-229-pdf-1
+  type: numeric
+  question: what is the growth rate in the net income of bermuda subsidiaries from 2007 to 2008?
+  answerable: true
+  must_contain:
+  - re:(?<![\d.])0\.5540*(?!\d|\.\d)|(?<![\d.])0\.55440*(?!\d|\.\d)|(?<![\d.])55\.40*(?!\d|\.\d)|(?<![\d.])55\.440*(?!\d|\.\d)
+  gold_spans:
+  - statutory net income | $684
+  - 'net income bermuda subsidiaries: 684 u.s. subsidiaries: 1535'
+  reviewed: true
+  origin: FinQA test CB/2008/page_229.pdf-1; program subtract(684, 1535), divide(#0, 1535); dataset answer -55.4%;
+    eval-public/build_finqa_slice.py
+  source_documents:
+  - CB-2008-page-229/page.docx
+  - CB-2008-page-229/table.xlsx
+  formula_dependent: false
+  split: dev
+- id: finqa-CB-2008-page-229-pdf-3
+  type: numeric
+  question: what is the net income-to-capital ratio for bermuda subsidiaries in 2008?
+  answerable: true
+  must_contain:
+  - re:(?<![\d.])0\.09770*(?!\d|\.\d)|(?<![\d.])0\.0980*(?!\d|\.\d)|(?<![\d.])9\.70*(?!\d|\.\d)|(?<![\d.])9\.770*(?!\d|\.\d)|(?<![\d.])9\.80*(?!\d|\.\d)
+  gold_spans:
+  - statutory net income | $684
+  - 'statutory capital and surplus bermuda subsidiaries: 7001'
+  reviewed: true
+  origin: FinQA test CB/2008/page_229.pdf-3; program divide(684, 7001); dataset answer 9.8%; eval-public/build_finqa_slice.py
+  source_documents:
+  - CB-2008-page-229/page.docx
+  - CB-2008-page-229/table.xlsx
+  formula_dependent: false
+  split: dev
+- id: finqa-HII-2015-page-121-pdf-1
+  type: numeric
+  question: what is the net income margin in the q1 of 2014?
+  answerable: true
+  must_contain:
+  - re:(?<![\d.])0\.0560*(?!\d|\.\d)|(?<![\d.])0\.05650*(?!\d|\.\d)|(?<![\d.])5\.60*(?!\d|\.\d)|(?<![\d.])5\.6460*(?!\d|\.\d)|(?<![\d.])5\.650*(?!\d|\.\d)
+  gold_spans:
+  - net earnings (loss) | 90
+  - 'ales and service revenues year ended december 31, 2014: 1594'
+  reviewed: true
+  origin: FinQA test HII/2015/page_121.pdf-1; program divide(90, 1594); dataset answer 5.6%; eval-public/build_finqa_slice.py
+  source_documents:
+  - HII-2015-page-121/page.docx
+  - HII-2015-page-121/table.xlsx
+  formula_dependent: false
+  split: dev
+- id: finqa-HII-2015-page-121-pdf-2
+  type: numeric
+  question: what is the net income margin in the q3 of 2014?
+  answerable: true
+  must_contain:
+  - re:(?<![\d.])0\.05590*(?!\d|\.\d)|(?<![\d.])0\.0560*(?!\d|\.\d)|(?<![\d.])5\.50*(?!\d|\.\d)|(?<![\d.])5\.590*(?!\d|\.\d)|(?<![\d.])5\.5910*(?!\d|\.\d)|(?<![\d.])5\.60*(?!\d|\.\d)
+  gold_spans:
+  - net earnings (loss) | 90 | 100 | 96
+  - ' ended december 31, 2014: 1594 column c: 1719 column d: 1717'
+  reviewed: true
+  origin: FinQA test HII/2015/page_121.pdf-2; program divide(96, 1717); dataset answer 5.6%; eval-public/build_finqa_slice.py
+  source_documents:
+  - HII-2015-page-121/page.docx
+  - HII-2015-page-121/table.xlsx
+  formula_dependent: false
+  split: dev
+- id: finqa-CME-2017-page-40-pdf-3
+  type: numeric
+  question: in 2017 what was the ratio of the the cme group inc . stock perfomamce to the s&p
+  answerable: true
+  must_contain:
+  - re:(?<![\d.])1\.70*(?!\d|\.\d)|(?<![\d.])1\.7790*(?!\d|\.\d)|(?<![\d.])1\.780*(?!\d|\.\d)|(?<![\d.])1\.80*(?!\d|\.\d)
+  gold_spans:
+  - ': 164.01 2014: 194.06 2015: 208.95 2016: 279.85 2017: 370.32'
+  - ': 132.39 2014: 150.51 2015: 152.59 2016: 170.84 2017: 208.14'
+  reviewed: true
+  origin: FinQA test CME/2017/page_40.pdf-3; program divide(370.32, 208.14); dataset answer 1.8; eval-public/build_finqa_slice.py
+  source_documents:
+  - CME-2017-page-40/page.docx
+  - CME-2017-page-40/table.xlsx
+  formula_dependent: false
+  split: dev
+- id: finqa-ETR-2003-page-157-pdf-1
+  type: numeric
+  question: what portion of the total entergy employees is represented by unions?
+  answerable: true
+  must_contain:
+  - re:(?<![\d.])0\.33170*(?!\d|\.\d)|(?<![\d.])0\.3320*(?!\d|\.\d)|(?<![\d.])33\.10*(?!\d|\.\d)|(?<![\d.])33\.1690*(?!\d|\.\d)|(?<![\d.])33\.170*(?!\d|\.\d)|(?<![\d.])33\.20*(?!\d|\.\d)
+  gold_spans:
+  - approximately 4900 employees are represented by the internat
+  - 'total entergy 1516: 14773'
+  reviewed: true
+  origin: FinQA test ETR/2003/page_157.pdf-1; program divide(4900, 14773); dataset answer 33.2%; eval-public/build_finqa_slice.py
+  source_documents:
+  - ETR-2003-page-157/page.docx
+  - ETR-2003-page-157/table.xlsx
+  formula_dependent: false
+  split: dev
+- id: finqa-ETR-2003-page-157-pdf-2
+  type: numeric
+  question: what portion of the total entergy staff is employed at entergy operations?
+  answerable: true
+  must_contain:
+  - re:(?<![\d.])0\.1960*(?!\d|\.\d)|(?<![\d.])0\.19640*(?!\d|\.\d)|(?<![\d.])19\.60*(?!\d|\.\d)|(?<![\d.])19\.640*(?!\d|\.\d)|(?<![\d.])19\.6440*(?!\d|\.\d)
+  gold_spans:
+  - 'entergy operations 1516: 2902'
+  - 'total entergy 1516: 14773'
+  reviewed: true
+  origin: FinQA test ETR/2003/page_157.pdf-2; program divide(2902, 14773); dataset answer 19.6%; eval-public/build_finqa_slice.py
+  source_documents:
+  - ETR-2003-page-157/page.docx
+  - ETR-2003-page-157/table.xlsx
+  formula_dependent: false
+  split: dev
+- id: finqa-PPG-2008-page-52-pdf-1
+  type: numeric
+  question: without the impact of settlements , what would the december 31 2008 amount of unrecognized tax benefits
+    have been , in $ millions?
+  answerable: true
+  must_contain:
+  - re:(?<![\d.])12(?:\.0+)?(?!\d|\.\d)|(?<![\d.])120(?:\.0+)?(?!\d|\.\d)
+  gold_spans:
+  - based on tax positions related to the current year | 12 | 21
+  - <i></i> <i>balance at december 31</i> | $99
+  reviewed: true
+  origin: FinQA test PPG/2008/page_52.pdf-1; program add(21, 99); dataset answer 120; eval-public/build_finqa_slice.py
+  source_documents:
+  - PPG-2008-page-52/page.docx
+  - PPG-2008-page-52/table.xlsx
+  formula_dependent: false
+  split: dev
+- id: finqa-PPG-2008-page-52-pdf-3
+  type: numeric
+  question: what was the net change in the accrued liability for unrecognized tax benefits from 2007 to 2008?
+  answerable: true
+  must_contain:
+  - re:(?<![\d.])11(?:\.0+)?(?!\d|\.\d)
+  gold_spans:
+  - <i></i> <i>balance at december 31</i> | $99
+  - <i></i> <i>balance at december 31</i> | $99 | $110
+  reviewed: true
+  origin: FinQA test PPG/2008/page_52.pdf-3; program subtract(99, 110); dataset answer -11; eval-public/build_finqa_slice.py
+  source_documents:
+  - PPG-2008-page-52/page.docx
+  - PPG-2008-page-52/table.xlsx
+  formula_dependent: false
+  split: dev
+- id: finqa-MSI-2008-page-69-pdf-2
+  type: numeric
+  question: what was the percentage decline in the operating loss from 2007 to 2008
+  answerable: true
+  must_contain:
+  - re:(?<![\d.])0\.8330*(?!\d|\.\d)|(?<![\d.])0\.83330*(?!\d|\.\d)|(?<![\d.])83\.30*(?!\d|\.\d)|(?<![\d.])83\.330*(?!\d|\.\d)|(?<![\d.])83\.3330*(?!\d|\.\d)
+  gold_spans:
+  - 8 , compared to an operating loss of $ 1.2 billion in 2007 .
+  - rred an operating loss of $ 2.2 billion in 2008 , compared t
+  reviewed: true
+  origin: FinQA test MSI/2008/page_69.pdf-2; program subtract(1.2, 2.2), divide(#0, 1.2); dataset answer -83.3%;
+    eval-public/build_finqa_slice.py
+  source_documents:
+  - MSI-2008-page-69/page.docx
+  - MSI-2008-page-69/table.xlsx
+  formula_dependent: false
+  split: dev
+- id: finqa-MSI-2008-page-69-pdf-3
+  type: numeric
+  question: in 2006 what was the percent of the operating earnings to the segment net sales
+  answerable: true
+  must_contain:
+  - re:(?<![\d.])0\.14170*(?!\d|\.\d)|(?<![\d.])0\.1420*(?!\d|\.\d)|(?<![\d.])14\.10*(?!\d|\.\d)|(?<![\d.])14\.1670*(?!\d|\.\d)|(?<![\d.])14\.170*(?!\d|\.\d)|(?<![\d.])14\.20*(?!\d|\.\d)
+  gold_spans:
+  - 'er 31</i>: -2199 <i>percent change</i>: -1201 column d: 2690'
+  - 'rs ended december 31</i>: 12099 <i>percent change</i>: 18988'
+  reviewed: true
+  origin: FinQA test MSI/2008/page_69.pdf-3; program divide(2690, 18988); dataset answer 14.2%; eval-public/build_finqa_slice.py
+  source_documents:
+  - MSI-2008-page-69/page.docx
+  - MSI-2008-page-69/table.xlsx
+  formula_dependent: false
+  split: dev
+- id: finqa-TMUS-2017-page-29-pdf-1
+  type: numeric
+  question: what is the average size ( in square feet ) of switching centers in 2017?
+  answerable: true
+  must_contain:
+  - re:(?<![\d.])21311\.470*(?!\d|\.\d)|(?<![\d.])21311\.4750*(?!\d|\.\d)|(?<![\d.])21311\.47540*(?!\d|\.\d)|(?<![\d.])21311\.480*(?!\d|\.\d)
+  gold_spans:
+  - 'roximate number: 61 approximate size in square feet: 1300000'
+  - 'switching centers approximate number: 61'
+  reviewed: true
+  origin: FinQA test TMUS/2017/page_29.pdf-1; program divide(1300000, 61); dataset answer 21311.48; eval-public/build_finqa_slice.py
+  source_documents:
+  - TMUS-2017-page-29/page.docx
+  - TMUS-2017-page-29/table.xlsx
+  formula_dependent: false
+  split: dev
+- id: finqa-TMUS-2017-page-29-pdf-2
+  type: numeric
+  question: what is the average size ( in square feet ) of call centers in 2017?
+  answerable: true
+  must_contain:
+  - re:(?<![\d.])82352\.940*(?!\d|\.\d)|(?<![\d.])82352\.9410*(?!\d|\.\d)|(?<![\d.])82352\.94120*(?!\d|\.\d)
+  gold_spans:
+  - 'roximate number: 17 approximate size in square feet: 1400000'
+  - 'call center approximate number: 17'
+  reviewed: true
+  origin: FinQA test TMUS/2017/page_29.pdf-2; program divide(1400000, 17); dataset answer 82352.94; eval-public/build_finqa_slice.py
+  source_documents:
+  - TMUS-2017-page-29/page.docx
+  - TMUS-2017-page-29/table.xlsx
+  formula_dependent: false
+  split: dev
+- id: finqa-MS-2007-page-179-pdf-1
+  type: numeric
+  question: what percentage of the net assets acquired is goodwill?
+  answerable: true
+  must_contain:
+  - re:(?<![\d.])0\.1470*(?!\d|\.\d)|(?<![\d.])0\.14740*(?!\d|\.\d)|(?<![\d.])0\.150*(?!\d|\.\d)|(?<![\d.])14(?:\.0+)?(?!\d|\.\d)|(?<![\d.])14\.70*(?!\d|\.\d)|(?<![\d.])14\.740*(?!\d|\.\d)|(?<![\d.])15(?:\.0+)?(?!\d|\.\d)
+  gold_spans:
+  - 'goodwill at february 17, 2006 (dollars in millions): 247'
+  - 'ts acquired at february 17, 2006 (dollars in millions): 1676'
+  reviewed: true
+  origin: FinQA test MS/2007/page_179.pdf-1; program divide(247, 1676); dataset answer 15%; eval-public/build_finqa_slice.py
+  source_documents:
+  - MS-2007-page-179/page.docx
+  - MS-2007-page-179/table.xlsx
+  formula_dependent: false
+  split: dev
+- id: finqa-MS-2007-page-179-pdf-2
+  type: numeric
+  question: what percentage of net assets acquired is amortizable intangible assets?
+  answerable: true
+  must_contain:
+  - re:(?<![\d.])0\.070*(?!\d|\.\d)|(?<![\d.])0\.0730*(?!\d|\.\d)|(?<![\d.])0\.07340*(?!\d|\.\d)|(?<![\d.])7(?:\.0+)?(?!\d|\.\d)|(?<![\d.])7\.30*(?!\d|\.\d)|(?<![\d.])7\.340*(?!\d|\.\d)
+  gold_spans:
+  - 'gible assets at february 17, 2006 (dollars in millions): 123'
+  - 'ts acquired at february 17, 2006 (dollars in millions): 1676'
+  reviewed: true
+  origin: FinQA test MS/2007/page_179.pdf-2; program divide(123, 1676); dataset answer 7%; eval-public/build_finqa_slice.py
+  source_documents:
+  - MS-2007-page-179/page.docx
+  - MS-2007-page-179/table.xlsx
+  formula_dependent: false
+  split: dev
+- id: finqa-unans-IPG-2008-page-72
+  type: out_of_corpus
+  question: What was IPG's balance at beginning of period for fiscal 2018?
+  answerable: false
+  reviewed: true
+  origin: 'constructed: row label ''Balance at beginning of period'' of IPG/2008/page_72.pdf asked for fiscal 2018,
+    a year absent from the page; eval-public/build_finqa_slice.py'
+  source_documents: []
+  formula_dependent: false
+  split: dev
+- id: finqa-unans-PNC-2007-page-92
+  type: out_of_corpus
+  question: What was PNC's commercial real estate for fiscal 2011?
+  answerable: false
+  reviewed: true
+  origin: 'constructed: row label ''Commercial real estate'' of PNC/2007/page_92.pdf asked for fiscal 2011, a year
+    absent from the page; eval-public/build_finqa_slice.py'
+  source_documents: []
+  formula_dependent: false
+  split: dev
+- id: finqa-unans-BLL-2006-page-67
+  type: out_of_corpus
+  question: What was BLL's property, plant and equipment for fiscal 2011?
+  answerable: false
+  reviewed: true
+  origin: 'constructed: row label ''Property, plant and equipment'' of BLL/2006/page_67.pdf asked for fiscal 2011,
+    a year absent from the page; eval-public/build_finqa_slice.py'
+  source_documents: []
+  formula_dependent: false
+  split: dev
+- id: finqa-unans-SNA-2007-page-69
+  type: out_of_corpus
+  question: What was SNA's minority interests for fiscal 2011?
+  answerable: false
+  reviewed: true
+  origin: 'constructed: row label ''Minority interests'' of SNA/2007/page_69.pdf asked for fiscal 2011, a year absent
+    from the page; eval-public/build_finqa_slice.py'
+  source_documents: []
+  formula_dependent: false
+  split: dev
