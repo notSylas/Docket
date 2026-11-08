@@ -44,6 +44,7 @@ class IndexManager:
         self._manifest_guard = manifest_guard
         self._embed_batch_size = embed_batch_size
         self._sleep = sleep
+        self._files_since_maintain = 0
 
     def upsert_chunks(self, records: Sequence[ChunkRecord]) -> IndexWriteStats:
         """Upsert `records` into both indexes, embedding only what's missing
@@ -103,6 +104,20 @@ class IndexManager:
                 self._pages.delete_by_version(version_id)
 
         return IndexWriteStats(upserted=0, skipped_unchanged=0, deleted=len(stale))
+
+    def note_file_done(self) -> None:
+        """Called by the pipeline after each file; runs `maintain()` every
+        `DOCKET_COMPACT_EVERY_FILES` files (0 disables) to bound Lance
+        fragment/version growth mid-run. Caller holds the writer lock."""
+        from docket.infra.index import tuning
+
+        every = tuning.compact_every_files()
+        if every <= 0:
+            return
+        self._files_since_maintain += 1
+        if self._files_since_maintain >= every:
+            self._files_since_maintain = 0
+            self.maintain()
 
     def maintain(self) -> dict | None:
         """Post-ingest ANN index build/optimize + compaction of the vector

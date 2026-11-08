@@ -1104,6 +1104,7 @@ class IngestionPipeline:
                 file_results.append(result)
                 job_files.update(job_id, path, result)
                 emit(ProgressEvent("done", index, total, path, result))
+                self._index_manager.note_file_done()
             if any(r.status not in ("unchanged", "skipped") for r in file_results):
                 self._index_manager.reconcile_source(
                     source_id,
@@ -1212,6 +1213,7 @@ class IngestionPipeline:
                 file_results.append(result)
                 job_files.update(job_id, path, result)
                 emit(ProgressEvent("done", index, total, path, result))
+                self._index_manager.note_file_done()
 
             # Single end-of-run reconcile pass -- see module docstring for why
             # this must be whole-source, not per-file.

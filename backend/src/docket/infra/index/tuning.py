@@ -9,6 +9,9 @@ flip them without re-importing settings.
 - DOCKET_COMPACT_AFTER_INGEST=true|false    (default true)
 - DOCKET_COMPACT_KEEP_HOURS=<int>           (default 1: old table versions younger
   than this are kept, so an in-flight reader or a reindex undo still works)
+- DOCKET_COMPACT_EVERY_FILES=<int>          (default 500; 0 = only at the end of a
+  run) compact/optimize the vector table every N ingested files so fragment and
+  version counts stay bounded during long runs
 """
 
 from __future__ import annotations
@@ -48,3 +51,7 @@ def compact_after_ingest() -> bool:
 
 def compact_keep_hours() -> int:
     return max(0, _int("DOCKET_COMPACT_KEEP_HOURS", 1))
+
+
+def compact_every_files() -> int:
+    return max(0, _int("DOCKET_COMPACT_EVERY_FILES", 500))
