@@ -96,6 +96,7 @@ from docket.infra.evidence.store import ContentAddressedStore
 from docket.infra.evidence.workbook_reader import WorkbookReader
 from docket.infra.parsing.tokens import get_token_counter
 from docket.infra.retrieval.hybrid import hybrid_search
+from docket.infra.retrieval.id_followup import followup_chunk_ids
 from docket.infra.retrieval.resolver import ChunkNotFoundError, EvidenceResolver, ResolvedEvidence
 
 logger = logging.getLogger(__name__)
@@ -553,6 +554,8 @@ class QueryService:
                 mode=QueryMode.FAST.value, standalone_query=standalone,
                 scoped_to=scoped_to,
             )
+        if self._settings.id_followup:
+            resolved = self._append_id_followups(question, resolved, scope_ids)
         # Token-budget fitting is FAST-PATH ONLY: `resolved` is in rank order
         # (best first), so dropping the tail drops the weakest chunks. Agent
         # chunks are in read order, not rank order, so the agent path has no
@@ -742,6 +745,28 @@ class QueryService:
             "options": {"temperature": self._settings.answer_temperature},
             "think": self._settings.answer_think,
         }
+
+    def _append_id_followups(
+        self, question: str, resolved: list[ResolvedEvidence], scope_ids: list[str] | None
+    ) -> list[ResolvedEvidence]:
+        """Append (after the originals) chunks found by exact-phrase lookup of
+        identifiers lacking their own retrieved chunk. Never raises."""
+        try:
+            extra_ids = followup_chunk_ids(
+                self._engine, question, [(r.chunk_id, r.text) for r in resolved],
+                per_id=self._settings.id_followup_per_id,
+                max_total=self._settings.id_followup_max,
+                scope_version_ids=scope_ids,
+            )
+            if not extra_ids:
+                return resolved
+            with phase("id_followup"):
+                extras = self._resolver.resolve_many(extra_ids)
+            logger.info("id follow-up added %d chunk(s)", len(extras))
+            return list(resolved) + list(extras)
+        except Exception:  # noqa: BLE001 - best-effort enrichment only
+            logger.warning("id follow-up failed; continuing without it", exc_info=True)
+            return resolved
 
     def _fit_prompt(
         self,

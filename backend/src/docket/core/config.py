@@ -129,6 +129,14 @@ class Settings(BaseSettings):
     # (experiment E4: pool 30 / send 12 raises all-spans recall).
     retrieval_pool_k: int | None = 30
 
+    # Identifier follow-up retrieval (env DOCKET_ID_FOLLOWUP=0 disables): ids
+    # (BL-102, Clause 4.2, Section 3) named in the question or referenced by top
+    # chunks, without their own retrieved chunk, get one exact lexical lookup;
+    # up to `id_followup_per_id` extra chunks each, `id_followup_max` in total.
+    id_followup: bool = True
+    id_followup_per_id: int = 2
+    id_followup_max: int = 6
+
     # Deterministic compute stage in the fast path (Upgrade doc 05 section 8
     # candidate move; env DOCKET_COMPUTE_STAGE_ENABLED). When on and the
     # question looks arithmetic/aggregate over retrieved spreadsheet chunks, one
