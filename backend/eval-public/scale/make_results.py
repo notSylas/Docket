@@ -27,6 +27,7 @@ def ver(m):
         return None
 
 
+R["code_under_test"] = "baseline (pre-Step-1a): frozen worktree /home/pc/Desktop/Rajdeep_Dev/Local_Agent-baseline at commit 00b1032 (src unchanged vs main before scale-step1 merge)"
 R["hardware_versions"] = {"label": "VERIFIED",
     "gpu": "AMD Radeon RX 9070 XT (16 GB VRAM) per rocm-smi", "cpu": "AMD Ryzen 9 9950X3D 16C/32T",
     "ram_GB": 31, "disk": "WD_BLACK SN7100 4TB NVMe SSD (non-rotational)", "os": sh("uname -sr"),

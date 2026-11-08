@@ -1,13 +1,13 @@
 {
  "labels": "VERIFIED = measured here; EXTRAPOLATED = model output, see assumptions",
  "not_yet_measured": [
-  "ingest run xlsx (xlsx)",
   "ingest run pdf20_img (PDF page images ON)",
   "ingest run pdf20_noimg (PDF page images OFF)",
   "ingest run pdfmix (PDF mix cuad+arxiv)",
   "CUAD scale curve",
   "MuSiQue distractor scaling"
  ],
+ "code_under_test": "baseline (pre-Step-1a): frozen worktree /home/pc/Desktop/Rajdeep_Dev/Local_Agent-baseline at commit 00b1032 (src unchanged vs main before scale-step1 merge)",
  "hardware_versions": {
   "label": "VERIFIED",
   "gpu": "AMD Radeon RX 9070 XT (16 GB VRAM) per rocm-smi",
@@ -1218,6 +1218,127 @@
      "a_s_per_chunk": -0.0008164737469713844,
      "b_s_per_chunk_per_existing_chunk": 4.2181892389629973e-07
     }
+   },
+   "xlsx": {
+    "label": "xlsx_33_normal_files",
+    "raw_MB": 6.2,
+    "files": 33,
+    "failed": 0,
+    "ingest_wall_s": 1541.1,
+    "peak_rss_MB": 5848,
+    "page_images": true,
+    "by_ext": {
+     "xlsx": {
+      "files": 33,
+      "failed": 0,
+      "bytes": 6218468,
+      "chunks": 87336,
+      "pages": 0,
+      "wall_s": 1536.26,
+      "other_s": 0.613,
+      "chunks_per_s_overall": 56.85,
+      "MB_per_s_overall": 0.004,
+      "chunks_per_GB_source": 14044617,
+      "embed_chunks_per_s": 95.7
+     }
+    },
+    "stage_seconds_by_ext": {
+     "-": {
+      "discovery": 0.005
+     },
+     "xlsx": {
+      "evidence_copy_hash": 0.096,
+      "parse": 15.785,
+      "chunk": 8.228,
+      "sqlite_chunks_write": 11.553,
+      "index_existing_check": 1.309,
+      "embed": 912.522,
+      "fts_write": 584.205,
+      "lance_write": 1.946
+     }
+    },
+    "ask_latency": [],
+    "disk": {
+     "data_dir_MB": 552.4,
+     "multiple_of_raw": 88.84,
+     "n_chunks": 87336,
+     "bytes_per_chunk": {
+      "sqlite_chunks_table": 562,
+      "sqlite_fts5": 630,
+      "sqlite_other_tables_indexes": 823,
+      "lancedb_total": 4239,
+      "lancedb_data_only": 4239,
+      "evidence_store_total": 71,
+      "chunk_text_raw": 203
+     },
+     "store_bytes": {
+      "sqlite": 175968256,
+      "fts5": 55054336,
+      "lancedb": 370257621,
+      "evidence_store": {
+       "originals_bytes": 6218468,
+       "originals_objects": 33,
+       "page_png_bytes": 0,
+       "page_png_objects": 0,
+       "other_object_bytes": 0,
+       "manifests_bytes": 4993,
+       "total_bytes": 6223461
+      },
+      "lance_fragments": 33,
+      "lance_versions": 33
+     }
+    },
+    "index_overhead_growth": [
+     {
+      "chunks_before": 0,
+      "index_write_s_per_chunk": 0.00154,
+      "fts_s_per_chunk": 0.0014
+     },
+     {
+      "chunks_before": 18857,
+      "index_write_s_per_chunk": 0.00354,
+      "fts_s_per_chunk": 0.00339
+     },
+     {
+      "chunks_before": 27063,
+      "index_write_s_per_chunk": 0.00488,
+      "fts_s_per_chunk": 0.00473
+     },
+     {
+      "chunks_before": 34842,
+      "index_write_s_per_chunk": 0.00617,
+      "fts_s_per_chunk": 0.00599
+     },
+     {
+      "chunks_before": 44105,
+      "index_write_s_per_chunk": 0.00764,
+      "fts_s_per_chunk": 0.00746
+     },
+     {
+      "chunks_before": 51794,
+      "index_write_s_per_chunk": 0.00853,
+      "fts_s_per_chunk": 0.00832
+     },
+     {
+      "chunks_before": 53279,
+      "index_write_s_per_chunk": 0.0098,
+      "fts_s_per_chunk": 0.00961
+     },
+     {
+      "chunks_before": 71863,
+      "index_write_s_per_chunk": 0.01239,
+      "fts_s_per_chunk": 0.0122
+     },
+     {
+      "chunks_before": 86925,
+      "index_write_s_per_chunk": 0.01374,
+      "fts_s_per_chunk": 0.01352
+     }
+    ],
+    "index_overhead_fit": {
+     "a_s_per_chunk": 0.0006159187150718573,
+     "b_s_per_chunk_per_existing_chunk": 1.5242501630136106e-07
+    }
    }
   }
  },
@@ -1231,68 +1352,68 @@
   ],
   "scenarios": {
    "100GB_M1_office_heavy_pdf_150KB_per_page": {
-    "chunks": 30013020,
-    "embed_hours": 146.6,
+    "chunks": 240682275,
+    "embed_hours": 1175.4,
     "parse_hours": 40.2,
-    "first_index_hours_low(no_N_growth)": 691.6,
-    "first_index_hours_high(linear_N_growth)": 53148.2,
-    "first_index_days_high": 2214.5
+    "first_index_hours_low(no_N_growth)": 5263.6,
+    "first_index_hours_high(linear_N_growth)": 3396490.6,
+    "first_index_days_high": 141520.4
    },
    "100GB_M1_office_heavy_pdf_20KB_per_page": {
-    "chunks": 30013020,
-    "embed_hours": 146.6,
+    "chunks": 240682275,
+    "embed_hours": 1175.4,
     "parse_hours": 40.2,
-    "first_index_hours_low(no_N_growth)": 691.6,
-    "first_index_hours_high(linear_N_growth)": 53148.2,
-    "first_index_days_high": 2214.5
+    "first_index_hours_low(no_N_growth)": 5263.6,
+    "first_index_hours_high(linear_N_growth)": 3396490.6,
+    "first_index_days_high": 141520.4
    },
    "100GB_M2_pdf_heavy_pdf_150KB_per_page": {
-    "chunks": 12505425,
-    "embed_hours": 61.1,
+    "chunks": 82728510,
+    "embed_hours": 404.0,
     "parse_hours": 16.8,
-    "first_index_hours_low(no_N_growth)": 288.2,
-    "first_index_hours_high(linear_N_growth)": 9318.3,
-    "first_index_days_high": 388.3
+    "first_index_hours_low(no_N_growth)": 1812.2,
+    "first_index_hours_high(linear_N_growth)": 401902.4,
+    "first_index_days_high": 16745.9
    },
    "100GB_M2_pdf_heavy_pdf_20KB_per_page": {
-    "chunks": 12505425,
-    "embed_hours": 61.1,
+    "chunks": 82728510,
+    "embed_hours": 404.0,
     "parse_hours": 16.8,
-    "first_index_hours_low(no_N_growth)": 288.2,
-    "first_index_hours_high(linear_N_growth)": 9318.3,
-    "first_index_days_high": 388.3
+    "first_index_hours_low(no_N_growth)": 1812.2,
+    "first_index_hours_high(linear_N_growth)": 401902.4,
+    "first_index_days_high": 16745.9
    },
    "500GB_M1_office_heavy_pdf_150KB_per_page": {
-    "chunks": 150065100,
-    "embed_hours": 732.9,
+    "chunks": 1203411375,
+    "embed_hours": 5876.9,
     "parse_hours": 201.0,
-    "first_index_hours_low(no_N_growth)": 3457.8,
-    "first_index_hours_high(linear_N_growth)": 1321203.9,
-    "first_index_days_high": 55050.2
+    "first_index_hours_low(no_N_growth)": 26318.0,
+    "first_index_hours_high(linear_N_growth)": 84857754.9,
+    "first_index_days_high": 3535739.8
    },
    "500GB_M1_office_heavy_pdf_20KB_per_page": {
-    "chunks": 150065100,
-    "embed_hours": 732.9,
+    "chunks": 1203411375,
+    "embed_hours": 5876.9,
     "parse_hours": 201.0,
-    "first_index_hours_low(no_N_growth)": 3457.8,
-    "first_index_hours_high(linear_N_growth)": 1321203.9,
-    "first_index_days_high": 55050.2
+    "first_index_hours_low(no_N_growth)": 26318.0,
+    "first_index_hours_high(linear_N_growth)": 84857754.9,
+    "first_index_days_high": 3535739.8
    },
    "500GB_M2_pdf_heavy_pdf_150KB_per_page": {
-    "chunks": 62527125,
-    "embed_hours": 305.4,
+    "chunks": 413642550,
+    "embed_hours": 2020.1,
     "parse_hours": 83.8,
-    "first_index_hours_low(no_N_growth)": 1440.8,
-    "first_index_hours_high(linear_N_growth)": 229831.5,
-    "first_index_days_high": 9576.3
+    "first_index_hours_low(no_N_growth)": 9060.8,
+    "first_index_hours_high(linear_N_growth)": 10028766.1,
+    "first_index_days_high": 417865.3
    },
    "500GB_M2_pdf_heavy_pdf_20KB_per_page": {
-    "chunks": 62527125,
-    "embed_hours": 305.4,
+    "chunks": 413642550,
+    "embed_hours": 2020.1,
     "parse_hours": 83.8,
-    "first_index_hours_low(no_N_growth)": 1440.8,
-    "first_index_hours_high(linear_N_growth)": 229831.5,
-    "first_index_days_high": 9576.3
+    "first_index_hours_low(no_N_growth)": 9060.8,
+    "first_index_hours_high(linear_N_growth)": 10028766.1,
+    "first_index_days_high": 417865.3
    }
   },
   "measured_inputs": {
@@ -1309,5 +1430,14 @@
    "pages_per_s_parse": null,
    "chunks_per_page": null
   }
+ },
+ "findings": {
+  "label": "VERIFIED unless stated; see numbers in the sections above",
+  "hazard_1_flat_vector_scan_plus_IN_list": "CONFIRMED. No ANN index; LanceDB flat scan with the all-READY-ids IN prefilter costs ~2.4 us/row p50 (1.14 s at 500k rows, 4.7 s at 2M, 9.7 s at 4M, 19.6 s at 8M rows); the IN filter adds ~60-70% over an unfiltered flat scan. 1 s crossed at ~436k chunks (~14.5k files at 30 chunks/file), 5 s at ~2.1M chunks (~71k files). With IVF_PQ (nprobes 20, refine 10) p50 is 0.1-0.5 s at 2M-8M rows (recall@30 0.83-1.0 on clustered synthetic data), but the IN prefilter itself still scales linearly with rows. SQLite eligible-id load and IN string build are negligible (<0.05 s at 67k versions).",
+  "hazard_2_sequential_ingest": "CONFIRMED, and worse than predicted: per-file index-write cost grows with library size. On 3,495 docx/pptx files (90k chunks): FTS5 write per chunk rose ~11x (0.002 s -> ~0.022 s), existing-id checks ~13x, Lance write ~8x; end-to-end per-file wall rose from 0.62 s to ~1.3 s. Cause (code reading + timing): fts_chunks.chunk_id is an UNINDEXED FTS5 column so every DELETE-before-INSERT and every 'chunk_id IN (...)' existence check is a full scan; Lance merge_insert/existence checks scan chunk_id too. Total index cost is therefore quadratic in library size. Embedding itself ran at ~57-106 chunks/s end-to-end.",
+  "hazard_3_docling_and_page_images": "CONFIRMED. Docling runs on CPU only here (torch cu130 build, cuda unavailable): 0.37 pages/s on CUAD contracts (264 pages in 707 s, scanned/OCR-heavy). Page PNG store: ~300 KB/page (79 MB for 264 pages from 1.9 MB of PDFs = 34x the raw PDF bytes).",
+  "hazard_4_triple_text_storage": "CONFIRMED. Chunk text is stored in SQLite chunks, again in FTS5 (fts_chunks_content + fts_chunks_data), and in LanceDB; plus Lance manifests: with one fragment/version per file the _versions directory was 527 MB vs 426 MB of data for 3,495 files (manifest growth is superlinear).",
+  "hazard_5_no_scale_tests": "n/a (the scripts in this directory are the first).",
+  "xlsx_heavy_file_observation": "VERIFIED (aborted run): one generated 4.6 MB xlsx (~20k rows x 5 sheets) produced 70,180 chunks (15 chunks per KB, ~200 B/chunk); after 25+ min the file was still embedding (qwen3-embedding batch 32, sharing the GPU with another agent's eval) and was killed; 29 smaller files before it had finished. Spreadsheets therefore dominate chunk counts: ~15,000 chunks per MB for dense tabular xlsx."
  }
 }
