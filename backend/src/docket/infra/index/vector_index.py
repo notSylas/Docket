@@ -98,6 +98,11 @@ class LanceIndexWriter:
         `QueryService`) that shouldn't reach into the `_open_table` internal."""
         return self._open_table()
 
+    def maintain(self, **kwargs) -> dict | None:
+        """Post-ingest ANN-index build / optimize / compaction (see
+        `maintain_table`). Caller must hold the writer lock."""
+        return _writer_maintain(self, **kwargs)
+
     def vector_dimension(self) -> int | None:
         """Dimension of the stored vectors, or `None` if the table doesn't
         exist yet."""
@@ -175,3 +180,127 @@ class LanceIndexWriter:
             return set()
         rows = table.search().where(f"source_id = {_sql_quote(source_id)}").to_list()
         return {row["chunk_id"] for row in rows}
+
+
+# --- ANN index + compaction -------------------------------------------------
+
+
+def pq_sub_vectors(dim: int) -> int:
+    """PQ sub-vector count: dim/8 when divisible (1024 -> 128), otherwise the
+    divisor of `dim` giving 4..16-wide sub-vectors closest to 8 (PQ requires
+    `dim % num_sub_vectors == 0`)."""
+    if dim % 8 == 0:
+        return dim // 8
+    candidates = [d for d in range(1, dim + 1) if dim % d == 0 and 4 <= dim // d <= 16]
+    if candidates:
+        return min(candidates, key=lambda d: abs(dim // d - 8))
+    return 1
+
+
+def ann_num_partitions(rows: int) -> int:
+    """About sqrt(rows), kept in a sane range for IVF."""
+    return max(1, min(8192, int(round(rows**0.5))))
+
+
+def vector_index_stats(table) -> dict | None:
+    """State of the vector ANN index on `table`: None when it is flat."""
+    for cfg in table.list_indices():
+        if list(cfg.columns) == [_VECTOR_COLUMN]:
+            stats = table.index_stats(cfg.name)
+            return {
+                "name": cfg.name,
+                "index_type": stats.index_type,
+                "indexed_rows": stats.num_indexed_rows,
+                "unindexed_rows": stats.num_unindexed_rows,
+                "size_bytes": getattr(cfg, "size_bytes", None),
+            }
+    return None
+
+
+def _build_ann_index(table, rows: int, dim: int) -> dict:
+    from lancedb.index import IvfPq
+
+    params = {
+        "index_type": "IVF_PQ",
+        "metric": "l2",  # the table has always been searched with LanceDB's default (l2)
+        "num_partitions": ann_num_partitions(rows),
+        "num_sub_vectors": pq_sub_vectors(dim),
+        "rows_at_build": rows,
+    }
+    table.create_index(
+        _VECTOR_COLUMN,
+        config=IvfPq(
+            distance_type="l2",
+            num_partitions=params["num_partitions"],
+            num_sub_vectors=params["num_sub_vectors"],
+        ),
+        replace=True,
+    )
+    return params
+
+
+def maintain_table(
+    table,
+    *,
+    min_rows: int,
+    compact: bool,
+    keep_hours: int,
+    previous_params: dict | None = None,
+) -> dict:
+    """Post-ingest maintenance of a vector table. Returns a report:
+    ``{"rows", "action", "ann": params-or-None, "compacted": bool}``.
+
+    - rows < `min_rows` and no index: nothing but compaction (flat scan).
+    - rows >= `min_rows` and no index: build IVF_PQ.
+    - index exists and the table has since grown >2x past the build size:
+      rebuild it (partition count / PQ codebooks are stale).
+    - otherwise `optimize()` folds unindexed rows into the index (until then
+      they are still found: LanceDB flat-scans the unindexed tail and merges).
+    Compaction and old-version cleanup (keeping `keep_hours` of history) run
+    via the same `optimize()` call when `compact` is set.
+    """
+    from datetime import timedelta
+
+    report: dict = {"rows": 0, "action": "none", "ann": previous_params, "compacted": False}
+    rows = table.count_rows()
+    report["rows"] = rows
+    stats = vector_index_stats(table)
+    dim = table.schema.field(_VECTOR_COLUMN).type.list_size
+    if stats is None and rows >= min_rows and rows > 0:
+        report["ann"] = _build_ann_index(table, rows, dim)
+        report["action"] = "built"
+    elif stats is not None:
+        built_at = (previous_params or {}).get("rows_at_build") or stats["indexed_rows"]
+        if rows > 2 * max(built_at, 1):
+            report["ann"] = _build_ann_index(table, rows, dim)
+            report["action"] = "rebuilt"
+        elif stats["unindexed_rows"] > 0:
+            report["action"] = "optimized"
+    if compact or report["action"] == "optimized":
+        table.optimize(cleanup_older_than=timedelta(hours=keep_hours))
+        report["compacted"] = True
+    return report
+
+
+def _writer_maintain(self, *, manifest_path=None, min_rows=None, compact=None, keep_hours=None):
+    from docket.infra.index import tuning
+    from docket.infra.index.manifest import read_manifest, record_ann_index
+
+    table = self._open_table()
+    if table is None:
+        return None
+    previous = None
+    if manifest_path is not None:
+        manifest = read_manifest(manifest_path)
+        previous = manifest.ann_index if manifest else None
+    report = maintain_table(
+        table,
+        min_rows=tuning.ann_min_rows() if min_rows is None else min_rows,
+        compact=tuning.compact_after_ingest() if compact is None else compact,
+        keep_hours=tuning.compact_keep_hours() if keep_hours is None else keep_hours,
+        previous_params=previous,
+    )
+    if manifest_path is not None and report["ann"] != previous:
+        record_ann_index(manifest_path, report["ann"])
+    return report
+
