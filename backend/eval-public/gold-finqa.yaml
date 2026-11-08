@@ -10,7 +10,7 @@ questions:
   question: what is the total fair value of non-vested shares as of september 26 , 2009?
   answerable: true
   must_contain:
-  - re:(?<![\d.])60829\.20*(?!\d|\.\d)
+  - re:(?<![\d.])60829(?:\.0+)?(?!\d|\.\d)|(?<![\d.])60829\.20*(?!\d|\.\d)
   gold_spans:
   - 'non-vested at september 26, 2009 number of shares: 2770'
   - non-vested at september 26, 2009 | 2,770 | $21.96
@@ -26,7 +26,7 @@ questions:
   question: what is the total fair value of non-vested shares as of september 27 , 2008?
   answerable: true
   must_contain:
-  - re:(?<![\d.])45627\.030*(?!\d|\.\d)
+  - re:(?<![\d.])45627(?:\.0+)?(?!\d|\.\d)|(?<![\d.])45627\.030*(?!\d|\.\d)
   gold_spans:
   - 'non-vested at september 27, 2008 number of shares: 1461'
   - 'f shares: 1461 weighted-average grant-date fair value: 31.23'
@@ -42,7 +42,7 @@ questions:
   question: what was the ratio of the 5.000% ( 5.000 % ) to 6.200% ( 6.200 % ) the senior notes in march 2010
   answerable: true
   must_contain:
-  - re:(?<![\d.])1\.30*(?!\d|\.\d)|(?<![\d.])1\.30770*(?!\d|\.\d)|(?<![\d.])1\.3080*(?!\d|\.\d)|(?<![\d.])1\.310*(?!\d|\.\d)
+  - re:(?<![\d.])130\.70*(?!\d|\.\d)|(?<![\d.])130\.760*(?!\d|\.\d)|(?<![\d.])130\.7690*(?!\d|\.\d)|(?<![\d.])130\.770*(?!\d|\.\d)|(?<![\d.])130\.80*(?!\d|\.\d)|(?<![\d.])1\.30*(?!\d|\.\d)|(?<![\d.])1\.307690*(?!\d|\.\d)|(?<![\d.])1\.30770*(?!\d|\.\d)|(?<![\d.])1\.3080*(?!\d|\.\d)|(?<![\d.])1\.310*(?!\d|\.\d)
   gold_spans:
   - n march 2010 , we issued $ 850.0 million of 5.000% ( 5.000 %
   - enior notes due 2020 and $ 650.0 million of 6.200% ( 6.200 %
@@ -58,7 +58,7 @@ questions:
   question: what was the ratio of the remaining discount of the notes due in 2017 to 2016
   answerable: true
   must_contain:
-  - re:(?<![\d.])1\.330*(?!\d|\.\d)|(?<![\d.])1\.33490*(?!\d|\.\d)|(?<![\d.])1\.3350*(?!\d|\.\d)
+  - re:(?<![\d.])133\.40*(?!\d|\.\d)|(?<![\d.])133\.480*(?!\d|\.\d)|(?<![\d.])133\.4880*(?!\d|\.\d)|(?<![\d.])133\.490*(?!\d|\.\d)|(?<![\d.])133\.50*(?!\d|\.\d)|(?<![\d.])1\.30*(?!\d|\.\d)|(?<![\d.])1\.330*(?!\d|\.\d)|(?<![\d.])1\.334880*(?!\d|\.\d)|(?<![\d.])1\.33490*(?!\d|\.\d)|(?<![\d.])1\.3350*(?!\d|\.\d)
   gold_spans:
   - $750.0 million 6.875% senior notes due june 2017 | 86.1
   - $600.0 million 7.125% senior notes due may 2016 | 64.5
@@ -75,7 +75,7 @@ questions:
     gce during 2013 were non-u.s . dollar-denominated?
   answerable: true
   must_contain:
-  - re:(?<![\d.])0\.250*(?!\d|\.\d)|(?<![\d.])0\.25090*(?!\d|\.\d)|(?<![\d.])0\.2510*(?!\d|\.\d)|(?<![\d.])25(?:\.0+)?(?!\d|\.\d)|(?<![\d.])25\.090*(?!\d|\.\d)|(?<![\d.])25\.10*(?!\d|\.\d)
+  - re:(?<![\d.])(?:\.0+)?(?!\d|\.\d)|(?<![\d.])0\.250*(?!\d|\.\d)|(?<![\d.])0\.2510*(?!\d|\.\d)|(?<![\d.])0\.30*(?!\d|\.\d)|(?<![\d.])25(?:\.0+)?(?!\d|\.\d)|(?<![\d.])25\.090*(?!\d|\.\d)|(?<![\d.])25\.10*(?!\d|\.\d)
   gold_spans:
   - 'dollar-denominated average for theyear ended december: 45826'
   - 'total average for theyear ended december: 182650'
@@ -92,7 +92,7 @@ questions:
     gce during 2012 were non-u.s . dollar-denominated?
   answerable: true
   must_contain:
-  - re:(?<![\d.])0\.270*(?!\d|\.\d)|(?<![\d.])0\.2730*(?!\d|\.\d)|(?<![\d.])27(?:\.0+)?(?!\d|\.\d)|(?<![\d.])27\.30*(?!\d|\.\d)
+  - re:(?<![\d.])(?:\.0+)?(?!\d|\.\d)|(?<![\d.])0\.270*(?!\d|\.\d)|(?<![\d.])0\.2730*(?!\d|\.\d)|(?<![\d.])0\.30*(?!\d|\.\d)|(?<![\d.])27(?:\.0+)?(?!\d|\.\d)|(?<![\d.])27\.30*(?!\d|\.\d)|(?<![\d.])27\.3010*(?!\d|\.\d)
   gold_spans:
   - 'ed average for theyear ended december: 45826 column c: 46984'
   - ' average for theyear ended december: 182650 column c: 172095'
@@ -125,7 +125,7 @@ questions:
     tax rate if recognized?
   answerable: true
   must_contain:
-  - re:(?<![\d.])0\.88580*(?!\d|\.\d)|(?<![\d.])0\.8860*(?!\d|\.\d)|(?<![\d.])88\.50*(?!\d|\.\d)|(?<![\d.])88\.5750*(?!\d|\.\d)|(?<![\d.])88\.580*(?!\d|\.\d)|(?<![\d.])88\.60*(?!\d|\.\d)
+  - re:(?<![\d.])(?:\.0+)?(?!\d|\.\d)|(?<![\d.])0\.80*(?!\d|\.\d)|(?<![\d.])0\.88580*(?!\d|\.\d)|(?<![\d.])0\.8860*(?!\d|\.\d)|(?<![\d.])0\.890*(?!\d|\.\d)|(?<![\d.])0\.90*(?!\d|\.\d)|(?<![\d.])1(?:\.0+)?(?!\d|\.\d)|(?<![\d.])88(?:\.0+)?(?!\d|\.\d)|(?<![\d.])88\.50*(?!\d|\.\d)|(?<![\d.])88\.5750*(?!\d|\.\d)|(?<![\d.])88\.580*(?!\d|\.\d)|(?<![\d.])88\.60*(?!\d|\.\d)|(?<![\d.])89(?:\.0+)?(?!\d|\.\d)
   gold_spans:
   - december 31 , 2008 , is $ 131.8 of tax benefits that , if r
   - balance at end of period | $148.8
@@ -142,7 +142,7 @@ questions:
     201d in the table above ) had a loan-to-value ratio greater than 90%.?
   answerable: true
   must_contain:
-  - re:(?<![\d.])0\.18750*(?!\d|\.\d)|(?<![\d.])0\.1880*(?!\d|\.\d)|(?<![\d.])18\.70*(?!\d|\.\d)|(?<![\d.])18\.750*(?!\d|\.\d)|(?<![\d.])18\.80*(?!\d|\.\d)
+  - re:(?<![\d.])(?:\.0+)?(?!\d|\.\d)|(?<![\d.])0\.10*(?!\d|\.\d)|(?<![\d.])0\.18750*(?!\d|\.\d)|(?<![\d.])0\.1880*(?!\d|\.\d)|(?<![\d.])0\.190*(?!\d|\.\d)|(?<![\d.])0\.20*(?!\d|\.\d)|(?<![\d.])18(?:\.0+)?(?!\d|\.\d)|(?<![\d.])18\.70*(?!\d|\.\d)|(?<![\d.])18\.750*(?!\d|\.\d)|(?<![\d.])18\.80*(?!\d|\.\d)|(?<![\d.])19(?:\.0+)?(?!\d|\.\d)
   gold_spans:
   - at december 31 , 2007 , $ 2.7 billion of the $ 14.4 billion
   - 07 , $ 2.7 billion of the $ 14.4 billion of home equity loan
@@ -159,7 +159,7 @@ questions:
     of long-term debt obligations due subsequent to december 31 , 2016?
   answerable: true
   must_contain:
-  - re:(?<![\d.])113(?:\.0+)?(?!\d|\.\d)|(?<![\d.])113\.60*(?!\d|\.\d)|(?<![\d.])114(?:\.0+)?(?!\d|\.\d)|(?<![\d.])1\.1360*(?!\d|\.\d)|(?<![\d.])1\.140*(?!\d|\.\d)
+  - re:(?<![\d.])1(?:\.0+)?(?!\d|\.\d)|(?<![\d.])113(?:\.0+)?(?!\d|\.\d)|(?<![\d.])113\.5990*(?!\d|\.\d)|(?<![\d.])113\.60*(?!\d|\.\d)|(?<![\d.])114(?:\.0+)?(?!\d|\.\d)|(?<![\d.])1\.10*(?!\d|\.\d)|(?<![\d.])1\.1360*(?!\d|\.\d)|(?<![\d.])1\.140*(?!\d|\.\d)
   gold_spans:
   - n june 2015 , we borrowed $ 3500 under the term loan facilit
   - cember 31 , 2016 , we had $ 3081 outstanding on the term loa
@@ -170,28 +170,12 @@ questions:
   - ALXN-2016-page-153/table.xlsx
   formula_dependent: false
   split: dev
-- id: finqa-BLL-2006-page-67-pdf-1
-  type: numeric
-  question: current assets were what percent of net assets acquired for the can and alcan transactions?
-  answerable: true
-  must_contain:
-  - re:(?<![\d.])25970(?:\.0+)?(?!\d|\.\d)|(?<![\d.])259\.70*(?!\d|\.\d)|(?<![\d.])32\.20*(?!\d|\.\d)
-  gold_spans:
-  - primarily inventories and receivables | 218.8 | 40.7 | 259.5
-  - 'n (metal food & household products packaging, americas): 0.2'
-  reviewed: true
-  origin: FinQA test BLL/2006/page_67.pdf-1; program add(259.5, 0.2); dataset answer 32.2%; eval-public/build_finqa_slice.py
-  source_documents:
-  - BLL-2006-page-67/page.docx
-  - BLL-2006-page-67/table.xlsx
-  formula_dependent: false
-  split: dev
 - id: finqa-BLL-2006-page-67-pdf-2
   type: numeric
   question: hard assets are what percent of net assets acquired for the can and alcan acquisitions?
   answerable: true
   must_contain:
-  - re:(?<![\d.])0\.2980*(?!\d|\.\d)|(?<![\d.])0\.29840*(?!\d|\.\d)|(?<![\d.])29\.80*(?!\d|\.\d)|(?<![\d.])29\.840*(?!\d|\.\d)|(?<![\d.])29\.8410*(?!\d|\.\d)
+  - re:(?<![\d.])(?:\.0+)?(?!\d|\.\d)|(?<![\d.])0\.20*(?!\d|\.\d)|(?<![\d.])0\.2980*(?!\d|\.\d)|(?<![\d.])0\.29840*(?!\d|\.\d)|(?<![\d.])0\.30*(?!\d|\.\d)|(?<![\d.])29(?:\.0+)?(?!\d|\.\d)|(?<![\d.])29\.80*(?!\d|\.\d)|(?<![\d.])29\.840*(?!\d|\.\d)|(?<![\d.])29\.8410*(?!\d|\.\d)|(?<![\d.])3(?:\.0+)?(?!\d|\.\d)
   gold_spans:
   - '165.7 alcan (plastic packaging, americas): 73.8 total: 239.5'
   - net assets acquired | $617.9 | $184.7 | $802.6
@@ -207,7 +191,7 @@ questions:
   question: what was the percentage change in the in pretax losses related to foreign exchange transactions in 2007
   answerable: true
   must_contain:
-  - re:(?<![\d.])0\.41670*(?!\d|\.\d)|(?<![\d.])0\.4170*(?!\d|\.\d)|(?<![\d.])41\.60*(?!\d|\.\d)|(?<![\d.])41\.6670*(?!\d|\.\d)|(?<![\d.])41\.670*(?!\d|\.\d)|(?<![\d.])41\.70*(?!\d|\.\d)
+  - re:(?<![\d.])(?:\.0+)?(?!\d|\.\d)|(?<![\d.])0\.40*(?!\d|\.\d)|(?<![\d.])0\.41670*(?!\d|\.\d)|(?<![\d.])0\.4170*(?!\d|\.\d)|(?<![\d.])0\.420*(?!\d|\.\d)|(?<![\d.])41(?:\.0+)?(?!\d|\.\d)|(?<![\d.])41\.60*(?!\d|\.\d)|(?<![\d.])41\.6670*(?!\d|\.\d)|(?<![\d.])41\.670*(?!\d|\.\d)|(?<![\d.])41\.70*(?!\d|\.\d)|(?<![\d.])42(?:\.0+)?(?!\d|\.\d)
   gold_spans:
   - ulted in pretax losses of $ 1.7 million in 2007 and $ 1.2 mi
   - $ 1.7 million in 2007 and $ 1.2 million in 2006 , and a pret
@@ -225,7 +209,7 @@ questions:
     from 2006 to 2007?
   answerable: true
   must_contain:
-  - re:(?<![\d.])0\.02980*(?!\d|\.\d)|(?<![\d.])0\.030*(?!\d|\.\d)|(?<![\d.])2\.90*(?!\d|\.\d)|(?<![\d.])2\.9760*(?!\d|\.\d)|(?<![\d.])2\.980*(?!\d|\.\d)|(?<![\d.])3(?:\.0+)?(?!\d|\.\d)
+  - re:(?<![\d.])(?:\.0+)?(?!\d|\.\d)|(?<![\d.])0(?:\.0+)?(?!\d|\.\d)|(?<![\d.])0\.02980*(?!\d|\.\d)|(?<![\d.])0\.030*(?!\d|\.\d)|(?<![\d.])2(?:\.0+)?(?!\d|\.\d)|(?<![\d.])2\.90*(?!\d|\.\d)|(?<![\d.])2\.9760*(?!\d|\.\d)|(?<![\d.])2\.980*(?!\d|\.\d)|(?<![\d.])3(?:\.0+)?(?!\d|\.\d)
   gold_spans:
   - solidated subsidiaries of $ 17.3 million as of december 29 ,
   - december 29 , 2007 , and $ 16.8 million as of december 30 ,
@@ -243,7 +227,7 @@ questions:
     of the operating leases in relation to the total obligations?
   answerable: true
   must_contain:
-  - re:(?<![\d.])0\.85890*(?!\d|\.\d)|(?<![\d.])0\.858910*(?!\d|\.\d)|(?<![\d.])85\.890*(?!\d|\.\d)|(?<![\d.])85\.8910*(?!\d|\.\d)
+  - re:(?<![\d.])0\.80*(?!\d|\.\d)|(?<![\d.])0\.850*(?!\d|\.\d)|(?<![\d.])0\.85890*(?!\d|\.\d)|(?<![\d.])0\.858910*(?!\d|\.\d)|(?<![\d.])0\.8590*(?!\d|\.\d)|(?<![\d.])0\.860*(?!\d|\.\d)|(?<![\d.])0\.90*(?!\d|\.\d)|(?<![\d.])85\.80*(?!\d|\.\d)|(?<![\d.])85\.890*(?!\d|\.\d)|(?<![\d.])85\.8910*(?!\d|\.\d)|(?<![\d.])85\.90*(?!\d|\.\d)
   gold_spans:
   - 'payments due by period: 44048 column c: 7957 column d: 13789'
   - 'ayments due by period: 95519 column c: 55923 column d: 16054'
@@ -259,7 +243,7 @@ questions:
   question: what is the growth rate in the net income of bermuda subsidiaries from 2007 to 2008?
   answerable: true
   must_contain:
-  - re:(?<![\d.])0\.5540*(?!\d|\.\d)|(?<![\d.])0\.55440*(?!\d|\.\d)|(?<![\d.])55\.40*(?!\d|\.\d)|(?<![\d.])55\.440*(?!\d|\.\d)
+  - re:(?<![\d.])(?:\.0+)?(?!\d|\.\d)|(?<![\d.])0\.50*(?!\d|\.\d)|(?<![\d.])0\.550*(?!\d|\.\d)|(?<![\d.])0\.5540*(?!\d|\.\d)|(?<![\d.])0\.55440*(?!\d|\.\d)|(?<![\d.])0\.60*(?!\d|\.\d)|(?<![\d.])1(?:\.0+)?(?!\d|\.\d)|(?<![\d.])55(?:\.0+)?(?!\d|\.\d)|(?<![\d.])55\.40*(?!\d|\.\d)|(?<![\d.])55\.440*(?!\d|\.\d)
   gold_spans:
   - statutory net income | $684
   - 'net income bermuda subsidiaries: 684 u.s. subsidiaries: 1535'
@@ -276,7 +260,7 @@ questions:
   question: what is the net income-to-capital ratio for bermuda subsidiaries in 2008?
   answerable: true
   must_contain:
-  - re:(?<![\d.])0\.09770*(?!\d|\.\d)|(?<![\d.])0\.0980*(?!\d|\.\d)|(?<![\d.])9\.70*(?!\d|\.\d)|(?<![\d.])9\.770*(?!\d|\.\d)|(?<![\d.])9\.80*(?!\d|\.\d)
+  - re:(?<![\d.])(?:\.0+)?(?!\d|\.\d)|(?<![\d.])0(?:\.0+)?(?!\d|\.\d)|(?<![\d.])0\.09770*(?!\d|\.\d)|(?<![\d.])0\.0980*(?!\d|\.\d)|(?<![\d.])0\.10*(?!\d|\.\d)|(?<![\d.])1(?:\.0+)?(?!\d|\.\d)|(?<![\d.])9(?:\.0+)?(?!\d|\.\d)|(?<![\d.])9\.70*(?!\d|\.\d)|(?<![\d.])9\.770*(?!\d|\.\d)|(?<![\d.])9\.80*(?!\d|\.\d)
   gold_spans:
   - statutory net income | $684
   - 'statutory capital and surplus bermuda subsidiaries: 7001'
@@ -292,7 +276,7 @@ questions:
   question: what is the net income margin in the q1 of 2014?
   answerable: true
   must_contain:
-  - re:(?<![\d.])0\.0560*(?!\d|\.\d)|(?<![\d.])0\.05650*(?!\d|\.\d)|(?<![\d.])5\.60*(?!\d|\.\d)|(?<![\d.])5\.6460*(?!\d|\.\d)|(?<![\d.])5\.650*(?!\d|\.\d)
+  - re:(?<![\d.])(?:\.0+)?(?!\d|\.\d)|(?<![\d.])0(?:\.0+)?(?!\d|\.\d)|(?<![\d.])0\.0560*(?!\d|\.\d)|(?<![\d.])0\.05650*(?!\d|\.\d)|(?<![\d.])0\.060*(?!\d|\.\d)|(?<![\d.])0\.10*(?!\d|\.\d)|(?<![\d.])5(?:\.0+)?(?!\d|\.\d)|(?<![\d.])5\.60*(?!\d|\.\d)|(?<![\d.])5\.6460*(?!\d|\.\d)|(?<![\d.])5\.650*(?!\d|\.\d)|(?<![\d.])6(?:\.0+)?(?!\d|\.\d)
   gold_spans:
   - net earnings (loss) | 90
   - 'ales and service revenues year ended december 31, 2014: 1594'
@@ -308,7 +292,7 @@ questions:
   question: what is the net income margin in the q3 of 2014?
   answerable: true
   must_contain:
-  - re:(?<![\d.])0\.05590*(?!\d|\.\d)|(?<![\d.])0\.0560*(?!\d|\.\d)|(?<![\d.])5\.50*(?!\d|\.\d)|(?<![\d.])5\.590*(?!\d|\.\d)|(?<![\d.])5\.5910*(?!\d|\.\d)|(?<![\d.])5\.60*(?!\d|\.\d)
+  - re:(?<![\d.])(?:\.0+)?(?!\d|\.\d)|(?<![\d.])0(?:\.0+)?(?!\d|\.\d)|(?<![\d.])0\.05590*(?!\d|\.\d)|(?<![\d.])0\.0560*(?!\d|\.\d)|(?<![\d.])0\.060*(?!\d|\.\d)|(?<![\d.])0\.10*(?!\d|\.\d)|(?<![\d.])5(?:\.0+)?(?!\d|\.\d)|(?<![\d.])5\.50*(?!\d|\.\d)|(?<![\d.])5\.590*(?!\d|\.\d)|(?<![\d.])5\.5910*(?!\d|\.\d)|(?<![\d.])5\.60*(?!\d|\.\d)|(?<![\d.])6(?:\.0+)?(?!\d|\.\d)
   gold_spans:
   - net earnings (loss) | 90 | 100 | 96
   - ' ended december 31, 2014: 1594 column c: 1719 column d: 1717'
@@ -324,7 +308,7 @@ questions:
   question: in 2017 what was the ratio of the the cme group inc . stock perfomamce to the s&p
   answerable: true
   must_contain:
-  - re:(?<![\d.])1\.70*(?!\d|\.\d)|(?<![\d.])1\.7790*(?!\d|\.\d)|(?<![\d.])1\.780*(?!\d|\.\d)|(?<![\d.])1\.80*(?!\d|\.\d)
+  - re:(?<![\d.])1(?:\.0+)?(?!\d|\.\d)|(?<![\d.])1\.70*(?!\d|\.\d)|(?<![\d.])1\.7790*(?!\d|\.\d)|(?<![\d.])1\.77920*(?!\d|\.\d)|(?<![\d.])1\.780*(?!\d|\.\d)|(?<![\d.])1\.80*(?!\d|\.\d)|(?<![\d.])2(?:\.0+)?(?!\d|\.\d)
   gold_spans:
   - ': 164.01 2014: 194.06 2015: 208.95 2016: 279.85 2017: 370.32'
   - ': 132.39 2014: 150.51 2015: 152.59 2016: 170.84 2017: 208.14'
@@ -340,7 +324,7 @@ questions:
   question: what portion of the total entergy employees is represented by unions?
   answerable: true
   must_contain:
-  - re:(?<![\d.])0\.33170*(?!\d|\.\d)|(?<![\d.])0\.3320*(?!\d|\.\d)|(?<![\d.])33\.10*(?!\d|\.\d)|(?<![\d.])33\.1690*(?!\d|\.\d)|(?<![\d.])33\.170*(?!\d|\.\d)|(?<![\d.])33\.20*(?!\d|\.\d)
+  - re:(?<![\d.])(?:\.0+)?(?!\d|\.\d)|(?<![\d.])0\.30*(?!\d|\.\d)|(?<![\d.])0\.330*(?!\d|\.\d)|(?<![\d.])0\.33170*(?!\d|\.\d)|(?<![\d.])0\.3320*(?!\d|\.\d)|(?<![\d.])33(?:\.0+)?(?!\d|\.\d)|(?<![\d.])33\.10*(?!\d|\.\d)|(?<![\d.])33\.1690*(?!\d|\.\d)|(?<![\d.])33\.170*(?!\d|\.\d)|(?<![\d.])33\.20*(?!\d|\.\d)
   gold_spans:
   - approximately 4900 employees are represented by the internat
   - 'total entergy 1516: 14773'
@@ -356,7 +340,7 @@ questions:
   question: what portion of the total entergy staff is employed at entergy operations?
   answerable: true
   must_contain:
-  - re:(?<![\d.])0\.1960*(?!\d|\.\d)|(?<![\d.])0\.19640*(?!\d|\.\d)|(?<![\d.])19\.60*(?!\d|\.\d)|(?<![\d.])19\.640*(?!\d|\.\d)|(?<![\d.])19\.6440*(?!\d|\.\d)
+  - re:(?<![\d.])(?:\.0+)?(?!\d|\.\d)|(?<![\d.])0\.10*(?!\d|\.\d)|(?<![\d.])0\.1960*(?!\d|\.\d)|(?<![\d.])0\.19640*(?!\d|\.\d)|(?<![\d.])0\.20*(?!\d|\.\d)|(?<![\d.])19(?:\.0+)?(?!\d|\.\d)|(?<![\d.])19\.60*(?!\d|\.\d)|(?<![\d.])19\.640*(?!\d|\.\d)|(?<![\d.])19\.6440*(?!\d|\.\d)|(?<![\d.])2(?:\.0+)?(?!\d|\.\d)
   gold_spans:
   - 'entergy operations 1516: 2902'
   - 'total entergy 1516: 14773'
@@ -405,7 +389,7 @@ questions:
   question: what was the percentage decline in the operating loss from 2007 to 2008
   answerable: true
   must_contain:
-  - re:(?<![\d.])0\.8330*(?!\d|\.\d)|(?<![\d.])0\.83330*(?!\d|\.\d)|(?<![\d.])83\.30*(?!\d|\.\d)|(?<![\d.])83\.330*(?!\d|\.\d)|(?<![\d.])83\.3330*(?!\d|\.\d)
+  - re:(?<![\d.])(?:\.0+)?(?!\d|\.\d)|(?<![\d.])0\.80*(?!\d|\.\d)|(?<![\d.])0\.830*(?!\d|\.\d)|(?<![\d.])0\.8330*(?!\d|\.\d)|(?<![\d.])0\.83330*(?!\d|\.\d)|(?<![\d.])1(?:\.0+)?(?!\d|\.\d)|(?<![\d.])83(?:\.0+)?(?!\d|\.\d)|(?<![\d.])83\.30*(?!\d|\.\d)|(?<![\d.])83\.330*(?!\d|\.\d)|(?<![\d.])83\.3330*(?!\d|\.\d)
   gold_spans:
   - 8 , compared to an operating loss of $ 1.2 billion in 2007 .
   - rred an operating loss of $ 2.2 billion in 2008 , compared t
@@ -422,7 +406,7 @@ questions:
   question: in 2006 what was the percent of the operating earnings to the segment net sales
   answerable: true
   must_contain:
-  - re:(?<![\d.])0\.14170*(?!\d|\.\d)|(?<![\d.])0\.1420*(?!\d|\.\d)|(?<![\d.])14\.10*(?!\d|\.\d)|(?<![\d.])14\.1670*(?!\d|\.\d)|(?<![\d.])14\.170*(?!\d|\.\d)|(?<![\d.])14\.20*(?!\d|\.\d)
+  - re:(?<![\d.])(?:\.0+)?(?!\d|\.\d)|(?<![\d.])0\.10*(?!\d|\.\d)|(?<![\d.])0\.140*(?!\d|\.\d)|(?<![\d.])0\.14170*(?!\d|\.\d)|(?<![\d.])0\.1420*(?!\d|\.\d)|(?<![\d.])14(?:\.0+)?(?!\d|\.\d)|(?<![\d.])14\.10*(?!\d|\.\d)|(?<![\d.])14\.1670*(?!\d|\.\d)|(?<![\d.])14\.170*(?!\d|\.\d)|(?<![\d.])14\.20*(?!\d|\.\d)
   gold_spans:
   - 'er 31</i>: -2199 <i>percent change</i>: -1201 column d: 2690'
   - 'rs ended december 31</i>: 12099 <i>percent change</i>: 18988'
@@ -438,7 +422,7 @@ questions:
   question: what is the average size ( in square feet ) of switching centers in 2017?
   answerable: true
   must_contain:
-  - re:(?<![\d.])21311\.470*(?!\d|\.\d)|(?<![\d.])21311\.4750*(?!\d|\.\d)|(?<![\d.])21311\.47540*(?!\d|\.\d)|(?<![\d.])21311\.480*(?!\d|\.\d)
+  - re:(?<![\d.])21311\.40*(?!\d|\.\d)|(?<![\d.])21311\.470*(?!\d|\.\d)|(?<![\d.])21311\.4750*(?!\d|\.\d)|(?<![\d.])21311\.47540*(?!\d|\.\d)|(?<![\d.])21311\.475410*(?!\d|\.\d)|(?<![\d.])21311\.480*(?!\d|\.\d)|(?<![\d.])21311\.50*(?!\d|\.\d)
   gold_spans:
   - 'roximate number: 61 approximate size in square feet: 1300000'
   - 'switching centers approximate number: 61'
@@ -454,7 +438,7 @@ questions:
   question: what is the average size ( in square feet ) of call centers in 2017?
   answerable: true
   must_contain:
-  - re:(?<![\d.])82352\.940*(?!\d|\.\d)|(?<![\d.])82352\.9410*(?!\d|\.\d)|(?<![\d.])82352\.94120*(?!\d|\.\d)
+  - re:(?<![\d.])82352\.90*(?!\d|\.\d)|(?<![\d.])82352\.940*(?!\d|\.\d)|(?<![\d.])82352\.9410*(?!\d|\.\d)|(?<![\d.])82352\.941180*(?!\d|\.\d)|(?<![\d.])82352\.94120*(?!\d|\.\d)
   gold_spans:
   - 'roximate number: 17 approximate size in square feet: 1400000'
   - 'call center approximate number: 17'
@@ -470,7 +454,7 @@ questions:
   question: what percentage of the net assets acquired is goodwill?
   answerable: true
   must_contain:
-  - re:(?<![\d.])0\.1470*(?!\d|\.\d)|(?<![\d.])0\.14740*(?!\d|\.\d)|(?<![\d.])0\.150*(?!\d|\.\d)|(?<![\d.])14(?:\.0+)?(?!\d|\.\d)|(?<![\d.])14\.70*(?!\d|\.\d)|(?<![\d.])14\.740*(?!\d|\.\d)|(?<![\d.])15(?:\.0+)?(?!\d|\.\d)
+  - re:(?<![\d.])(?:\.0+)?(?!\d|\.\d)|(?<![\d.])0\.10*(?!\d|\.\d)|(?<![\d.])0\.1470*(?!\d|\.\d)|(?<![\d.])0\.150*(?!\d|\.\d)|(?<![\d.])14(?:\.0+)?(?!\d|\.\d)|(?<![\d.])14\.70*(?!\d|\.\d)|(?<![\d.])14\.7370*(?!\d|\.\d)|(?<![\d.])14\.740*(?!\d|\.\d)|(?<![\d.])15(?:\.0+)?(?!\d|\.\d)
   gold_spans:
   - 'goodwill at february 17, 2006 (dollars in millions): 247'
   - 'ts acquired at february 17, 2006 (dollars in millions): 1676'
@@ -486,7 +470,7 @@ questions:
   question: what percentage of net assets acquired is amortizable intangible assets?
   answerable: true
   must_contain:
-  - re:(?<![\d.])0\.070*(?!\d|\.\d)|(?<![\d.])0\.0730*(?!\d|\.\d)|(?<![\d.])0\.07340*(?!\d|\.\d)|(?<![\d.])7(?:\.0+)?(?!\d|\.\d)|(?<![\d.])7\.30*(?!\d|\.\d)|(?<![\d.])7\.340*(?!\d|\.\d)
+  - re:(?<![\d.])(?:\.0+)?(?!\d|\.\d)|(?<![\d.])0\.070*(?!\d|\.\d)|(?<![\d.])0\.0730*(?!\d|\.\d)|(?<![\d.])0\.10*(?!\d|\.\d)|(?<![\d.])7(?:\.0+)?(?!\d|\.\d)|(?<![\d.])7\.30*(?!\d|\.\d)|(?<![\d.])7\.3390*(?!\d|\.\d)|(?<![\d.])7\.340*(?!\d|\.\d)
   gold_spans:
   - 'gible assets at february 17, 2006 (dollars in millions): 123'
   - 'ts acquired at february 17, 2006 (dollars in millions): 1676'
@@ -495,6 +479,22 @@ questions:
   source_documents:
   - MS-2007-page-179/page.docx
   - MS-2007-page-179/table.xlsx
+  formula_dependent: false
+  split: dev
+- id: finqa-CDW-2017-page-38-pdf-1
+  type: numeric
+  question: what was 2017 gross margin percent?
+  answerable: true
+  must_contain:
+  - re:(?<![\d.])(?:\.0+)?(?!\d|\.\d)|(?<![\d.])0\.10*(?!\d|\.\d)|(?<![\d.])0\.160*(?!\d|\.\d)|(?<![\d.])0\.1610*(?!\d|\.\d)|(?<![\d.])0\.16130*(?!\d|\.\d)|(?<![\d.])0\.20*(?!\d|\.\d)|(?<![\d.])16(?:\.0+)?(?!\d|\.\d)|(?<![\d.])16\.10*(?!\d|\.\d)|(?<![\d.])16\.1270*(?!\d|\.\d)|(?<![\d.])16\.130*(?!\d|\.\d)
+  gold_spans:
+  - 'gross profit years ended december 31,: 2449.9'
+  - 'net sales years ended december 31,: 15191.5'
+  reviewed: true
+  origin: FinQA test CDW/2017/page_38.pdf-1; program divide(2449.9, 15191.5); dataset answer 16.1%; eval-public/build_finqa_slice.py
+  source_documents:
+  - CDW-2017-page-38/page.docx
+  - CDW-2017-page-38/table.xlsx
   formula_dependent: false
   split: dev
 - id: finqa-unans-IPG-2008-page-72

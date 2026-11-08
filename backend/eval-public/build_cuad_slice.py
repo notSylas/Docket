@@ -113,6 +113,46 @@ N_UNANSWERABLE = 6
 N_CROSS = 6
 
 
+YESNO_KEYWORD = {  # a model that quotes the clause (as asked) instead of saying "yes" must still pass
+    "Exclusivity": r"exclusive|exclusivity",
+    "Non-Compete": r"compet",
+    "Anti-Assignment": r"assign",
+    "Audit Rights": r"audit",
+    "Insurance": r"insurance",
+    "Cap On Liability": r"liabilit",
+}
+# Per-contract extra phrase from the annotated clause text (the annotation is the ground truth).
+YESNO_EXTRA = {
+    "PapaJohnsInternationalInc": r"prohibited\s+from\s+granting",  # exclusivity expressed as a prohibition
+    "ReedsInc": r"exclusive\s+right",
+}
+
+
+NEG_PATTERN = (r"re:^\W*no\b|\bdoes\s+not\s+(?:contain|restrict|require|give|cap|limit|appear)"
+               r"|\bno\s+(?:such\s+)?(?:clause|provision|exclusivity|restriction|requirement)")
+
+
+def yesno_pattern(cat: str, span: str, fn: str) -> str:
+    """Accept yes / applies / quoting the annotated clause (span or topic keyword near a quote)."""
+    alts = [r"\byes\b", r"\bapplies\b", r"\bdoes\s+(?:contain|restrict|require|give|cap|limit)\b"]
+    alts.append(r"\s+".join(re.escape(w) for w in normalize_text(span).split()))
+    alts.append(YESNO_KEYWORD[cat])
+    for k, v in YESNO_EXTRA.items():
+        if fn.startswith(k):
+            alts.append(v)
+    return "re:" + "|".join(alts)
+
+
+def all_party_pattern(row_parties: list[str]) -> str | None:
+    """One regex accepting ANY party CUAD lists for the contract."""
+    alts = []
+    for p in row_parties:
+        pt = party_pattern(p)
+        if pt:
+            alts.append(pt[3:])
+    return "re:" + "|".join(dict.fromkeys(alts)) if alts else None
+
+
 def squeeze(s: str) -> str:
     return " ".join(s.split())
 
@@ -332,11 +372,12 @@ def main() -> None:
         origin = f"CUAD v1 (CC BY 4.0) master_clauses.csv {fn}"
         sl = slug(fn)
 
-        def add(cat, qid, qtype, question, must, clause_list, note):
+        def add(cat, qid, qtype, question, must, clause_list, note, must_not=None):
             span = find_span(clause_list, fn, chunks)
             if span:
                 cands[cat].append(q_dict(f"cuad-{qid}-{sl}", qtype, question, True, must, [span],
-                                         f"{origin}; {note}", [d], _fn=fn))
+                                         f"{origin}; {note}", [d], _fn=fn,
+                                         **({"must_not_contain": [must_not]} if must_not else {})))
 
         gl = squeeze(row["Governing Law-Answer"])
         gl = re.sub(r"^(?:the\s+)?(?:state|commonwealth)\s+of\s+", "", gl, flags=re.I)
@@ -389,8 +430,10 @@ def main() -> None:
         for cat in ("Exclusivity", "Anti-Assignment", "Non-Compete", "Audit Rights", "Insurance"):
             cl = clauses(row, cat)
             if cl:
-                add(cat, cat.lower().replace(" ", "").replace("-", ""), "single_fact", YESNO_Q[cat].format(h=h),
-                    [r"re:\byes\b"], cl, f"{cat} annotated present")
+                span_ = find_span(cl, fn, chunks)
+                if span_:
+                    add(cat, cat.lower().replace(" ", "").replace("-", ""), "single_fact", YESNO_Q[cat].format(h=h),
+                        [yesno_pattern(cat, span_, fn)], cl, f"{cat} annotated present", must_not=NEG_PATTERN)
         for cat, q in UNANSWERABLE_Q.items():
             if not clauses(row, cat) and not any(k in fulltext[fn] for k in CATEGORY_KEYWORDS[cat]):
                 unans[cat].append(q_dict(f"cuad-none-{cat.lower().replace(' ', '').replace('-', '')}-{sl}",
@@ -435,7 +478,7 @@ def main() -> None:
         spans, pats = [], []
         for fn in pos:
             sp = find_span(clauses(rows[fn], cat), fn, chunks)
-            pt = party_pattern(parties(rows[fn])[0]) if parties(rows[fn]) else None
+            pt = all_party_pattern(parties(rows[fn]))
             if not (sp and pt):
                 break
             spans.append(sp)
@@ -456,7 +499,7 @@ def main() -> None:
             spans, pats = [], []
             for fn in pos:
                 sp = find_span(clauses(rows[fn], "Governing Law"), fn, chunks)
-                pt = party_pattern(parties(rows[fn])[0]) if parties(rows[fn]) else None
+                pt = all_party_pattern(parties(rows[fn]))
                 if not (sp and pt):
                     break
                 spans.append(sp)

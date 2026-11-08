@@ -199,25 +199,30 @@ def norm(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip().lower()
 
 
+# Dataset questions whose published answer disagrees with its own executed program.
+DROP_IDS = {"BLL/2006/page_67.pdf-1"}  # answer 32.2% but program add(259.5, 0.2) = 259.7 (dataset inconsistency)
+
+
 def answer_pattern(qa: dict) -> list[str]:
+    """Accept the dataset's own rounding: the shown answer, the exact executed value, in percent AND
+    fraction form, rounded to anywhere from one digit fewer than shown (85.89 -> 85.9, 83.3 -> 83)
+    up to three digits more, plus the truncated form."""
     ans = str(qa["answer"]).strip()
     v = abs(float(qa["exe_ans"]))
     is_pct = ans.endswith("%")
     dec = len(ans.rstrip("%").split(".")[1]) if "." in ans else 0
     shown = abs(parse_num(ans))
     alts: set[str] = set()
-    if is_pct:  # exe_ans is a fraction; the answer string is the percentage
-        pv = shown
-        for d in {dec, dec + 1, dec + 2}:
-            alts.add(num_re(rnd(pv if d == dec else v * 100, d), d))
-        alts.add(num_re(int(abs(v * 100) * 10**dec) / 10**dec, dec))  # truncated
-        for d in {dec + 2, dec + 3, 4}:
-            alts.add(num_re(rnd(v, d), d))  # fraction form 0.479
-    else:
-        alts.add(num_re(shown, dec))
-        for d in {dec + 1, dec + 2}:
-            alts.add(num_re(rnd(v, d), d))
-        alts.add(num_re(int(v * 10**dec) / 10**dec, dec))
+    bases = [v * 100, v] if is_pct else ([v, v * 100] if v <= 1.5 else [v])
+    lo, hi = max(0, dec - 1), dec + 3
+    for base in bases:
+        for d in range(lo, hi + 1):
+            alts.add(num_re(rnd(base, d), d))
+        for d in range(lo, dec + 1):
+            alts.add(num_re(int(base * 10**d) / 10**d, d))  # truncated
+    alts.add(num_re(shown, dec))
+    if is_pct:
+        alts.add(num_re(rnd(shown / 100, dec + 2), dec + 2))
     return ["re:" + "|".join(sorted(alts))]
 
 
@@ -328,6 +333,9 @@ def main() -> None:
         src = slug(fn)
         for x in qs:
             qa = x["qa"]
+            if x["id"] in DROP_IDS:
+                dropped.append(x["id"])
+                continue
             spans = spans_for(x, by_file[src])
             if not spans:
                 dropped.append(x["id"])

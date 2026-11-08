@@ -251,7 +251,7 @@ questions:
     commitment? Quote the clause.
   answerable: true
   must_contain:
-  - re:\byes\b
+  - re:\byes\b|\bapplies\b|\bdoes\s+(?:contain|restrict|require|give|cap|limit)\b|in\s+exchange\s+for\s+company's\s+contributions\s+and\s+obligations|exclusive|exclusivity|exclusive\s+right
   gold_spans:
   - In exchange for Company's contributions and obligations
   reviewed: true
@@ -260,13 +260,15 @@ questions:
   source_documents:
   - contracts/ReedsInc_20191113_10-Q_EX-10.4_11888303_EX-10.4_Development Agreement.pdf
   formula_dependent: false
+  must_not_contain:
+  - re:^\W*no\b|\bdoes\s+not\s+(?:contain|restrict|require|give|cap|limit|appear)|\bno\s+(?:such\s+)?(?:clause|provision|exclusivity|restriction|requirement)
 - id: cuad-exclusivity-papajohnsinternationalinc
   type: single_fact
   question: Does the Endorsement Agreement with ABG-Shaq, LLC contain an exclusivity or exclusive-dealing commitment?
     Quote the clause.
   answerable: true
   must_contain:
-  - re:\byes\b
+  - re:\byes\b|\bapplies\b|\bdoes\s+(?:contain|restrict|require|give|cap|limit)\b|subject\s+to\s+the\s+terms\s+contained\s+herein,\s+papa\s+john's\s+and\s+abg|exclusive|exclusivity|prohibited\s+from\s+granting
   gold_spans:
   - Subject to the terms contained herein, PAPA JOHN'S and ABG
   reviewed: true
@@ -275,13 +277,15 @@ questions:
   source_documents:
   - contracts/PapaJohnsInternationalInc_20190617_8-K_EX-10.1_11707365_EX-10.1_Endorsement Agreement.pdf
   formula_dependent: false
+  must_not_contain:
+  - re:^\W*no\b|\bdoes\s+not\s+(?:contain|restrict|require|give|cap|limit|appear)|\bno\s+(?:such\s+)?(?:clause|provision|exclusivity|restriction|requirement)
 - id: cuad-antiassignment-bloomenergycorp
   type: single_fact
   question: Does the Master Operation And Maintenance Agreement with BLOOM ENERGY CORPORATION restrict a party from
     assigning the agreement? Quote the clause.
   answerable: true
   must_contain:
-  - re:\byes\b
+  - re:\byes\b|\bapplies\b|\bdoes\s+(?:contain|restrict|require|give|cap|limit)\b|this\s+agreement\s+and\s+all\s+of\s+the\s+provisions\s+hereof\s+shall\s+be|assign
   gold_spans:
   - This Agreement and all of the provisions hereof shall be
   reviewed: true
@@ -290,13 +294,15 @@ questions:
   source_documents:
   - contracts/BloomEnergyCorp_20180321_DRSA (on S-1)_EX-10_11240356_EX-10_Maintenance Agreement.pdf
   formula_dependent: false
+  must_not_contain:
+  - re:^\W*no\b|\bdoes\s+not\s+(?:contain|restrict|require|give|cap|limit|appear)|\bno\s+(?:such\s+)?(?:clause|provision|exclusivity|restriction|requirement)
 - id: cuad-antiassignment-tomonlineinc
   type: single_fact
   question: Does the Co-Branding Agreement with Skype Communications, S.A. restrict a party from assigning the agreement?
     Quote the clause.
   answerable: true
   must_contain:
-  - re:\byes\b
+  - re:\byes\b|\bapplies\b|\bdoes\s+(?:contain|restrict|require|give|cap|limit)\b|notwithstanding\s+the\s+foregoing,\s+upon\s+the\s+prior\s+written|assign
   gold_spans:
   - Notwithstanding the foregoing, upon the prior written
   reviewed: true
@@ -305,13 +311,15 @@ questions:
   source_documents:
   - contracts/TomOnlineInc_20060501_20-F_EX-4.46_749700_EX-4.46_Co-Branding Agreement.pdf
   formula_dependent: false
+  must_not_contain:
+  - re:^\W*no\b|\bdoes\s+not\s+(?:contain|restrict|require|give|cap|limit|appear)|\bno\s+(?:such\s+)?(?:clause|provision|exclusivity|restriction|requirement)
 - id: cuad-noncompete-zogenixinc
   type: single_fact
   question: Does the Distributorship Agreement with ZOGENIX, INC. restrict a party from competing with the other
     party? Quote the clause.
   answerable: true
   must_contain:
-  - re:\byes\b
+  - re:\byes\b|\bapplies\b|\bdoes\s+(?:contain|restrict|require|give|cap|limit)\b|during\s+the\s+term,\s+without\s+the\s+prior\s+written\s+approval\s+of|compet
   gold_spans:
   - During the Term, without the prior written approval of
   reviewed: true
@@ -320,13 +328,15 @@ questions:
   source_documents:
   - contracts/ZogenixInc_20190509_10-Q_EX-10.2_11663313_EX-10.2_Distributor Agreement.pdf
   formula_dependent: false
+  must_not_contain:
+  - re:^\W*no\b|\bdoes\s+not\s+(?:contain|restrict|require|give|cap|limit|appear)|\bno\s+(?:such\s+)?(?:clause|provision|exclusivity|restriction|requirement)
 - id: cuad-auditrights-westpharmaceuticalservicesinc
   type: single_fact
   question: Does the Global Master Supply Agreement with ExxonMobil Chemical Company give a party a right to audit
     the other party's records? Quote the clause.
   answerable: true
   must_contain:
-  - re:\byes\b
+  - re:\byes\b|\bapplies\b|\bdoes\s+(?:contain|restrict|require|give|cap|limit)\b|on\s+request\s+of\s+buyer,\s+buyer\s+is\s+allowed\s+to\s+carry\s+out\s+on\-site|audit
   gold_spans:
   - On request of Buyer, Buyer is allowed to carry out on-site
   reviewed: true
@@ -335,12 +345,14 @@ questions:
   source_documents:
   - contracts/WestPharmaceuticalServicesInc_20200116_8-K_EX-10.1_11947529_EX-10.1_Supply Agreement.pdf
   formula_dependent: false
+  must_not_contain:
+  - re:^\W*no\b|\bdoes\s+not\s+(?:contain|restrict|require|give|cap|limit|appear)|\bno\s+(?:such\s+)?(?:clause|provision|exclusivity|restriction|requirement)
 - id: cuad-insurance-netgearinc
   type: single_fact
   question: Does the Distributor Agreement with Ingram Micro require a party to maintain insurance? Quote the clause.
   answerable: true
   must_contain:
-  - re:\byes\b
+  - re:\byes\b|\bapplies\b|\bdoes\s+(?:contain|restrict|require|give|cap|limit)\b|netgear,\s+at\s+its\s+expense,\s+agrees\s+to\s+maintain\s+insurance|insurance
   gold_spans:
   - NETGEAR, at its expense, agrees to maintain insurance
   reviewed: true
@@ -349,6 +361,8 @@ questions:
   source_documents:
   - contracts/NETGEAR,INC_04_21_2003-EX-10.16-DISTRIBUTOR AGREEMENT.pdf
   formula_dependent: false
+  must_not_contain:
+  - re:^\W*no\b|\bdoes\s+not\s+(?:contain|restrict|require|give|cap|limit|appear)|\bno\s+(?:such\s+)?(?:clause|provision|exclusivity|restriction|requirement)
 - id: cuad-none-insurance-reedsinc
   type: single_fact
   question: What minimum amount of insurance coverage must a party maintain under the Recipe Development Agreement
@@ -427,7 +441,7 @@ questions:
   source_documents: []
   formula_dependent: false
   enumeration:
-  - re:ingram\s+micro
+  - re:ingram\s+micro|netgear
   split: dev
 - id: cuad-x-govlaw-delaware
   type: single_fact
@@ -440,7 +454,7 @@ questions:
   source_documents: []
   formula_dependent: false
   enumeration:
-  - re:abg\-shaq|abg
+  - re:abg\-shaq|abg|papa\s+john's\s+marketing\s+fund|pjmf|papa\s+john's\s+international|pji
   split: dev
 - id: cuad-x-govlaw-florida
   type: single_fact
@@ -453,7 +467,7 @@ questions:
   source_documents: []
   formula_dependent: false
   enumeration:
-  - re:pizza\s+fusion\s+holding
+  - re:pizza\s+fusion\s+holding|the\s+individual\s+or\s+legal\s+entity\s+identified\s+on\s+the\s+cover\s+page
   split: dev
 - id: cuad-x-govlaw-maryland
   type: single_fact
@@ -466,7 +480,7 @@ questions:
   source_documents: []
   formula_dependent: false
   enumeration:
-  - re:link\s+plus|lkpl
+  - re:link\s+plus|lkpl|axiometric
   split: dev
 - id: cuad-x-govlaw-nevada
   type: single_fact
@@ -479,5 +493,5 @@ questions:
   source_documents: []
   formula_dependent: false
   enumeration:
-  - re:psitech
+  - re:psitech|empirical\s+ventures
   split: dev
