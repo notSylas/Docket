@@ -1,4 +1,4 @@
-"""Confirms `Settings.default_top_k` exists (value 8) and that the six
+"""Confirms `Settings.default_top_k` exists (value 12) and that the six
 call sites that used to hardcode `top_k: int = 8` now read it, rather than
 each retyping the literal independently."""
 
@@ -16,9 +16,9 @@ from docket.services.query import service as query_service
 from docket.infra.retrieval import hybrid as retrieval_hybrid
 
 
-def test_default_top_k_setting_defaults_to_eight():
-    assert Settings().default_top_k == 8
-    assert settings.default_top_k == 8
+def test_default_top_k_setting_defaults_to_twelve():
+    assert Settings().default_top_k == 12
+    assert settings.default_top_k == 12
 
 
 CALL_SITES = [

@@ -121,13 +121,13 @@ class Settings(BaseSettings):
     # build_investigation_agent`, `agent.tools.make_search_knowledge_tool`,
     # `eval.runner.EvalRunner`/`run_eval`) so a future tuning change can't
     # silently apply to only some of them.
-    default_top_k: int = 8
+    default_top_k: int = 12
 
     # Per-leg candidate pool for hybrid retrieval (env DOCKET_RETRIEVAL_POOL_K).
-    # `None` (default): each leg requests `top_k`, as always. When set, each
+    # `None`: each leg requests `top_k`. Default 30 (send 12). When set, each
     # leg requests this many and the fused list is still cut to `top_k`
     # (experiment E4: pool 30 / send 12 raises all-spans recall).
-    retrieval_pool_k: int | None = None
+    retrieval_pool_k: int | None = 30
 
     # Deterministic compute stage in the fast path (Upgrade doc 05 section 8
     # candidate move; env DOCKET_COMPUTE_STAGE_ENABLED). When on and the
