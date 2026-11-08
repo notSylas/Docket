@@ -1,0 +1,57 @@
+Questions: 34   repeats: 3   (pass = majority of repeats)
+Accuracy (judged)     73.5% (25/34) [56.9%-85.4%]
+Judge: 55 runs resolved, 0 cross-check disagreements
+Pass-all repeats      64.7% (22/34) [47.9%-78.5%]
+
+By type:
+  numeric        n=10   strict  60.0% (6/10) [31.3%-83.2%]  optimistic 60.0%
+  single_fact    n=24   strict  79.2% (19/24) [59.5%-90.8%]  optimistic 79.2%
+
+By split:
+  dev            n=27   strict  74.1% (20/27) [55.3%-86.8%]  optimistic 74.1%
+  test           n=7    strict  71.4% (5/7) [35.9%-91.8%]  optimistic 71.4%
+
+By document:
+  contracts/BloomEnergyCorp_20180321_DRSA (on S-1)_EX-10_11240356_EX-10_Maintenance Agreement.pdf n=2    strict  50.0% (1/2) [9.5%-90.5%]  optimistic 50.0%
+  contracts/CytodynInc_20200109_10-Q_EX-10.5_11941634_EX-10.5_License Agreement.pdf n=2    strict  50.0% (1/2) [9.5%-90.5%]  optimistic 50.0%
+  contracts/GopageCorp_20140221_10-K_EX-10.1_8432966_EX-10.1_Content License Agreement.pdf n=2    strict 100.0% (2/2) [34.2%-100.0%]  optimistic 100.0%
+  contracts/LinkPlusCorp_20050802_8-K_EX-10_3240252_EX-10_Affiliate Agreement.pdf n=2    strict 100.0% (2/2) [34.2%-100.0%]  optimistic 100.0%
+  contracts/NETGEAR,INC_04_21_2003-EX-10.16-DISTRIBUTOR AGREEMENT.pdf n=2    strict  50.0% (1/2) [9.5%-90.5%]  optimistic 50.0%
+  contracts/PapaJohnsInternationalInc_20190617_8-K_EX-10.1_11707365_EX-10.1_Endorsement Agreement.pdf n=3    strict 100.0% (3/3) [43.8%-100.0%]  optimistic 100.0%
+  contracts/PfHospitalityGroupInc_20150923_10-12G_EX-10.1_9266710_EX-10.1_Franchise Agreement1.pdf n=2    strict 100.0% (2/2) [34.2%-100.0%]  optimistic 100.0%
+  contracts/QuantumGroupIncFl_20090120_8-K_EX-99.2_3672910_EX-99.2_Hosting Agreement.pdf n=3    strict  66.7% (2/3) [20.8%-93.9%]  optimistic 66.7%
+  contracts/ReedsInc_20191113_10-Q_EX-10.4_11888303_EX-10.4_Development Agreement.pdf n=3    strict 100.0% (3/3) [43.8%-100.0%]  optimistic 100.0%
+  contracts/TomOnlineInc_20060501_20-F_EX-4.46_749700_EX-4.46_Co-Branding Agreement.pdf n=3    strict 100.0% (3/3) [43.8%-100.0%]  optimistic 100.0%
+  contracts/WestPharmaceuticalServicesInc_20200116_8-K_EX-10.1_11947529_EX-10.1_Supply Agreement.pdf n=2    strict   0.0% (0/2) [0.0%-65.8%]  optimistic 0.0%
+  contracts/ZogenixInc_20190509_10-Q_EX-10.2_11663313_EX-10.2_Distributor Agreement.pdf n=3    strict  66.7% (2/3) [20.8%-93.9%]  optimistic 66.7%
+  unattributed   n=5    strict  60.0% (3/5) [23.1%-88.2%]  optimistic 60.0%
+
+Formula dependence:
+  not_formula_dependent n=34   strict  73.5% (25/34) [56.9%-85.4%]  optimistic 73.5%
+
+Milestone: NOT MET
+  population is not real_user_documents
+  test runs are not bound to this gold set
+  a frozen benchmark manifest is required
+  judge calibration needs 30 distinct, bound judge items, pass/fail labels, and kappa >= 0.7
+  the test split needs revoked-source cases
+  the test split needs out-of-corpus cases
+  test accuracy 95% lower bound is below 90%
+
+Retrieval recall@18 (any span)   78.6% (66/84) [68.7%-86.0%]
+Retrieval recall@18 (all spans)  78.6% (66/84) [68.7%-86.0%]
+Fact-in-context                   78.6% (66/84) [68.7%-86.0%]
+Abstention precision              44.7% (17/38) [30.1%-60.3%]
+Abstention recall                 94.4% (17/18) [74.2%-99.0%]
+Wrongful abstention (answerable)  25.0% (21/84) [17.0%-35.2%]
+Revoked leaks: retrieved 0, answered 0
+Latency end-to-end             p50 15.4s  p90 45.8s
+
+Failure classification (runs):
+  parse                   0   0.0%
+  retrieval_miss         15  50.0%
+  context_truncation      0   0.0%
+  generation_error       15  50.0%
+  citation_error          0   0.0%
+  judge_doubt             0   0.0%
+  run_error               0   0.0%
