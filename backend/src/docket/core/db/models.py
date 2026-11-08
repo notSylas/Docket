@@ -41,6 +41,7 @@ __all__ = [
     "Chunk",
     "IngestionJob",
     "IngestionFileResult",
+    "ConnectorAccount",
     "compute_recipe_id",
     "compute_chunk_id",
 ]
@@ -445,3 +446,21 @@ class IngestionFileResult(Base):
     started_at: Mapped[datetime | None] = mapped_column(nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
     __table_args__ = (UniqueConstraint("job_id", "path", name="uq_ingestion_file_job_path"),)
+
+
+class ConnectorAccount(Base):
+    """A read-only remote mail account. Holds no secret: credentials live in
+    the environment (or a future OS keyring), referenced by `credential_ref`."""
+
+    __tablename__ = "connector_accounts"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: _new_id("con"))
+    provider: Mapped[str] = mapped_column(String, nullable=False)
+    account_label: Mapped[str] = mapped_column(String, nullable=False)
+    source_id: Mapped[str | None] = mapped_column(ForeignKey("sources.id"), nullable=True, index=True)
+    config_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    cursor_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    credential_ref: Mapped[str | None] = mapped_column(String, nullable=True)
+    last_sync_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    consent_at: Mapped[datetime] = mapped_column(nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="active")
+    __table_args__ = (UniqueConstraint("provider", "account_label", name="uq_connector_provider_label"),)

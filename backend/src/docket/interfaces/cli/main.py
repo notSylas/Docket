@@ -203,6 +203,134 @@ def feedback_export(
     typer.echo(f"DRAFT only: reviewed: false. {skipped} reviewed items skipped because evidence is unavailable or invalid.", err=True)
 
 
+connectors_app = typer.Typer(help="Read-only mail connectors (network-using; sync only).")
+app.add_typer(connectors_app, name="connectors")
+
+GMAIL_GUIDE = """Gmail setup (read-only, app password):
+  1. Turn on 2-Step Verification: https://myaccount.google.com/security
+  2. In Gmail: Settings > See all settings > Forwarding and POP/IMAP > Enable IMAP.
+  3. Create an app password named "Docket": https://myaccount.google.com/apppasswords
+  4. export DOCKET_GMAIL_APP_PASSWORD_<ACCOUNTID>='xxxx xxxx xxxx xxxx'
+     ACCOUNTID is the address in capitals with other characters as underscores,
+     e.g. you@gmail.com -> DOCKET_GMAIL_APP_PASSWORD_YOU_GMAIL_COM
+  5. docket connectors add gmail --account you@gmail.com
+The password is read from the environment only; it is never written to Docket's
+database or logs. Docket never sends, deletes, moves or marks mail as read."""
+
+
+def _connector_service(context):
+    from docket.services.connectors.service import ConnectorService
+
+    return ConnectorService(context.session_factory, context.settings, context.source_manager,
+                            purge=lambda source_id: _cleanup(context).purge_disconnected(source_id))
+
+
+@connectors_app.command("guide")
+def connectors_guide(provider: str = typer.Argument("gmail", help="Provider (gmail).")) -> None:
+    """Print the setup guide for a mail provider."""
+    if provider != "gmail":
+        typer.echo("Unknown provider. Available: gmail", err=True)
+        raise typer.Exit(1)
+    typer.echo(GMAIL_GUIDE)
+
+
+@connectors_app.command("add", help="Connect a mail account read-only.\n\n" + GMAIL_GUIDE)
+def connectors_add(
+    provider: str = typer.Argument(..., help="Provider: gmail."),
+    account: str = typer.Option(..., "--account", help="Account email address."),
+    folders: str = typer.Option(None, "--folders", help="Comma-separated folders (default INBOX,Sent)."),
+    months: int = typer.Option(None, "--months", help="How many months back to pull (default 12)."),
+    attachments: bool = typer.Option(False, "--attachments", help="Also store attachments (default: stripped)."),
+    yes: bool = typer.Option(False, "--yes", help="Give consent without being asked."),
+) -> None:
+    from docket.services.connectors.base import ConnectorError
+
+    if provider != "gmail":
+        typer.echo("Unknown provider. Available: gmail", err=True)
+        raise typer.Exit(1)
+    context = build_context()
+    service = _connector_service(context)
+    overrides = {"folders": [f.strip() for f in folders.split(",") if f.strip()] if folders else None,
+                 "months": months, "include_attachments": True if attachments else None}
+    typer.echo(service.consent_text(provider, {"include_attachments": attachments}))
+    if not yes and not typer.confirm("Connect this account?", default=False):
+        typer.echo("Cancelled. Nothing was connected.")
+        raise typer.Exit(1)
+    try:
+        row = service.add_account(provider, account, overrides=overrides, consent=True)
+    except ConnectorError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from None
+    typer.echo(row.id)
+    if not row.credential_ref:
+        typer.echo("No app password found yet. Run: docket connectors guide gmail")
+
+
+@connectors_app.command("list")
+def connectors_list() -> None:
+    """List connected mail accounts."""
+    rows = _connector_service(build_context()).list_accounts()
+    if not rows:
+        typer.echo("No connectors configured.")
+        return
+    for row in rows:
+        synced = row.last_sync_at.isoformat(timespec="minutes") if row.last_sync_at else "never"
+        typer.echo(f"{row.id}  {row.provider}  {row.account_label}  {row.status}  last sync: {synced}")
+
+
+def _print_sync(label: str, result) -> bool:
+    from docket.services.connectors.base import ConnectorError
+
+    if isinstance(result, ConnectorError):
+        typer.echo(f"{label}: {result}", err=True)
+        return False
+    more = " (message limit reached; run again for the rest)" if result.truncated else ""
+    typer.echo(f"{label}: {result.added} fetched, {result.removed} removed, {result.skipped} skipped{more}.")
+    return True
+
+
+@connectors_app.command("sync")
+def connectors_sync(connector_id: str = typer.Argument(None, help="Connector id or account (default: all).")) -> None:
+    """Pull new mail (read-only), then run `docket ingest --all` to index it."""
+    from docket.services.connectors.base import ConnectorError
+
+    service = _connector_service(build_context())
+    if connector_id:
+        try:
+            results = {connector_id: service.sync(connector_id)}
+        except ConnectorError as exc:
+            results = {connector_id: exc}
+    else:
+        results = service.sync_all()
+    if not results:
+        typer.echo("No connectors configured.")
+        return
+    ok = all([_print_sync(k, v) for k, v in results.items()])
+    typer.echo("Run `docket ingest --all` to index the new mail.")
+    raise typer.Exit(0 if ok else 1)
+
+
+@connectors_app.command("remove")
+def connectors_remove(
+    connector_id: str = typer.Argument(..., help="Connector id or account."),
+    purge: bool = typer.Option(False, "--purge", help="Also delete stored mail and its index entries."),
+    yes: bool = typer.Option(False, "--yes", help="Skip the purge confirmation."),
+) -> None:
+    """Disconnect a mail account (the remote mailbox is never touched)."""
+    from docket.services.connectors.base import ConnectorError
+
+    service = _connector_service(build_context())
+    if purge and not yes and not typer.confirm("Delete all stored mail from this account?", default=False):
+        typer.echo("Cancelled. Nothing was changed.")
+        raise typer.Exit(1)
+    try:
+        service.remove(connector_id, purge=purge)
+    except ConnectorError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from None
+    typer.echo("Disconnected." + (" Stored mail purged." if purge else " Stored mail kept; use --purge to delete it."))
+
+
 @app.command("doctor")
 def doctor_command() -> None:
     """Check local setup without changing the library or loading models."""
@@ -752,6 +880,12 @@ def sync(
     needed. Quick steps run straight away; slower ones ask once with a time
     estimate. Your original files are never touched."""
     context = build_context()
+    if not refs and not dry_run:
+        # Explicit, opt-in network step: only configured mail connectors, only here.
+        connectors = _connector_service(context)
+        if any(r.status == "active" for r in connectors.list_accounts()):
+            for label, outcome in connectors.sync_all().items():
+                _print_sync(label, outcome)
     ids = [_resolve_ref(context, r).id for r in refs] if refs else None
     plan = context.maintenance.plan(ids)
     _print_plan(plan)
