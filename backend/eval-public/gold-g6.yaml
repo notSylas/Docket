@@ -345,7 +345,7 @@ questions:
   answerable: true
   must_contain:
   - re:commissioning
-  - re:(?<![\d.])209\.940*(?!\d|\.\d)|(?<![\d.])209940(?:\.0+)?(?!\d|\.\d)
+  - re:(?<![\d.])150(?:\.0+)?(?!\d|\.\d)|(?<![\d.])150000(?:\.0+)?(?!\d|\.\d)
   - re:(?<![\d.])1850(?:\.0+)?(?!\d|\.\d)
   gold_spans:
   - transfer of USD 60 thousand from budget row BL-107
@@ -353,7 +353,7 @@ questions:
   - at USD 1,850 per tonne, capped at 450 tonnes.
   reviewed: true
   origin: 'synthetic corpus eval-public/corpus-synthetic-g6 (Marrowfield) (eval-public/build_synthetic_corpus_g6.py);
-    g6 category chain; AM-02 source BL-107: 210 - 0.06 = 209.94; contract 1850 per tonne'
+    g6 category chain; AM-02 source BL-107: 210 - 60 = 150; contract 1850 per tonne'
   source_documents:
   - memo.docx
   - budget.xlsx
@@ -452,7 +452,8 @@ questions:
 - id: g6-derive-steel-max-vs-budget
   type: numeric
   question: At the contract's per-tonne rate and the currently approved tonne cap, what is the maximum steel fabrication
-    cost in USD, and by how much, in USD thousand, does it exceed the Steel Fabrication budget line?
+    cost in USD, and by how much, in USD thousand, does it exceed the original Steel Fabrication budget on the Project
+    Budgets sheet (before any transfer)?
   answerable: true
   must_contain:
   - re:(?<![\d.])962000(?:\.0+)?(?!\d|\.\d)|(?<![\d.])962(?:\.0+)?(?!\d|\.\d)

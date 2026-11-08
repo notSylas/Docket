@@ -444,12 +444,12 @@ def build_gold() -> Gold:
         must=[kpat(bud("BL-105")), pat(hours)],
         spans=[mspan("AM-05", r"charged to budget row BL-105 Safety Training"), bspan("BL-105"), cspan(r"at least \d+ hours of safety training")],
         docs=[FM, FB, FC], origin=f"AM-05 -> BL-105 -> {bud('BL-105')} USD k; clause 5.1 {hours} hours")
-    remaining = bud("BL-107") - xfer / 1000
+    remaining = bud("BL-107") - xfer  # xfer is already USD thousand
     g.q("chain", "transfer-source-remaining", "multi_doc",
         "Approval AM-02 moves money into steel fabrication from another budget row. Which row is the source, what budget (USD thousand) remains on it after the transfer, and what per-tonne rate does the steel clause of the contract charge?",
         must=[r"re:commissioning", kpat(remaining), pat(steel_rate)],
         spans=[mspan("AM-02", r"transfer of USD [\d,]+ thousand from budget row BL-107"), bspan("BL-107"), cspan(r"at USD [\d,]+ per tonne")],
-        docs=[FM, FB, FC], origin=f"AM-02 source BL-107: {bud('BL-107')} - {xfer / 1000:g} = {remaining:g}; contract {steel_rate} per tonne")
+        docs=[FM, FB, FC], origin=f"AM-02 source BL-107: {bud('BL-107')} - {xfer} = {remaining:g}; contract {steel_rate} per tonne")
 
     # ---- amended values: the memo overrides the contract figure
     g.q("amend", "crane-rate-now", "multi_doc",
@@ -480,7 +480,7 @@ def build_gold() -> Gold:
     steel_max = steel_new * steel_rate
     over2 = steel_max / 1000 - bud("BL-102")
     g.q("derive", "steel-max-vs-budget", "numeric",
-        "At the contract's per-tonne rate and the currently approved tonne cap, what is the maximum steel fabrication cost in USD, and by how much, in USD thousand, does it exceed the Steel Fabrication budget line?",
+        "At the contract's per-tonne rate and the currently approved tonne cap, what is the maximum steel fabrication cost in USD, and by how much, in USD thousand, does it exceed the original Steel Fabrication budget on the Project Budgets sheet (before any transfer)?",
         must=[pat(steel_max, steel_max / 1000), kpat(over2)],
         spans=[mspan("AM-02", r"The steel cap is now \d+ tonnes"), cspan(r"at USD [\d,]+ per tonne"), bspan("BL-102")],
         docs=[FM, FC, FB], origin=f"derived: {steel_new} x {steel_rate} = {steel_max}; minus {bud('BL-102')}k = {over2:g}k")
