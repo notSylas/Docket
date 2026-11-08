@@ -165,4 +165,24 @@ def checks(settings, *, tags_fetcher=None, environment=None, terminal=None) -> l
     out.append(Check("Display", "OK" if display else "WARN", "Display environment is present (not actively probed)." if display else "No graphical display is advertised.",
                      "Enter folder paths in the terminal; the graphical folder picker is optional." if not display else ""))
     out.append(lock_check(root))
+    out.append(connector_check(db_path))
     return out
+
+
+def connector_check(db_path: Path) -> Check:
+    """Network is allowed only for explicitly configured connector hosts, and only while syncing.
+    Doctor itself never connects to them."""
+    from docket.services.connectors.service import PROVIDERS
+
+    try:
+        if not db_path.exists():
+            raise FileNotFoundError
+        with closing(sqlite3.connect(db_path.absolute().as_uri() + "?mode=ro", uri=True, timeout=.2)) as db:
+            providers = [r[0] for r in db.execute("SELECT provider FROM connector_accounts WHERE status = 'active'")]
+    except (sqlite3.Error, OSError):
+        providers = []
+    if not providers:
+        return Check("Mail connectors", "OK", "None configured; Docket makes no network connections except local Ollama.")
+    hosts = sorted({h for p in providers if p in PROVIDERS for h in PROVIDERS[p]("probe@example.com").allowed_hosts})
+    return Check("Mail connectors", "WARN", f"{len(providers)} configured; network only during sync, only to: {', '.join(hosts)}. Not contacted by doctor.",
+                 "Remove with: docket connectors remove ID")
