@@ -141,6 +141,11 @@ class Settings(BaseSettings):
     id_followup_per_id: int = 2
     id_followup_max: int = 6
 
+    # Re-bracket citation labels the model copied without brackets (env
+    # DOCKET_BARE_CITATION_REPAIR=0 disables). Exact-label only; see
+    # citations.repair_bare_citations.
+    bare_citation_repair: bool = True
+
     # Deterministic compute stage in the fast path (Upgrade doc 05 section 8
     # candidate move; env DOCKET_COMPUTE_STAGE_ENABLED). When on and the
     # question looks arithmetic/aggregate over retrieved spreadsheet chunks, one

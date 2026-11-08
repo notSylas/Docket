@@ -110,3 +110,20 @@ def validate_citations(answer: str, resolved_chunks: list[ResolvedEvidence]) -> 
         uncited=uncited,
         unknown_citations=unknown_citations,
     )
+
+
+def repair_bare_citations(answer: str, resolved_chunks: list[ResolvedEvidence]) -> str:
+    """Re-bracket a real citation label the model copied without its brackets.
+
+    Small models often write prose such as "per the memo.docx #chk_ab12" instead
+    of "[memo.docx #chk_ab12]". The label text is exact, only the brackets are
+    missing, so wrapping it is lossless and cannot invent a citation: only
+    labels of chunks that were in the prompt are touched.
+    """
+    for chunk in resolved_chunks:
+        label = chunk.citation_label
+        if not (label.startswith("[") and label.endswith("]")) or label in answer:
+            continue
+        bare = label[1:-1]
+        answer = re.sub(rf"(?<!\[){re.escape(bare)}(?!\w|\])", label, answer)
+    return answer

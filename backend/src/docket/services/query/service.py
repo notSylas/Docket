@@ -50,6 +50,7 @@ from docket.services.query.conversation import ConversationTurn, format_history_
 from docket.services.query.citations import (
     CITATION_TAG_PATTERN,
     build_context_block,
+    repair_bare_citations,
     validate_citations,
 )
 from docket.services.query.latex import normalize_latex
@@ -824,6 +825,8 @@ class QueryService:
         this query. Semantic support still needs evaluation; a valid tag alone
         cannot prove that every claim is supported by its passage.
         """
+        if self._settings.bare_citation_repair:
+            answer = repair_bare_citations(answer, resolved)
         validation = validate_citations(answer, resolved)
         invalid = bool(answer.strip()) and not validation.is_abstention and (
             validation.uncited or bool(validation.unknown_citations)
@@ -840,6 +843,8 @@ class QueryService:
                     ),
                     **self._answer_opts(),
                 )
+            if self._settings.bare_citation_repair:
+                answer = repair_bare_citations(answer, resolved)
             validation = validate_citations(answer, resolved)
 
         warnings: list[str] = []
