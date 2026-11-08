@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     parse_timeout_s: float = 600.0
     max_file_bytes: int = 512 * 1024 * 1024
     parse_max_pages: int = 0
+    # Experimental: convert PDFs that already have a text layer with Docling's
+    # OCR disabled (DOCKET_PDF_SKIP_OCR_WITH_TEXT_LAYER=true). Off by default.
+    pdf_skip_ocr_with_text_layer: bool = False
 
     # Discovery ignore rules (hidden folders, virtualenvs, site-packages,
     # node_modules, Office lock files, `.docketignore`). Escape hatch:

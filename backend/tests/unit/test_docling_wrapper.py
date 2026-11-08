@@ -358,3 +358,77 @@ def test_parsed_document_text_has_no_markers_fake_docling_result(monkeypatch, tm
     assert "<!--PAGE:" not in result.text_with_page_markers.replace(
         "<!--PAGE:2-->", ""
     ).replace("<!--PAGE:1-->", "")
+
+
+# --- Step 1b-D: optional OCR skip for PDFs with a text layer ---------------
+
+
+def _text_pdf(path, text="The quick brown fox jumps over the lazy dog. " * 3):
+    body = f"BT /F1 12 Tf 50 700 Td ({text}) Tj ET".encode()
+    objs = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
+        b"/Resources << /Font << /F1 5 0 R >> >> >>",
+        b"<< /Length %d >>\nstream\n" % len(body) + body + b"\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    out, offsets = b"%PDF-1.4\n", []
+    for i, o in enumerate(objs, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % i + o + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1)
+    out += b"".join(b"%010d 00000 n \n" % o for o in offsets)
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, xref)
+    path.write_bytes(out)
+
+
+def test_pdf_has_text_layer(tmp_path):
+    from docket.infra.parsing.docling_wrapper import pdf_has_text_layer
+
+    good = tmp_path / "t.pdf"
+    _text_pdf(good)
+    assert pdf_has_text_layer(good) is True
+    empty = tmp_path / "e.pdf"
+    _text_pdf(empty, text="")
+    assert pdf_has_text_layer(empty) is False
+    assert pdf_has_text_layer(tmp_path / "missing.pdf") is False
+    (tmp_path / "junk.pdf").write_bytes(b"not a pdf")
+    assert pdf_has_text_layer(tmp_path / "junk.pdf") is False
+
+
+def test_skip_ocr_flag_selects_no_ocr_converter(tmp_path):
+    import types
+
+    import docket.infra.parsing.docling_wrapper as dw
+
+    text_pdf, other_pdf = tmp_path / "t.pdf", tmp_path / "e.pdf"
+    _text_pdf(text_pdf)
+    _text_pdf(other_pdf, text="")
+    used = []
+
+    class _Doc:
+        pages = {}
+        texts = []
+
+        def export_to_markdown(self):
+            return "hello"
+
+    def conv(name):
+        return types.SimpleNamespace(
+            convert=lambda p, **kw: (used.append((name, p.rsplit("/", 1)[1])), types.SimpleNamespace(document=_Doc()))[1]
+        )
+
+    parser = object.__new__(dw.DoclingParser)
+    parser._converter = conv("ocr")
+    parser._converter_no_ocr = None
+    parser._build_converter = lambda do_ocr: conv("noocr" if not do_ocr else "ocr")
+    parser._parser_name, parser._parser_version = "docling", "x"
+    parser._skip_ocr_with_text_layer = True
+    parser.parse("s", text_pdf)
+    parser.parse("s", other_pdf)
+    assert used == [("noocr", "t.pdf"), ("ocr", "e.pdf")]
+    parser._skip_ocr_with_text_layer = False
+    parser.parse("s", text_pdf)
+    assert used[-1] == ("ocr", "t.pdf")

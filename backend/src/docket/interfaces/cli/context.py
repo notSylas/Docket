@@ -194,6 +194,7 @@ class AppContext:
         return DoclingParser(
             generate_page_images=self.settings.page_images_needed,
             max_pages=self.settings.parse_max_pages,
+            skip_ocr_with_text_layer=self.settings.pdf_skip_ocr_with_text_layer,
         )
 
     @cached_property
@@ -211,7 +212,8 @@ class AppContext:
                 DoclingParser,
                 generate_page_images=self.settings.page_images_needed,
                 max_pages=self.settings.parse_max_pages,
-                ),
+                skip_ocr_with_text_layer=self.settings.pdf_skip_ocr_with_text_layer,
+            ),
             workers=self.settings.parse_workers,
             timeout_s=self.settings.parse_timeout_s,
         )
