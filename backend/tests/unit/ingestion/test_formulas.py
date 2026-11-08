@@ -270,6 +270,7 @@ def test_formula_transcription_backfill_reuses_stored_page_images_no_reparse(
 
     monkeypatch.setattr(env.pipeline._parser, "parse", _fake_parse)
 
+    env.pipeline._settings.store_page_images = True  # keep the images from run 1
     # First run: flag off. formula_regions_json/page_images_json get
     # populated; formula_transcriptions_json stays None.
     result = env.pipeline.run_ingestion_for_source(env.source.id)

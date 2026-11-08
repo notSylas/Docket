@@ -188,7 +188,7 @@ class AppContext:
 
     @cached_property
     def parser(self) -> DoclingParser:
-        return DoclingParser()
+        return DoclingParser(generate_page_images=self.settings.page_images_needed)
 
     @cached_property
     def gateway(self) -> OllamaGateway:

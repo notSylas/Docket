@@ -126,7 +126,8 @@ def prefill(engine, lance_dir: Path, first: int, last: int, cpf: int, dim: int, 
         db.open_table("chunks").add(gen())
     else:
         db.create_table("chunks", data=gen(), schema=schema)
-    lw.maintain(compact=True)
+    if hasattr(lw, "maintain"):
+        lw.maintain(compact=True)
 
 
 def timed(fn):
@@ -158,9 +159,8 @@ def measure(fw, lw, first_file: int, nfiles: int, cpf: int, dim: int):
 def lance_stats(lance_dir: Path) -> dict:
     import lancedb
 
-    t = lancedb.connect(str(lance_dir)).open_table("chunks")
     vdir = lance_dir / "chunks.lance" / "_versions"
-    return {"fragments": len(t.to_lance().get_fragments()), "versions": len(list(vdir.glob("*"))) if vdir.exists() else None,
+    return {"data_files": len(list((lance_dir / "chunks.lance" / "data").glob("*"))), "versions": len(list(vdir.glob("*"))) if vdir.exists() else None,
             "manifest_mb": round(sum(p.stat().st_size for p in vdir.glob("*")) / 1e6, 1) if vdir.exists() else None}
 
 

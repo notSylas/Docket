@@ -629,7 +629,10 @@ class IngestionPipeline:
             # processed (visual index / formula transcription), which is
             # handled by a narrower backfill pass below, not a full re-ingest.
             needs_formula_backfill = evidence_version.formula_regions_json is None
-            needs_page_image_backfill = evidence_version.page_images_json is None
+            needs_page_image_backfill = (
+                evidence_version.page_images_json is None
+                and self._settings.page_images_needed
+            )
             needs_transcription_backfill = (
                 self._settings.formula_transcription_enabled
                 and evidence_version.formula_transcriptions_json is None
@@ -658,7 +661,7 @@ class IngestionPipeline:
                                 page_images=parsed.page_images,
                             )
                     else:
-                        page_image_hashes = json.loads(evidence_version.page_images_json)
+                        page_image_hashes = json.loads(evidence_version.page_images_json or "{}")
                 else:
                     # Regions + page images are already stored;
                     # transcription is the only thing missing (e.g. the
@@ -667,7 +670,7 @@ class IngestionPipeline:
                     # re-render every page for nothing -- transcription
                     # only ever depends on page images already existing.
                     formula_regions = json.loads(evidence_version.formula_regions_json)
-                    page_image_hashes = json.loads(evidence_version.page_images_json)
+                    page_image_hashes = json.loads(evidence_version.page_images_json or "{}")
 
                 if needs_transcription_backfill:
                     self._formula_transcriber.transcribe(
@@ -689,8 +692,15 @@ class IngestionPipeline:
         try:
             parsed = self._parser.parse(source_id, path)
             self._formula_transcriber.save_regions(evidence_version.id, parsed.formula_regions)
-            page_image_hashes = self._visual_indexer.save_page_images(
-                evidence_version.id, parsed.page_images
+            # Page images are only generated/stored when something consumes
+            # them (`Settings.page_images_needed`); otherwise
+            # `page_images_json` stays NULL, which the unchanged-file
+            # backfill above treats as "images wanted later" only once a
+            # consumer is switched on.
+            page_image_hashes = (
+                self._visual_indexer.save_page_images(evidence_version.id, parsed.page_images)
+                if self._settings.page_images_needed
+                else {}
             )
             if self._settings.visual_index_enabled:
                 self._visual_indexer.index_pages(

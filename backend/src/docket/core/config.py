@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     # explicit decision).
     visual_index_enabled: bool = False
 
+    # Page PNGs are ~300 KB/page (34x the raw PDF bytes in the scale
+    # measurements) and are only consumed by the visual index and formula
+    # transcription. They are generated and stored only when one of those is
+    # on, or when this is set explicitly (DOCKET_STORE_PAGE_IMAGES=true).
+    store_page_images: bool = False
+
     # Discovery ignore rules (hidden folders, virtualenvs, site-packages,
     # node_modules, Office lock files, `.docketignore`). Escape hatch:
     # DOCKET_INGEST_IGNORE_ENABLED=false walks everything, as before.
@@ -199,6 +205,14 @@ class Settings(BaseSettings):
     # the storage budget (part 01 section 7) for up to 30 days for no real
     # benefit.
     blob_trash_grace_days: int = 7
+
+    @property
+    def page_images_needed(self) -> bool:
+        return bool(
+            self.store_page_images
+            or self.visual_index_enabled
+            or self.formula_transcription_enabled
+        )
 
     @property
     def sqlite_path(self) -> Path:

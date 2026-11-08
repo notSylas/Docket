@@ -259,7 +259,7 @@ class DoclingParser:
     and reused across ``parse()`` calls, mirroring the spike's usage.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, generate_page_images: bool = True) -> None:
         from docling.document_converter import DocumentConverter, PdfFormatOption
         from docling.datamodel.base_models import InputFormat
         from docling.datamodel.pipeline_options import PdfPipelineOptions
@@ -274,9 +274,10 @@ class DoclingParser:
         # is worth the extra memory/time per page during ingestion.
         options = PdfPipelineOptions(
             do_formula_enrichment=False,
-            generate_page_images=True,
+            generate_page_images=generate_page_images,
             images_scale=PAGE_IMAGES_SCALE,
         )
+        self._generate_page_images = generate_page_images
         self._converter = DocumentConverter(
             format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=options)}
         )
@@ -324,7 +325,7 @@ class DoclingParser:
             annotated_markdown = _insert_page_markers(markdown, result.document)
             text_with_page_markers = unescape_markdown(annotated_markdown)
             formula_regions = _formula_regions(result.document)
-            page_images = _page_images(result.document)
+            page_images = _page_images(result.document) if getattr(self, "_generate_page_images", True) else {}
         except Exception as exc:  # noqa: BLE001 -- intentionally broad, see docstring
             raise ParseError(source_id, path, exc) from exc
 
