@@ -13,6 +13,7 @@ alongside, keyed by version.
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Callable, Sequence
 
@@ -20,6 +21,8 @@ from docket.infra.index.base import ChunkRecord, IndexWriteStats, IndexWriter
 from docket.infra.index.manifest import IndexManifestGuard
 from docket.infra.index.visual_index import LancePageIndexWriter
 from docket.infra.inference.gateway import InferenceGateway, embed_texts
+
+logger = logging.getLogger(__name__)
 
 
 class IndexManager:
@@ -100,6 +103,20 @@ class IndexManager:
                 self._pages.delete_by_version(version_id)
 
         return IndexWriteStats(upserted=0, skipped_unchanged=0, deleted=len(stale))
+
+    def maintain(self) -> dict | None:
+        """Post-ingest ANN index build/optimize + compaction of the vector
+        table. Never raises (a failed optimization must not fail an ingest:
+        search stays correct, just slower). Caller holds the writer lock."""
+        maintain = getattr(self._vector, "maintain", None)
+        if maintain is None:
+            return None
+        try:
+            path = self._manifest_guard.path if self._manifest_guard is not None else None
+            return maintain(manifest_path=path)
+        except Exception:  # noqa: BLE001
+            logger.warning("vector index maintenance failed", exc_info=True)
+            return None
 
     def delete_chunks(self, chunk_ids: Sequence[str]) -> None:
         """Remove exactly `chunk_ids` from both indexes (a no-op for ids

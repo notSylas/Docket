@@ -142,6 +142,7 @@ def checks(settings, *, tags_fetcher=None, environment=None, terminal=None) -> l
     except Exception:
         # Do not print JSON contents or paths from a damaged manifest.
         out.append(Check("Index manifest", "BLOCK", "The index manifest cannot be read.", "Back up the library, repair its manifest, then run docket reindex."))
+    out.append(ann_index_check(settings))
     db_path = settings.sqlite_path
     try:
         if not db_path.exists():
@@ -167,6 +168,32 @@ def checks(settings, *, tags_fetcher=None, environment=None, terminal=None) -> l
     out.append(lock_check(root))
     out.append(connector_check(db_path))
     return out
+
+
+def ann_index_check(settings) -> Check:
+    """Read-only: ANN index state of the chunks vector table."""
+    try:
+        if not settings.lancedb_path.exists() or not any(settings.lancedb_path.iterdir()):
+            return Check("Vector index", "OK", "No vector index yet.")
+        import lancedb
+
+        from docket.infra.index import tuning
+        from docket.infra.index.vector_index import vector_index_stats
+
+        table = lancedb.connect(str(settings.lancedb_path)).open_table("chunks")
+        rows = table.count_rows()
+        stats = vector_index_stats(table)
+        floor = tuning.ann_min_rows()
+        if stats is None:
+            if rows >= floor:
+                return Check("Vector index", "WARN", f"{rows:,} chunks searched by exact scan; ANN index not built.",
+                             "Run docket reindex (or re-ingest) to build the ANN index.")
+            return Check("Vector index", "OK", f"{rows:,} chunks, exact scan (ANN index starts at {floor:,}).")
+        return Check("Vector index", "OK" if stats["unindexed_rows"] <= max(1000, rows // 10) else "WARN",
+                     f"{rows:,} chunks, {stats['index_type']} ({stats['unindexed_rows']:,} not yet indexed; still searched).",
+                     "" if stats["unindexed_rows"] <= max(1000, rows // 10) else "Run docket reindex or finish an ingest to optimize it.")
+    except Exception:
+        return Check("Vector index", "OK", "Vector index state could not be read (not required).")
 
 
 def connector_check(db_path: Path) -> Check:

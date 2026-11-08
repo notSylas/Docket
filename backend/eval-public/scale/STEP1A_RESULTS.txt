@@ -1,0 +1,29 @@
+Step 1a microbenchmark (CPU, synthetic 1024-d clustered vectors, top_k=30, 20 queries, 2% of versions stale in vector table)
+Unit suite in -scale worktree: 2013 passed, 3 deselected (main baseline 1999 passed + 17 new tests - 3 deselected counted separately)
+
+200k rows (6667 versions): table 821 MB
+  mode              p50_s   p95_s   recall30
+  legacy flat       0.4331  0.5029  1.0 (truth)
+  scalable flat     0.2610  0.2741  1.0
+  scalable + ANN    0.0093  0.0118  1.0   (nprobes=20, refine=10)
+  ANN build 20.4 s, index 29.1 MB, IVF_PQ partitions=447 sub_vectors=128
+  grid (nprobes,refine): 10/5 p50 .0063 r1.0; 40/10 .0102 r1.0; 64/30 .0197 r1.0; 100/30 .0217 r1.0
+
+1M rows (33334 versions): table 4106 MB
+  mode              p50_s   p95_s   recall30
+  legacy flat       2.1827  2.2563  1.0 (truth)
+  scalable flat     1.2184  1.2552  1.0
+  scalable + ANN    0.0246  0.0274  1.0   (nprobes=20, refine=10)
+  ANN build 24.6 s, index 136.1 MB, IVF_PQ partitions=1000 sub_vectors=128
+  grid (nprobes,refine): 10/5 p50 .0178 r0.995; 40/10 .0260 r1.0; 50/20 .0312 r1.0; 64/30 .0361 r1.0; 100/30 .0381 r1.0
+
+Notes: speedup of scalable flat over legacy comes from not shipping a ~1.3 MB IN list per query (6.7k/33k versions here;
+at 500k files the legacy path also loads 500k ids from SQLite per query). Step 0 (2M rows, harder synthetic) saw recall 0.83
+at nprobes=20/refine=10 and 0.997 at 100/30; shipped defaults are therefore raised (see commit) to nprobes=50, refine=20.
+No Step 0 RESULTS.json existed; Step 0 vec.json (bench/vec) legacy flat 2M in_all p50 4.67s is the closest baseline.
+Machine was shared with other jobs; absolute timings indicative.
+
+GATE (scale-step1 code, DOCKET_ELIGIBILITY_MODE default=scalable, 3 repeats, judged + cross-check)
+  original gold: judged 32/33 (97.0%), wrongful abstention 0/99, revoked leaks 0 (retrieved 0, answered 0), recall@14 99/99
+  G6: strict 28/29 (96.6%), wrongful abstention 0/75, revoked leaks 0
+  (ANN not exercised by gate corpora: below the 100k-row threshold, flat path; eligibility path is exercised.)

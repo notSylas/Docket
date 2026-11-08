@@ -40,6 +40,7 @@ from docket.core.writer_lock import WriterLock
 from docket.core.db.models import SourceStatus, VersionStatus
 from docket.infra.index.context import INDEX_TEXT_VERSION, index_text_for_chunk
 from docket.infra.index.manifest import new_manifest, read_manifest, write_manifest
+from docket.infra.index.vector_index import LanceIndexWriter
 from docket.infra.inference.gateway import InferenceGateway, embed_texts
 
 _CHUNKS = "chunks"
@@ -259,6 +260,12 @@ def _reindex_unlocked(
                     tokenizer=tokenizer or (previous.tokenizer if previous else None),
                 ),
             )
+            # The swapped-in table is a fresh flat one: rebuild the ANN index
+            # when it is big enough. Best effort -- search is correct without it.
+            try:
+                LanceIndexWriter(db_path).maintain(manifest_path=manifest_path)
+            except Exception:  # noqa: BLE001
+                pass
         except BaseException:
             for restore in reversed(undo):
                 restore()

@@ -67,6 +67,11 @@ class IndexManifest:
     updated_at: str
     # Absent in manifests written before the context prefix: reads as 0.
     index_text_version: int = 0
+    # ANN (IVF_PQ) parameters of the chunks table, or None while it is flat.
+    # Informational: an index is a search-speed structure over the same vector
+    # space, never a mismatch (check_compatible ignores it); `docket reindex`
+    # rebuilds it.
+    ann_index: dict | None = None
 
 
 def _now() -> str:
@@ -125,6 +130,13 @@ def write_manifest(path: Path, manifest: IndexManifest) -> None:
         raise
 
 
+def record_ann_index(path: Path, params: dict | None) -> None:
+    """Record the ANN index parameters (no-op without a manifest)."""
+    manifest = read_manifest(path)
+    if manifest is not None:
+        write_manifest(path, replace(manifest, ann_index=params, updated_at=_now()))
+
+
 def check_compatible(manifest: IndexManifest, embed_model: str, dimension: int) -> None:
     """Raise `IndexManifestMismatchError` unless model and dimension match."""
     if manifest.embed_model != embed_model:
@@ -158,6 +170,10 @@ class IndexManifestGuard:
         self._embed_model = embed_model
         self._table_dimensions = table_dimensions
         self._tokenizer_name = tokenizer_name
+
+    @property
+    def path(self) -> Path:
+        return self._path
 
     def check_write(self, dimension: int) -> None:
         """Call with the actual embedding dimension before writing vectors."""
