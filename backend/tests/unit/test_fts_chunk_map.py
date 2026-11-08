@@ -143,10 +143,10 @@ def test_note_file_done_runs_maintain_every_n(monkeypatch):
     monkeypatch.setenv("DOCKET_COMPACT_EVERY_FILES", "3")
     m = IndexManager(None, None, None)
     calls = []
-    m.maintain = lambda: calls.append(1)
+    m.maintain = lambda **kw: calls.append(kw)
     for _ in range(7):
         m.note_file_done()
-    assert len(calls) == 2
+    assert len(calls) == 2 and calls[0]["keep_hours"] <= 0.1
     monkeypatch.setenv("DOCKET_COMPACT_EVERY_FILES", "0")
     for _ in range(10):
         m.note_file_done()

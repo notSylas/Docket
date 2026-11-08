@@ -49,8 +49,17 @@ def compact_after_ingest() -> bool:
     )
 
 
-def compact_keep_hours() -> int:
-    return max(0, _int("DOCKET_COMPACT_KEEP_HOURS", 1))
+def compact_keep_hours() -> float:
+    try:
+        return max(0.0, float(os.environ.get("DOCKET_COMPACT_KEEP_HOURS", 1)))
+    except ValueError:
+        return 1.0
+
+
+#: Mid-run compactions drop table versions older than this many hours
+#: (capped by `compact_keep_hours`): a long ingest would otherwise keep every
+#: per-file version for the full retention window.
+MID_RUN_KEEP_HOURS = 0.1
 
 
 def compact_every_files() -> int:

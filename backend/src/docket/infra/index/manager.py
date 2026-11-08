@@ -150,9 +150,9 @@ class IndexManager:
         self._files_since_maintain += 1
         if self._files_since_maintain >= every:
             self._files_since_maintain = 0
-            self.maintain()
+            self.maintain(keep_hours=min(tuning.compact_keep_hours(), tuning.MID_RUN_KEEP_HOURS))
 
-    def maintain(self) -> dict | None:
+    def maintain(self, **kwargs) -> dict | None:
         """Post-ingest ANN index build/optimize + compaction of the vector
         table. Never raises (a failed optimization must not fail an ingest:
         search stays correct, just slower). Caller holds the writer lock."""
@@ -161,7 +161,7 @@ class IndexManager:
             return None
         try:
             path = self._manifest_guard.path if self._manifest_guard is not None else None
-            return maintain(manifest_path=path)
+            return maintain(manifest_path=path, **kwargs)
         except Exception:  # noqa: BLE001
             logger.warning("vector index maintenance failed", exc_info=True)
             return None

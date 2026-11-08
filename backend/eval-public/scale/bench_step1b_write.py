@@ -160,7 +160,13 @@ def lance_stats(lance_dir: Path) -> dict:
     import lancedb
 
     vdir = lance_dir / "chunks.lance" / "_versions"
-    return {"data_files": len(list((lance_dir / "chunks.lance" / "data").glob("*"))), "versions": len(list(vdir.glob("*"))) if vdir.exists() else None,
+    try:
+        import lancedb
+
+        frags = lancedb.connect(str(lance_dir)).open_table("chunks").stats().fragment_stats.num_fragments
+    except Exception:  # noqa: BLE001
+        frags = None
+    return {"live_fragments": frags, "data_files": len(list((lance_dir / "chunks.lance" / "data").glob("*"))), "versions": len(list(vdir.glob("*"))) if vdir.exists() else None,
             "manifest_mb": round(sum(p.stat().st_size for p in vdir.glob("*")) / 1e6, 1) if vdir.exists() else None}
 
 
@@ -199,11 +205,14 @@ def main():
             emb = nprng.standard_normal((len(recs), a.dim), dtype=np.float32).tolist()
             fw.existing_chunk_ids(ids); lw.existing_chunk_ids(ids)
             fw.upsert(recs, emb); lw.upsert(recs, emb)
-            if hasattr(lw, "maintain") and hasattr(__import__("docket.infra.index.tuning", fromlist=["x"]), "compact_every_files"):
+            try:  # new code only: the same mid-run compaction the pipeline performs
                 from docket.infra.index import tuning
+
                 every = tuning.compact_every_files()
                 if every and (f + 1) % every == 0:
-                    lw.maintain(compact=True)
+                    lw.maintain(compact=True, keep_hours=min(tuning.compact_keep_hours(), tuning.MID_RUN_KEEP_HOURS))
+            except ImportError:
+                pass
             if (f + 1) % window == 0:
                 emit({"mode": "incremental", "files": f + 1, "sec_per_file": round((time.perf_counter() - t_win) / window, 5),
                       **lance_stats(lance_dir)})
