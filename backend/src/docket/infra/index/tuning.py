@@ -4,8 +4,8 @@ flip them without re-importing settings.
 
 - DOCKET_ELIGIBILITY_MODE=scalable|legacy   (default scalable)
 - DOCKET_ANN_MIN_ROWS=<int>                 (default 100000; below it: flat scan)
-- DOCKET_ANN_NPROBES=<int>                  (default 20)
-- DOCKET_ANN_REFINE_FACTOR=<int>            (default 10)
+- DOCKET_ANN_NPROBES=<int>                  (default 50)
+- DOCKET_ANN_REFINE_FACTOR=<int>            (default 20)
 - DOCKET_COMPACT_AFTER_INGEST=true|false    (default true)
 - DOCKET_COMPACT_KEEP_HOURS=<int>           (default 1: old table versions younger
   than this are kept, so an in-flight reader or a reindex undo still works)
@@ -33,11 +33,11 @@ def ann_min_rows() -> int:
 
 
 def ann_nprobes() -> int:
-    return max(1, _int("DOCKET_ANN_NPROBES", 20))
+    return max(1, _int("DOCKET_ANN_NPROBES", 50))
 
 
 def ann_refine_factor() -> int:
-    return max(1, _int("DOCKET_ANN_REFINE_FACTOR", 10))
+    return max(1, _int("DOCKET_ANN_REFINE_FACTOR", 20))
 
 
 def compact_after_ingest() -> bool:
