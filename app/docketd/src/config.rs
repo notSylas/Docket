@@ -67,10 +67,4 @@ impl Config {
     }
 }
 
-/// `$XDG_RUNTIME_DIR/docket/docketd.sock`; shared with the GUI.
-pub fn default_socket_path() -> Result<PathBuf, String> {
-    let dir = std::env::var_os("XDG_RUNTIME_DIR")
-        .filter(|v| !v.is_empty())
-        .ok_or("XDG_RUNTIME_DIR is not set; set DOCKET_SOCKET to choose a socket path")?;
-    Ok(PathBuf::from(dir).join("docket").join("docketd.sock"))
-}
+pub use docket_proto::client::default_socket_path;

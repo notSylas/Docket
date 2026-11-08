@@ -6,7 +6,7 @@
 
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub struct HttpResponse {
@@ -227,6 +227,14 @@ pub fn sse_events<R: Read>(body: R) -> impl Iterator<Item = io::Result<SseEvent>
             }
         }
     })
+}
+
+/// `$XDG_RUNTIME_DIR/docket/docketd.sock`, the daemon's default socket.
+pub fn default_socket_path() -> Result<PathBuf, String> {
+    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .filter(|v| !v.is_empty())
+        .ok_or("XDG_RUNTIME_DIR is not set; set DOCKET_SOCKET to choose a socket path")?;
+    Ok(PathBuf::from(dir).join("docket").join("docketd.sock"))
 }
 
 #[cfg(test)]
