@@ -11,20 +11,71 @@ persistence logic independently testable; no behavior changed in the move.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from sqlalchemy import delete, select
 from sqlalchemy.orm import sessionmaker
 
 from docket.core.db.identity import compute_chunk_id
 from docket.core.db.models import (
     Chunk,
+    ChunkAlias,
+    KEYWORD_SERVABLE,
     ChunkRecipe as ChunkRecipeRow,
     EvidenceUnit,
     EvidenceVersion,
     VersionStatus,
+    _new_id,
 )
 from docket.infra.index.base import ChunkRecord
 from docket.infra.index.context import index_text_for_chunk
 from docket.infra.parsing.recipes import ChunkRecipe
+
+
+@dataclass
+class BuiltRows:
+    """Unit/chunk rows (ids assigned) and index records for one version,
+    built without touching the database, so embedding and vector writes can
+    happen before the single SQLite transaction that swaps them in."""
+
+    units: list
+    chunks: list
+    records: list
+
+
+_ALIAS_SHINGLE = 6
+_ALIAS_MIN_OVERLAP = 0.3
+
+
+def map_overlapping_chunks(old: dict[str, str], new: dict[str, str]) -> dict[str, tuple[str | None, float]]:
+    """For each old chunk id, the new chunk id sharing the most word
+    6-grams with it and the share of the old chunk's 6-grams that it holds;
+    `(None, share)` below `_ALIAS_MIN_OVERLAP` (the text moved or changed too
+    much for a citation to still point at it)."""
+    def shingles(text: str) -> set[tuple[str, ...]]:
+        words = text.lower().split()
+        if len(words) < _ALIAS_SHINGLE:
+            return {tuple(words)} if words else set()
+        return {tuple(words[i : i + _ALIAS_SHINGLE]) for i in range(len(words) - _ALIAS_SHINGLE + 1)}
+
+    index: dict[tuple[str, ...], list[str]] = {}
+    for nid, text in new.items():
+        for sh in shingles(text):
+            index.setdefault(sh, []).append(nid)
+    out: dict[str, tuple[str | None, float]] = {}
+    for oid, text in old.items():
+        shs = shingles(text)
+        votes: dict[str, int] = {}
+        for sh in shs:
+            for nid in index.get(sh, ()):
+                votes[nid] = votes.get(nid, 0) + 1
+        if not votes or not shs:
+            out[oid] = (None, 0.0)
+            continue
+        best = max(votes, key=lambda k: (votes[k], k))
+        share = votes[best] / len(shs)
+        out[oid] = (best if share >= _ALIAS_MIN_OVERLAP else None, share)
+    return out
 
 
 class ChunkWriter:
@@ -115,6 +166,7 @@ class ChunkWriter:
         units,
         chunks,
         recipe: ChunkRecipe | None = None,
+        provisional: bool = False,
     ) -> list[ChunkRecord]:
         recipe = recipe or self._chunk_recipe
         with self._session_factory() as session:
@@ -156,6 +208,7 @@ class ChunkWriter:
                         page_start=c.page_start,
                         page_end=c.page_end,
                         provenance=c.provenance,
+                        provisional=provisional,
                     )
                 )
             session.add_all(chunk_objs)
@@ -180,6 +233,138 @@ class ChunkWriter:
                 )
                 for c in chunk_objs
             ]
+
+    # -- tiered indexing ------------------------------------------------------
+
+    def build_rows(
+        self,
+        *,
+        source_id: str,
+        evidence_version_id: str,
+        file_path: str | None,
+        units,
+        chunks,
+        recipe: ChunkRecipe | None = None,
+        provisional: bool = False,
+    ) -> BuiltRows:
+        """Same rows `persist_units_and_chunks` writes, built in memory (unit
+        ids are assigned here instead of at flush time)."""
+        recipe = recipe or self._chunk_recipe
+        unit_objs = [
+            EvidenceUnit(
+                id=_new_id("eu"),
+                evidence_version_id=evidence_version_id,
+                unit_index=u.unit_index,
+                heading=u.heading,
+                content_hash=u.content_hash,
+                unit_kind=u.unit_kind,
+                locator_json=u.locator_json,
+            )
+            for u in units
+        ]
+        unit_by_index = {u.unit_index: o for u, o in zip(units, unit_objs)}
+        chunk_objs, records = [], []
+        for c in chunks:
+            unit = unit_by_index[c.evidence_unit_index]
+            chunk_id = compute_chunk_id(evidence_version_id, recipe.id, c.ordinal, c.content_hash)
+            chunk_objs.append(
+                Chunk(
+                    id=chunk_id, source_id=source_id, evidence_version_id=evidence_version_id,
+                    evidence_unit_id=unit.id, chunk_recipe_id=recipe.id, ordinal=c.ordinal,
+                    heading=c.heading, text=c.text, content_hash=c.content_hash,
+                    page_start=c.page_start, page_end=c.page_end, provenance=c.provenance,
+                    provisional=provisional,
+                )
+            )
+            records.append(
+                ChunkRecord(
+                    chunk_id=chunk_id, source_id=source_id, evidence_version_id=evidence_version_id,
+                    evidence_unit_id=unit.id, chunk_recipe_id=recipe.id, ordinal=c.ordinal,
+                    heading=c.heading, text=c.text, content_hash=c.content_hash,
+                    page_start=c.page_start, page_end=c.page_end,
+                    index_text=index_text_for_chunk(file_path, unit.locator_json, c.heading, c.text),
+                )
+            )
+        return BuiltRows(units=unit_objs, chunks=chunk_objs, records=records)
+
+    def has_provisional(self, evidence_version_id: str) -> bool:
+        with self._session_factory() as session:
+            return (
+                session.execute(
+                    select(Chunk.id)
+                    .where(Chunk.evidence_version_id == evidence_version_id, Chunk.provisional.is_(True))
+                    .limit(1)
+                ).first()
+                is not None
+            )
+
+    def replace_version_content(
+        self,
+        *,
+        fts,
+        evidence_version_id: str,
+        built: BuiltRows,
+        new_status: VersionStatus,
+        record_aliases: bool = False,
+    ) -> int | None:
+        """Swap a version's whole content in ONE SQLite transaction: delete
+        its old chunk/unit rows and their FTS rows (found through
+        `fts_chunk_map`), insert `built` (rows + FTS rows) and set the
+        version's status. Nothing is visible half-done and an exception at any
+        point rolls everything back, leaving the previous content (and its
+        status) exactly as it was. Returns the number of chunks written, or
+        `None` (nothing changed) when the version has meanwhile been
+        superseded or removed. Vector rows are NOT touched here: the caller
+        appends them before this call (new ids are invisible until the status
+        says READY) and reconcile removes any that a crash left behind."""
+        from sqlalchemy import text as sql_text
+
+        with self._session_factory() as session:
+            version = session.get(EvidenceVersion, evidence_version_id)
+            if version is None or version.status == VersionStatus.SUPERSEDED:
+                return None
+            conn = session.connection()
+            old = {}
+            if record_aliases:
+                old = {
+                    cid: txt
+                    for cid, txt in session.execute(
+                        select(Chunk.id, Chunk.text).where(
+                            Chunk.evidence_version_id == evidence_version_id,
+                            Chunk.provisional.is_(True),
+                        )
+                    ).all()
+                }
+            fts.delete_version_in(conn, evidence_version_id)
+            session.execute(delete(Chunk).where(Chunk.evidence_version_id == evidence_version_id))
+            session.execute(
+                delete(EvidenceUnit).where(EvidenceUnit.evidence_version_id == evidence_version_id)
+            )
+            session.flush()
+            session.add_all(built.units)
+            session.flush()
+            session.add_all(built.chunks)
+            session.flush()
+            fts.upsert_in(conn, built.records)
+            new_ids = {c.id for c in built.chunks}
+            if record_aliases and old:
+                mapping = map_overlapping_chunks(
+                    {k: v for k, v in old.items() if k not in new_ids},
+                    {c.id: c.text for c in built.chunks},
+                )
+                for oid, (nid, share) in mapping.items():
+                    session.merge(
+                        ChunkAlias(
+                            old_chunk_id=oid, new_chunk_id=nid,
+                            evidence_version_id=evidence_version_id, overlap=share,
+                        )
+                    )
+            if new_ids:
+                session.execute(delete(ChunkAlias).where(ChunkAlias.old_chunk_id.in_(new_ids)))
+            version.status = new_status
+            version.failure_reason = None
+            session.commit()
+            return len(built.chunks)
 
     def find_clone_donor(
         self, *, content_hash: str, exclude_version_id: str, parser_name: str,
@@ -308,7 +493,8 @@ class ChunkWriter:
             return set(session.execute(stmt).scalars().all())
 
     def current_chunk_ids_for_source(self, source_id: str) -> set[str]:
-        """All chunk_ids reachable from `source_id`'s *servable* (`READY`)
+        """All chunk_ids reachable from `source_id`'s *servable* (`READY`, or
+        `TEXT_READY` with its provisional FTS-only chunks)
         EvidenceVersions -- the "should still be indexed" set used for the
         single end-of-run reconcile pass.
 
@@ -329,7 +515,7 @@ class ChunkWriter:
                 .join(EvidenceVersion, Chunk.evidence_version_id == EvidenceVersion.id)
                 .where(
                     EvidenceVersion.source_id == source_id,
-                    EvidenceVersion.status == VersionStatus.READY,
+                    EvidenceVersion.status.in_(KEYWORD_SERVABLE),
                 )
             )
             return set(session.execute(stmt).scalars().all())

@@ -90,7 +90,7 @@ def check_library(root: Path, *, expected_index=None, expected_revision=None) ->
             if expected_revision is not None and revision != expected_revision:
                 raise BackupError("The database migration revision does not match the backup manifest.")
             originals = db.execute(
-                "SELECT DISTINCT content_hash FROM evidence_versions WHERE status = 'READY'").fetchall()
+                "SELECT DISTINCT content_hash FROM evidence_versions WHERE status IN ('READY', 'TEXT_READY')").fetchall()
             for (digest,) in originals:
                 if not isinstance(digest, str) or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
                     raise BackupError("A stored original has an invalid content hash.")

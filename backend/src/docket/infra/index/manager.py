@@ -45,6 +45,38 @@ class IndexManager:
         self._embed_batch_size = embed_batch_size
         self._sleep = sleep
         self._files_since_maintain = 0
+        # Called before every embedding batch (set by the tiered runner so a
+        # question being answered can pause deep indexing between batches).
+        self.batch_hook: Callable[[], None] | None = None
+
+    @property
+    def fts_writer(self):
+        return self._fts
+
+    def append_vectors(self, records: Sequence[ChunkRecord]) -> int:
+        """Embed and write vector rows for `records` WITHOUT touching FTS
+        (tiered upgrade: the FTS rows are swapped in by the SQLite transaction
+        that flips the version to READY). Skips ids that already have a vector
+        row, so a retry after a crash does not embed them again. Returns how
+        many were embedded."""
+        records = list(records)
+        if not records:
+            return 0
+        present = self._vector.existing_chunk_ids([r.chunk_id for r in records])
+        to_write = [r for r in records if r.chunk_id not in present]
+        if not to_write:
+            return 0
+        embeddings = embed_texts(
+            self._gateway,
+            [r.index_text or r.text for r in to_write],
+            batch_size=self._embed_batch_size,
+            sleep=self._sleep,
+            between_batches=self.batch_hook,
+        )
+        if self._manifest_guard is not None:
+            self._manifest_guard.check_write(len(embeddings[0]))
+        self._vector.upsert(to_write, embeddings)
+        return len(to_write)
 
     def upsert_chunks(self, records: Sequence[ChunkRecord]) -> IndexWriteStats:
         """Upsert `records` into both indexes, embedding only what's missing
@@ -71,6 +103,7 @@ class IndexManager:
             [r.index_text or r.text for r in to_write],
             batch_size=self._embed_batch_size,
             sleep=self._sleep,
+            between_batches=self.batch_hook,
         )
         # After embedding (the dimension is only known now), before any write.
         if self._manifest_guard is not None:

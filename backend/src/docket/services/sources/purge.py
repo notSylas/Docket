@@ -32,7 +32,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import sessionmaker
 
 from docket.core.writer_lock import WriterLock, lock_for_sessions, writer_operation
@@ -125,6 +125,13 @@ class SourcePurgeService:
                 # Chunk rows -- no separate cleanup needed for those.
                 session.delete(version)
 
+            # Tiered indexing bookkeeping for the purged source: queued work
+            # and the replaced-chunk citation aliases of its versions.
+            session.execute(text("DELETE FROM ingest_queue WHERE source_id = :s"), {"s": source_id})
+            for version in versions:
+                session.execute(
+                    text("DELETE FROM chunk_aliases WHERE evidence_version_id = :v"), {"v": version.id}
+                )
             session.flush()
 
             # Safe-delete rule (section 8): a blob is eligible for removal

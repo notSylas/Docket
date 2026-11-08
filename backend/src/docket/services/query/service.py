@@ -415,10 +415,46 @@ class QueryService:
         # target (see that module), so this can't disturb `result.citations`
         # or the validation already done inside `_ask_fast`/`_ask_agent`.
         update: dict[str, Any] = {"answer": normalize_latex(result.answer)}
+        update.update(self._tier_coverage(result))
         if boundary is not None:
             update["scope_label"] = boundary.label
             update["scope_file_count"] = boundary.file_count
         return result.model_copy(update=update)
+
+    def _tier_coverage(self, result: QueryResult) -> dict[str, Any]:
+        """Tiered indexing: when some files are still keyword-only, say how
+        much of the library is fully indexed (`index_coverage`), and when the
+        answer actually rests on keyword-only text add a coverage line to the
+        warnings. Nothing changes for a fully indexed library."""
+        try:
+            from sqlalchemy import text as sql_text
+
+            from docket.services.ingestion.coverage import coverage_statement, library_coverage
+
+            ids = [c.chunk_id for c in result.citations]
+            used = False
+            if ids:
+                with self._engine.connect() as conn:
+                    used = (
+                        conn.execute(
+                            sql_text("SELECT 1 FROM chunks WHERE provisional = 1 AND id IN ("
+                                     + ",".join(f":i{n}" for n in range(len(ids))) + ") LIMIT 1"),
+                            {f"i{n}": cid for n, cid in enumerate(ids)},
+                        ).first()
+                        is not None
+                    )
+            cov = library_coverage(self._engine, used_provisional=used)
+        except Exception:  # noqa: BLE001 -- coverage is advisory; never fail an answer
+            logger.debug("tier coverage unavailable", exc_info=True)
+            return {}
+        if cov is None:
+            return {}
+        out: dict[str, Any] = {}
+        if result.index_coverage is None:
+            out["index_coverage"] = cov
+        if used:
+            out["validation_warnings"] = [*result.validation_warnings, coverage_statement(cov)]
+        return out
 
     @staticmethod
     @timed_phase("scope_resolve")

@@ -164,9 +164,11 @@ from docket.infra.parsing.recipes import (
     ChunkRecipe,
     pptx_recipe as build_pptx_recipe,
     recipe_family,
+    DEFAULT_SPLITTER,
     xlsx_recipe as build_xlsx_recipe,
     text_recipe as build_text_recipe,
 )
+from docket.infra.parsing import fast_text
 from docket.infra.parsing.xlsx_chunker import chunk_workbook
 from docket.infra.parsing.xlsx_wrapper import XlsxParser
 from docket.services.sources.manager import SourceManager, SourceNotFoundError
@@ -481,6 +483,10 @@ class IngestionPipeline:
         s = self._settings
         if not getattr(s, "reuse_duplicate_content", True):
             return None
+        if evidence_version.status == VersionStatus.TEXT_READY:
+            # Provisional chunks exist: the atomic Tier-2 upgrade replaces
+            # them; cloning would clear them non-atomically.
+            return None
         if s.visual_index_enabled or s.formula_transcription_enabled:
             return None
         recipe = self._recipes[FAMILY_DOCLING]
@@ -579,13 +585,9 @@ class IngestionPipeline:
             return self._pptx_parser.parse(source_id, path)
         return self._parser.parse(source_id, path)
 
-    def _chunk_and_index_version(
-        self, family: str, source_id: str, evidence_version_id: str, parsed
-    ) -> list:
-        """Chunk `parsed` with the family's chunker + current recipe, replace
-        the version's units/chunks (and index entries), and index the new
-        chunks. Shared by normal ingestion and `--rechunk`."""
-        recipe = self._recipes[family]
+    def _chunk_family(self, family: str, evidence_version_id: str, parsed, recipe: ChunkRecipe):
+        """Chunk `parsed` with the family's chunker and record the decoding
+        manifests the readers rely on. Pure with respect to the index."""
         if family == FAMILY_MAIL:
             units, chunks = chunk_mail(parsed, max_tokens=self._settings.chunk_max_tokens)
             with self._session_factory() as session:
@@ -627,6 +629,28 @@ class IngestionPipeline:
                 else parsed.text
             )
             units, chunks = chunk_document(chunking_text, recipe)
+        return units, chunks
+
+    def _version_status(self, evidence_version_id: str) -> VersionStatus | None:
+        with self._session_factory() as session:
+            version = session.get(EvidenceVersion, evidence_version_id)
+            return None if version is None else version.status
+
+    def _chunk_and_index_version(
+        self, family: str, source_id: str, evidence_version_id: str, parsed
+    ) -> list:
+        """Chunk `parsed` with the family's chunker + current recipe, replace
+        the version's units/chunks (and index entries), and index the new
+        chunks. Shared by normal ingestion and `--rechunk`.
+
+        A TEXT_READY version (Tier 1 done) takes the atomic upgrade path
+        instead: vectors are appended first, then ONE SQLite transaction swaps
+        the provisional chunks and their FTS rows for the full ones and flips
+        the version to READY (see `ChunkWriter.replace_version_content`)."""
+        recipe = self._recipes[family]
+        units, chunks = self._chunk_family(family, evidence_version_id, parsed, recipe)
+        if self._version_status(evidence_version_id) == VersionStatus.TEXT_READY:
+            return self._upgrade_text_ready(source_id, evidence_version_id, units, chunks, recipe)
         self._clear_version_chunks(evidence_version_id)
         self._chunk_writer.ensure_recipe_row(recipe)
         records = self._chunk_writer.persist_units_and_chunks(
@@ -638,6 +662,30 @@ class IngestionPipeline:
         )
         self._index_manager.upsert_chunks(records)
         return records
+
+    def _upgrade_text_ready(
+        self, source_id: str, evidence_version_id: str, units, chunks, recipe: ChunkRecipe
+    ) -> list:
+        """Tier 2 for a TEXT_READY version. Order matters for crash safety:
+        (1) append vector rows for the NEW chunk ids -- invisible to search
+        because the version is still TEXT_READY and the vector leg only
+        serves READY; (2) one transaction replaces provisional chunks + FTS
+        rows with the full ones and sets READY. A crash before (2) leaves the
+        provisional chunks untouched (plus unreachable vector rows that a retry
+        reuses or reconcile removes); a crash after leaves READY."""
+        with self._session_factory() as session:
+            file_path = session.get(EvidenceVersion, evidence_version_id).file_path
+        self._chunk_writer.ensure_recipe_row(recipe)
+        built = self._chunk_writer.build_rows(
+            source_id=source_id, evidence_version_id=evidence_version_id,
+            file_path=file_path, units=units, chunks=chunks, recipe=recipe,
+        )
+        self._index_manager.append_vectors(built.records)
+        self._chunk_writer.replace_version_content(
+            fts=self._index_manager.fts_writer, evidence_version_id=evidence_version_id,
+            built=built, new_status=VersionStatus.READY, record_aliases=True,
+        )
+        return built.records
 
     def _drop_superseded_index_entries(
         self, before_id: str | None, evidence_version: EvidenceVersion
@@ -921,6 +969,175 @@ class IngestionPipeline:
             raise
         self._evidence_manager.mark_version_status(version.id, VersionStatus.READY)
         return FileIngestResult(path, "ingested", chunks_written=len(records), notice=parsed.notice)
+
+    # -- tiered indexing ----------------------------------------------------
+
+    def tier1_recipe(self) -> ChunkRecipe:
+        """Recipe of the provisional chunks of the Docling family (fast text
+        for PDF/docx). A distinct parser identity keeps its chunk ids and
+        recipe row apart from the full path; the other families' provisional
+        chunks use their own (final) recipes, so their ids carry over."""
+        s = self._settings
+        return ChunkRecipe(
+            chunk_size=s.chunk_size_words,
+            overlap=s.chunk_overlap_words,
+            splitter=f"{DEFAULT_SPLITTER}:max_tokens={s.chunk_max_tokens}:tier1",
+            parser_name=fast_text.TIER1_PARSER_NAME,
+            parser_version=fast_text.TIER1_PARSER_VERSION,
+        )
+
+    def _family_parser(self, family: str):
+        return {
+            FAMILY_MAIL: self._mail_parser,
+            FAMILY_TEXT: self._text_parser,
+            FAMILY_XLSX: self._xlsx_parser,
+            FAMILY_PPTX: self._pptx_parser,
+        }.get(family, self._parser)
+
+    def tier_context(self, source_id: str) -> tuple[Source, Path, IgnoreRules]:
+        """(source, root, ignore rules) for a queue pass over `source_id`;
+        also performs the ACTIVE <-> MISSING root-reachability transition."""
+        source = self._load_active_source(source_id)
+        root = Path(source.path)
+        reachable = self._check_root_reachable(source)
+        if not reachable:
+            raise FileNotFoundError(f"source root unreachable: {source.path}")
+        rules = IgnoreRules.for_root(root, getattr(source, "rules_json", None))
+        if not getattr(self._settings, "ingest_ignore_enabled", True):
+            rules = IgnoreRules()
+        return source, root, rules
+
+    def prefetch_paths(self, source_id: str, paths: list[Path]) -> None:
+        """Offer upcoming Tier-2 files to the parse pool's look-ahead window."""
+        if self._parse_pool is None:
+            return
+        self._prefetch(source_id, list(paths), 0)
+
+    def reset_parse_pool(self) -> None:
+        self._reset_pool()
+
+    @writer_operation("indexing a file (quick pass)")
+    def ingest_tier1_path(
+        self, source_id: str, path: Path, root: Path, rules: IgnoreRules
+    ) -> FileIngestResult:
+        """Tier 1: make one file keyword-searchable (TEXT_READY) without
+        embeddings. Statuses: "ingested" (provisional chunks written, or a
+        READY clone of identical content), "unchanged" (already TEXT_READY or
+        READY), "no_fast_path" (scan/image/no text layer: Tier 2 only),
+        "deleted"/"skipped" as for `_ingest_path`. The writer lock is held for
+        this one file only, so a long queue never starves other writers."""
+        try:
+            path.resolve().relative_to(root.resolve())
+        except ValueError:
+            raise ValueError(f"{path} is not inside the source folder") from None
+        if not path.is_file():
+            if self._supersede_deleted_path(source_id, path):
+                return FileIngestResult(path=path, status="deleted")
+            return FileIngestResult(path=path, status="skipped")
+        if path.suffix.lower() not in DISCOVERABLE_EXTENSIONS or rules.path_ignored(
+            path.resolve().relative_to(root.resolve())
+        ):
+            return FileIngestResult(path=path, status="skipped")
+        try:
+            check_file_signature(path)
+        except InvalidFileError:
+            return FileIngestResult(path=path, status="skipped")
+        except OSError:
+            pass
+        return self._ingest_tier1_file(source_id, path)
+
+    def _ingest_tier1_file(self, source_id: str, path: Path) -> FileIngestResult:
+        suffix = path.suffix.lower()
+        self._check_file_size(path)
+        if suffix in UNSUPPORTED_EXTENSIONS:
+            raise UnsupportedFormatError(path)
+        family = recipe_family(str(path))
+        if family == FAMILY_DOCLING:
+            if not fast_text.has_fast_path(path):
+                return FileIngestResult(path=path, status="no_fast_path")
+            if self._evidence_manager.looks_unchanged(source_id, path):
+                return FileIngestResult(path=path, status="unchanged")
+            try:
+                parsed = fast_text.parse_fast(path, self._settings.parse_max_pages)
+            except fast_text.NoTextLayer:
+                return FileIngestResult(path=path, status="no_fast_path")
+            recipe = self.tier1_recipe()
+        else:
+            parsed = None
+            recipe = self._recipes[family]
+        if family == FAMILY_TEXT:
+            check_file_signature(path)
+        parser = self._family_parser(family)
+        snapshot = self._mail_parser.snapshot(path) if family == FAMILY_MAIL else None
+        before_id = self._chunk_writer.current_version_id(source_id, str(path))
+        version = self._evidence_manager.ingest_file(
+            source_id, path, parser_name=parser.parser_name,
+            parser_version=parser.parser_version, snapshot=snapshot,
+        )
+        self._drop_superseded_index_entries(before_id, version)
+        if version.id == before_id and version.status in (
+            VersionStatus.READY, VersionStatus.TEXT_READY
+        ):
+            return FileIngestResult(path=path, status="unchanged")
+        try:
+            if family == FAMILY_DOCLING:
+                cloned = self._try_clone_duplicate(source_id, path, version)
+                if cloned is not None:
+                    self._evidence_manager.mark_version_status(version.id, VersionStatus.READY)
+                    return FileIngestResult(path=path, status="ingested", chunks_written=cloned)
+            else:
+                parsed = (
+                    self._mail_parser.parse(source_id, path, snapshot=snapshot)
+                    if family == FAMILY_MAIL
+                    else parser.parse(source_id, path)
+                )
+            units, chunks = self._chunk_family(family, version.id, parsed, recipe)
+            self._chunk_writer.ensure_recipe_row(recipe)
+            built = self._chunk_writer.build_rows(
+                source_id=source_id, evidence_version_id=version.id,
+                file_path=str(path), units=units, chunks=chunks, recipe=recipe, provisional=True,
+            )
+            written = self._chunk_writer.replace_version_content(
+                fts=self._index_manager.fts_writer, evidence_version_id=version.id,
+                built=built, new_status=VersionStatus.TEXT_READY,
+            )
+        except Exception as exc:
+            self._evidence_manager.mark_version_status(
+                version.id, VersionStatus.FAILED, failure_reason=condense_error(exc)
+            )
+            raise
+        return FileIngestResult(
+            path=path, status="ingested", chunks_written=written or 0,
+            notice=getattr(parsed, "notice", None),
+        )
+
+    @writer_operation("deepening a file")
+    def ingest_tier2_path(
+        self, source_id: str, path: Path, root: Path, rules: IgnoreRules
+    ) -> FileIngestResult:
+        """Tier 2: the full path (Docling/native parse, chunk recipe,
+        embeddings, vectors) for one file. A TEXT_READY version is upgraded in
+        place and atomically; any other state is processed exactly as a normal
+        one-pass ingest. Writer lock held for this file only."""
+        return self._ingest_path(source_id, path, root, rules, missing="skip")
+
+    def note_file_done(self) -> None:
+        """Periodic vector compaction between Tier-2 files (as a one-pass
+        run does), under the writer lock."""
+        with self._writer_lock.hold("maintaining the search index"):
+            self._index_manager.note_file_done()
+
+    def finish_source_pass(self, source_id: str, *, changed: bool = True) -> None:
+        """End-of-pass repair + maintenance (the same reconcile + vector
+        maintenance a one-pass run ends with), under the writer lock."""
+        with self._writer_lock.hold("finishing an indexing pass"):
+            if changed:
+                self._index_manager.reconcile_source(
+                    source_id,
+                    current_chunk_ids=self._chunk_writer.current_chunk_ids_for_source(source_id),
+                    current_version_ids=self._chunk_writer.ready_version_ids_for_source(source_id),
+                )
+                self._index_manager.maintain()
 
     # -- recipe drift / re-chunk -------------------------------------------
 

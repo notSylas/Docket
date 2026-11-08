@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    Boolean,
     Enum,
     Float,
     ForeignKey,
@@ -21,6 +22,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -41,6 +43,8 @@ __all__ = [
     "Chunk",
     "IngestionJob",
     "IngestionFileResult",
+    "IngestQueueItem",
+    "ChunkAlias",
     "ConnectorAccount",
     "compute_recipe_id",
     "compute_chunk_id",
@@ -72,6 +76,14 @@ class VersionStatus(str, enum.Enum):
     of the three (supersession always wins immediately, regardless of where
     a row was in its own lifecycle -- see `EvidenceManager.mark_version_status`).
 
+    Tiered indexing adds TEXT_READY between PENDING and READY:
+    PENDING -> TEXT_READY -> READY (or PENDING -> READY directly when a file
+    has no fast text path or is ingested in one pass). TEXT_READY versions
+    own *provisional* chunks that are in SQLite + FTS only (no embeddings, no
+    vector rows); they are eligible for the keyword (FTS) leg and for file
+    name lookup but never for the vector leg. Upgrading to READY replaces the
+    provisional chunks in one transaction. SUPERSEDED is reachable from it.
+
     - PENDING: bytes stored, not yet processed. Set at insert, in the same
       transaction as the blob write (`EvidenceManager.ingest_file`).
     - READY: parsing, chunking, and indexing all succeeded; this version's
@@ -87,6 +99,12 @@ class VersionStatus(str, enum.Enum):
     READY = "ready"
     FAILED = "failed"
     SUPERSEDED = "superseded"
+    TEXT_READY = "text_ready"
+
+
+# Statuses whose chunks the keyword (FTS) leg, the resolver, file-name lookup
+# and query scopes may serve. The vector/visual legs stay READY-only.
+KEYWORD_SERVABLE = (VersionStatus.READY, VersionStatus.TEXT_READY)
 
 
 class IngestionJobStatus(str, enum.Enum):
@@ -404,6 +422,11 @@ class Chunk(Base):
     # `extracted` is the correct default for all existing and new rows until
     # a `derived`/`generated` producer actually exists.
     provenance: Mapped[str] = mapped_column(String, nullable=False, default="extracted")
+    # True for Tier-1 chunks (fast text path; SQLite + FTS only, replaced when
+    # the version is upgraded to READY). See `VersionStatus.TEXT_READY`.
+    provisional: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
 
     source: Mapped["Source"] = relationship(back_populates="chunks")
     evidence_version: Mapped["EvidenceVersion"] = relationship(back_populates="chunks")
@@ -464,3 +487,54 @@ class ConnectorAccount(Base):
     consent_at: Mapped[datetime] = mapped_column(nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False, default="active")
     __table_args__ = (UniqueConstraint("provider", "account_label", name="uq_connector_provider_label"),)
+
+
+class ChunkAlias(Base):
+    """Maps a replaced provisional chunk id to the chunk that replaced it (the
+    one with the most overlapping text), so a citation id kept in conversation
+    history still resolves after the version is upgraded. `new_chunk_id` is
+    NULL when no new chunk overlaps enough (the citation then degrades to
+    "no longer available"). Rows are written in the replacing transaction."""
+
+    __tablename__ = "chunk_aliases"
+    old_chunk_id: Mapped[str] = mapped_column(String, primary_key=True)
+    new_chunk_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    evidence_version_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    overlap: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
+
+class IngestQueueItem(Base):
+    """One persisted unit of tiered-indexing work: (source, file, tier).
+
+    State machine (docket.services.ingestion.queue): queued -> running ->
+    done | queued (retry, `not_before` = backoff) | dead (dead-letter after
+    `max_attempts`); `running` rows found at startup (kill -9) go back to
+    queued. `prio_class` 0 = user-touched, 1 = recently modified, 2 = rest;
+    claim order is (prio_class, recency bucket, size ascending)."""
+
+    __tablename__ = "ingest_queue"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: _new_id("q"))
+    source_id: Mapped[str] = mapped_column(ForeignKey("sources.id"), nullable=False, index=True)
+    file_path: Mapped[str] = mapped_column(Text, nullable=False)
+    tier: Mapped[int] = mapped_column(Integer, nullable=False)
+    state: Mapped[str] = mapped_column(String, nullable=False, default="queued")
+    prio_class: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    mtime: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    # Static sort key (calendar day of mtime) so the claim order is served by
+    # `ix_ingest_queue_claim` instead of sorting the whole queue per claim.
+    recency_day: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    byte_size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    not_before: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    enqueued_at: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    started_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+    finished_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+    duration_s: Mapped[float | None] = mapped_column(Float, nullable=True)
+    __table_args__ = (
+        UniqueConstraint("source_id", "file_path", "tier", name="uq_ingest_queue_item"),
+        Index(
+            "ix_ingest_queue_claim", "tier", "state", "prio_class",
+            text("recency_day DESC"), "byte_size", text("mtime DESC"), "id",
+        ),
+    )

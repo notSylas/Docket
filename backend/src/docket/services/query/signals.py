@@ -84,7 +84,8 @@ class QuerySignals:
 _ELIGIBLE_FILES_SQL = text(
     "SELECT evidence_versions.id, evidence_versions.file_path, sources.path, sources.id "
     "FROM evidence_versions JOIN sources ON sources.id = evidence_versions.source_id "
-    "WHERE sources.status = :active_status AND evidence_versions.status = :ready_status "
+    "WHERE sources.status = :active_status "
+    "AND evidence_versions.status IN (:ready_status, :text_ready_status) "
     "ORDER BY evidence_versions.id"
 )
 
@@ -106,7 +107,13 @@ def load_eligible_versions(engine: Engine) -> list[EligibleVersion]:
     with engine.connect() as conn:
         rows = conn.execute(
             _ELIGIBLE_FILES_SQL,
-            {"active_status": SourceStatus.ACTIVE.name, "ready_status": VersionStatus.READY.name},
+            {
+                "active_status": SourceStatus.ACTIVE.name,
+                "ready_status": VersionStatus.READY.name,
+                # Keyword-only (TEXT_READY) files are nameable and scopeable;
+                # the vector leg still serves READY versions only.
+                "text_ready_status": VersionStatus.TEXT_READY.name,
+            },
         ).all()
     return [EligibleVersion(vid, fp or sp, source_id) for vid, fp, sp, source_id in rows]
 

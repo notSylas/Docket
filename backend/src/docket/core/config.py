@@ -45,6 +45,14 @@ class Settings(BaseSettings):
     # instead of parsing it again (DOCKET_REUSE_DUPLICATE_CONTENT=false disables).
     reuse_duplicate_content: bool = True
 
+    # Tiered indexing queue (docket.services.ingestion.queue). Files modified
+    # within `tier_recent_days` are claimed before older ones (after
+    # user-touched folders); a failing file is retried with exponential backoff
+    # from `tier_backoff_s` and dead-lettered after `tier_max_attempts`.
+    tier_recent_days: float = 14.0
+    tier_max_attempts: int = 3
+    tier_backoff_s: float = 30.0
+
     # Discovery ignore rules (hidden folders, virtualenvs, site-packages,
     # node_modules, Office lock files, `.docketignore`). Escape hatch:
     # DOCKET_INGEST_IGNORE_ENABLED=false walks everything, as before.

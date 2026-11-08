@@ -97,6 +97,9 @@ def with_number_forms(text: str) -> str:
 class RankedChunk:
     chunk_id: str
     score: float  # the fused RRF score
+    # True when the chunk is provisional (its version is TEXT_READY: found by
+    # the keyword leg only, not yet fully indexed). Set by `hybrid_search`.
+    provisional: bool = False
 
 
 def reciprocal_rank_fusion(
@@ -186,7 +189,7 @@ _FTS_SEARCH_SQL = text(
     "JOIN evidence_versions ON evidence_versions.id = chunks.evidence_version_id "
     "WHERE fts_chunks MATCH :query "
     "AND sources.status = :active_status "
-    "AND evidence_versions.status = :ready_status "
+    "AND evidence_versions.status IN (:ready_status, :text_ready_status) "
     "ORDER BY bm25(fts_chunks) LIMIT :limit"
 )
 
@@ -198,7 +201,7 @@ _FTS_SEARCH_SCOPED_SQL = text(
     "JOIN evidence_versions ON evidence_versions.id = chunks.evidence_version_id "
     "WHERE fts_chunks MATCH :query "
     "AND sources.status = :active_status "
-    "AND evidence_versions.status = :ready_status "
+    "AND evidence_versions.status IN (:ready_status, :text_ready_status) "
     "AND evidence_versions.id IN :scope_version_ids "
     "ORDER BY bm25(fts_chunks) LIMIT :limit"
 ).bindparams(bindparam("scope_version_ids", expanding=True))
@@ -211,7 +214,7 @@ _FTS_SEARCH_VERSIONED_SQL = text(
     "JOIN evidence_versions ON evidence_versions.id = chunks.evidence_version_id "
     "WHERE fts_chunks MATCH :query "
     "AND sources.status = :active_status "
-    "AND evidence_versions.status = :ready_status "
+    "AND evidence_versions.status IN (:ready_status, :text_ready_status) "
     "ORDER BY bm25(fts_chunks) LIMIT :limit"
 )
 
@@ -257,6 +260,10 @@ def fts_search(
         "limit": top_k,
         "active_status": SourceStatus.ACTIVE.name,
         "ready_status": VersionStatus.READY.name,
+        # Tiered indexing: TEXT_READY versions (provisional, FTS-only chunks)
+        # are eligible for the keyword leg ONLY. Every vector/visual helper
+        # below keeps READY as the sole servable status.
+        "text_ready_status": VersionStatus.TEXT_READY.name,
     }
     statement = _FTS_SEARCH_SQL
     if scope_version_ids is not None:
@@ -702,5 +709,30 @@ def hybrid_search(
             ranked_lists.append(
                 visual_search(page_table, engine, gateway, q, leg_k, manifest_guard, **scope_kw)
             )
-    fused = reciprocal_rank_fusion(ranked_lists)
-    return fused[:top_k]
+    fused = reciprocal_rank_fusion(ranked_lists)[:top_k]
+    return flag_provisional(engine, fused)
+
+
+_PROVISIONAL_SQL = text(
+    "SELECT chunks.id FROM chunks WHERE chunks.id IN :ids AND chunks.provisional = 1"
+).bindparams(bindparam("ids", expanding=True))
+
+
+def flag_provisional(engine: Engine, ranked: list[RankedChunk]) -> list[RankedChunk]:
+    """Mark the ranked chunks that are provisional (one primary-key query on
+    the few fused results). Everything else is returned untouched."""
+    if not ranked or engine is None:
+        return ranked
+    try:
+        with engine.connect() as conn:
+            flagged = {
+                r[0] for r in conn.execute(_PROVISIONAL_SQL, {"ids": [rc.chunk_id for rc in ranked]})
+            }
+    except Exception:  # noqa: BLE001 -- advisory flag; a pre-0016 schema just has none
+        return ranked
+    if not flagged:
+        return ranked
+    return [
+        RankedChunk(rc.chunk_id, rc.score, provisional=True) if rc.chunk_id in flagged else rc
+        for rc in ranked
+    ]

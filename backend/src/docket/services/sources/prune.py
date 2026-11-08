@@ -33,7 +33,7 @@ from docket.infra.parsing.filecheck import InvalidFileError, check_file_signatur
 from docket.services.ingestion.ignore import IgnoreRules
 from docket.services.sources.manager import SourceNotFoundError
 
-_PRUNABLE = (VersionStatus.READY, VersionStatus.FAILED)
+_PRUNABLE = (VersionStatus.READY, VersionStatus.TEXT_READY, VersionStatus.FAILED)
 
 
 def supersede_and_deindex(

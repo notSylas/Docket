@@ -138,34 +138,45 @@ class FtsIndexWriter:
         if not records:
             return
         with self._engine.begin() as conn:
-            # FTS5 has no native upsert-by-key: delete (by rowid) then re-insert.
-            self._delete_ids(conn, [r.chunk_id for r in records])
-            for record in records:
-                result = conn.execute(
-                    text(
-                        "INSERT INTO fts_chunks (chunk_id, text, evidence_version_id, source_id) "
-                        "VALUES (:chunk_id, :text, :evidence_version_id, :source_id)"
-                    ),
-                    {
-                        "chunk_id": record.chunk_id,
-                        "text": record.index_text or record.text,
-                        "evidence_version_id": record.evidence_version_id,
-                        "source_id": record.source_id,
-                    },
-                )
-                conn.execute(
-                    text(
-                        "INSERT OR REPLACE INTO fts_chunk_map "
-                        "(chunk_id, fts_rowid, source_id, evidence_version_id) "
-                        "VALUES (:chunk_id, :rowid, :source_id, :evidence_version_id)"
-                    ),
-                    {
-                        "chunk_id": record.chunk_id,
-                        "rowid": result.lastrowid,
-                        "source_id": record.source_id,
-                        "evidence_version_id": record.evidence_version_id,
-                    },
-                )
+            self.upsert_in(conn, records)
+
+    def upsert_in(self, conn: Connection, records: Sequence[ChunkRecord]) -> None:
+        """`upsert` inside a caller-owned transaction (tiered indexing replaces
+        a version's chunks and FTS rows atomically)."""
+        if not records:
+            return
+        # FTS5 has no native upsert-by-key: delete (by rowid) then re-insert.
+        self._delete_ids(conn, [r.chunk_id for r in records])
+        for record in records:
+            result = conn.execute(
+                text(
+                    "INSERT INTO fts_chunks (chunk_id, text, evidence_version_id, source_id) "
+                    "VALUES (:chunk_id, :text, :evidence_version_id, :source_id)"
+                ),
+                {
+                    "chunk_id": record.chunk_id,
+                    "text": record.index_text or record.text,
+                    "evidence_version_id": record.evidence_version_id,
+                    "source_id": record.source_id,
+                },
+            )
+            conn.execute(
+                text(
+                    "INSERT OR REPLACE INTO fts_chunk_map "
+                    "(chunk_id, fts_rowid, source_id, evidence_version_id) "
+                    "VALUES (:chunk_id, :rowid, :source_id, :evidence_version_id)"
+                ),
+                {
+                    "chunk_id": record.chunk_id,
+                    "rowid": result.lastrowid,
+                    "source_id": record.source_id,
+                    "evidence_version_id": record.evidence_version_id,
+                },
+            )
+
+    def delete_version_in(self, conn: Connection, evidence_version_id: str) -> None:
+        """`delete_by_version` inside a caller-owned transaction."""
+        self._delete_where(conn, "evidence_version_id", evidence_version_id)
 
     def delete(self, chunk_ids: Sequence[str]) -> None:
         chunk_ids = list(chunk_ids)

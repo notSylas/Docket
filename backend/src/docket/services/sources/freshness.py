@@ -66,7 +66,15 @@ CATCH_UP_MAX_ENTRIES = 200_000  # entry bound of one catch-up walk
 _MTIME_EPSILON = 1e-6
 _WATCH_POLL_MS = 1000  # how often the watcher loop wakes (stop / root checks)
 
-_TRACKED = (VersionStatus.READY, VersionStatus.FAILED, VersionStatus.PENDING)
+# TEXT_READY is tracked like READY: a keyword-only file is not "new". It is not
+# "needing processing" either (unlike PENDING): deepening it is the work
+# queue's job, and re-ingesting it here would bypass the queue's priorities.
+_TRACKED = (
+    VersionStatus.READY,
+    VersionStatus.TEXT_READY,
+    VersionStatus.FAILED,
+    VersionStatus.PENDING,
+)
 
 
 @dataclass

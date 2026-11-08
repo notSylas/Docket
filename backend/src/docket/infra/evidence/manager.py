@@ -203,6 +203,14 @@ class EvidenceManager:
             version = session.get(EvidenceVersion, evidence_version_id)
             if version is None or version.status == VersionStatus.SUPERSEDED:
                 return
+            if status == VersionStatus.FAILED and version.status == VersionStatus.TEXT_READY:
+                # Deepening (Tier 2) failed, but the version's provisional
+                # chunks are still valid keyword evidence: keep it TEXT_READY
+                # and record why. The work queue owns retry/dead-lettering.
+                version.failure_reason = failure_reason
+                session.add(version)
+                session.commit()
+                return
             version.status = status
             if status == VersionStatus.FAILED:
                 version.failure_reason = failure_reason

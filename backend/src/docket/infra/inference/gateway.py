@@ -102,8 +102,12 @@ def embed_texts(
     max_attempts: int = 3,
     backoff_seconds: float = 0.5,
     sleep: Callable[[float], None] = time.sleep,
+    between_batches: Callable[[], None] | None = None,
 ) -> list[list[float]]:
     """Embed `texts` in batches of `batch_size`, preserving order.
+
+    `between_batches`, when given, is called before every batch (the tiered
+    indexer uses it to yield to a question being answered).
 
     Each batch is retried (up to `max_attempts` calls, with a doubling
     backoff) only on `InferenceUnavailableError`; `ModelNotFoundError` and
@@ -117,6 +121,8 @@ def embed_texts(
     texts = list(texts)
     vectors: list[list[float]] = []
     for start in range(0, len(texts), size):
+        if between_batches is not None:
+            between_batches()
         batch = texts[start : start + size]
         for attempt in range(1, max_attempts + 1):
             try:

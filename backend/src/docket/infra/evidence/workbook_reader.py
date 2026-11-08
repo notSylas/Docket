@@ -43,6 +43,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
 from docket.core.db.models import (
+    KEYWORD_SERVABLE,
     Chunk,
     EvidenceUnit,
     EvidenceVersion,
@@ -427,7 +428,7 @@ class WorkbookReader:
                 .join(EvidenceUnit, Chunk.evidence_unit_id == EvidenceUnit.id)
                 .where(Chunk.id == chunk_id)
                 .where(Source.status == SourceStatus.ACTIVE)
-                .where(EvidenceVersion.status == VersionStatus.READY)
+                .where(EvidenceVersion.status.in_(KEYWORD_SERVABLE))
             ).first()
         if row is None:
             raise WorkbookReadError(

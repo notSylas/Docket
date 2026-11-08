@@ -313,6 +313,20 @@ class AppContext:
         )
 
     @cached_property
+    def ingest_queue(self):
+        from docket.services.ingestion.queue import IngestQueue, QueuePolicy
+
+        return IngestQueue(self.session_factory, QueuePolicy.from_settings(self.settings))
+
+    def tiered_indexer(self, **kwargs):
+        """A `TieredIndexer` over this context's pipeline and persisted queue.
+        `pause` / `should_stop` / `progress` hook an interface's YieldGate,
+        stop request and progress display in."""
+        from docket.services.ingestion.tiered import TieredIndexer
+
+        return TieredIndexer(pipeline=self.pipeline, queue=self.ingest_queue, **kwargs)
+
+    @cached_property
     def prune_service(self) -> SourcePruneService:
         return SourcePruneService(
             self.session_factory,

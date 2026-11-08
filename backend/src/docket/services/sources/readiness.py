@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 from sqlalchemy.orm import sessionmaker
 
-from docket.core.db.models import Chunk, EvidenceVersion, Source, SourceStatus, VersionStatus
+from docket.core.db.models import KEYWORD_SERVABLE, Chunk, EvidenceVersion, Source, SourceStatus, VersionStatus
 
 
 @dataclass(frozen=True)
@@ -33,7 +33,7 @@ class ReadinessService:
             .join(Source, Chunk.source_id == Source.id)
             .join(EvidenceVersion, Chunk.evidence_version_id == EvidenceVersion.id)
             .where(Source.status == SourceStatus.ACTIVE)
-            .where(EvidenceVersion.status == VersionStatus.READY)
+            .where(EvidenceVersion.status.in_(KEYWORD_SERVABLE))
         )
         with self._session_factory() as session:
             files, chunks = session.execute(stmt).one()
@@ -49,7 +49,7 @@ class ReadinessService:
             .join(Source, Chunk.source_id == Source.id)
             .join(EvidenceVersion, Chunk.evidence_version_id == EvidenceVersion.id)
             .where(Source.status == SourceStatus.ACTIVE)
-            .where(EvidenceVersion.status == VersionStatus.READY)
+            .where(EvidenceVersion.status.in_(KEYWORD_SERVABLE))
             .group_by(Source.id)
         )
         with self._session_factory() as session:

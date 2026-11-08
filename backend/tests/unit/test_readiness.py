@@ -50,7 +50,7 @@ def test_counts_follow_source_and_version_eligibility(context, tmp_path, source_
         from docket.core.db.models import Source
         db.get(Source, source.id).status = source_status
         db.commit()
-    expected = SearchReadiness(1, 2) if source_status == SourceStatus.ACTIVE and version_status == VersionStatus.READY else SearchReadiness(0, 0)
+    expected = SearchReadiness(1, 2) if source_status == SourceStatus.ACTIVE and version_status in (VersionStatus.READY, VersionStatus.TEXT_READY) else SearchReadiness(0, 0)
     assert context.readiness.snapshot() == expected
 
 

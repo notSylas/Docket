@@ -20,7 +20,16 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
-from docket.core.db.models import Chunk, EvidenceUnit, EvidenceVersion, Source, SourceStatus, VersionStatus
+from docket.core.db.models import (
+    KEYWORD_SERVABLE,
+    Chunk,
+    ChunkAlias,
+    EvidenceUnit,
+    EvidenceVersion,
+    Source,
+    SourceStatus,
+    VersionStatus,
+)
 
 
 @dataclass(frozen=True)
@@ -42,6 +51,9 @@ class ResolvedEvidence:
     # Metadata for query-time signals (ambiguity detection); never evidence.
     sheet: str | None = None
     context: list[str] = field(default_factory=list)
+    # True when the chunk is a Tier-1 provisional one (its file is keyword-only
+    # so far); the answer layer may state that coverage.
+    provisional: bool = False
 
 
 class ChunkNotFoundError(Exception):
@@ -207,27 +219,56 @@ class EvidenceResolver:
         silently drops missing ids. Inactive sources and non-servable
         versions (not `READY` -- still `PENDING`, `FAILED`, or superseded by
         newer content) are unavailable, even when their rows remain for
-        historical provenance."""
+        historical provenance. `TEXT_READY` versions are served (their
+        provisional chunks are keyword-searchable evidence).
+
+        A provisional chunk id that was replaced when its file was fully
+        indexed resolves to the chunk that replaced it (`chunk_aliases`, the
+        chunk holding most of its text); the returned evidence then carries
+        the NEW chunk id and label. With no sufficiently overlapping
+        replacement the id is simply not found, as for any retired chunk."""
         if not chunk_ids:
             return []
 
-        with self._session_factory() as session:
-            rows = session.execute(
-                select(Chunk, Source, EvidenceVersion, EvidenceUnit)
-                .join(Source, Chunk.source_id == Source.id)
-                .join(EvidenceVersion, Chunk.evidence_version_id == EvidenceVersion.id)
-                .join(EvidenceUnit, Chunk.evidence_unit_id == EvidenceUnit.id)
-                .where(Chunk.id.in_(chunk_ids))
-                .where(Source.status == SourceStatus.ACTIVE)
-                .where(EvidenceVersion.status == VersionStatus.READY)
-            ).all()
+        def load(ids: list[str]):
+            with self._session_factory() as session:
+                return session.execute(
+                    select(Chunk, Source, EvidenceVersion, EvidenceUnit)
+                    .join(Source, Chunk.source_id == Source.id)
+                    .join(EvidenceVersion, Chunk.evidence_version_id == EvidenceVersion.id)
+                    .join(EvidenceUnit, Chunk.evidence_unit_id == EvidenceUnit.id)
+                    .where(Chunk.id.in_(ids))
+                    .where(Source.status == SourceStatus.ACTIVE)
+                    .where(EvidenceVersion.status.in_(KEYWORD_SERVABLE))
+                ).all()
 
+        rows = load(list(chunk_ids))
         by_id = {chunk.id: (chunk, source, ev, unit) for chunk, source, ev, unit in rows}
+        alias_of: dict[str, str] = {}
+        missing = [c for c in dict.fromkeys(chunk_ids) if c not in by_id]
+        if missing:
+            with self._session_factory() as session:
+                alias_of = {
+                    old: new
+                    for old, new in session.execute(
+                        select(ChunkAlias.old_chunk_id, ChunkAlias.new_chunk_id).where(
+                            ChunkAlias.old_chunk_id.in_(missing), ChunkAlias.new_chunk_id.is_not(None)
+                        )
+                    ).all()
+                }
+            if alias_of:
+                by_id.update(
+                    {
+                        chunk.id: (chunk, source, ev, unit)
+                        for chunk, source, ev, unit in load(sorted(set(alias_of.values())))
+                    }
+                )
 
         resolved: list[ResolvedEvidence] = []
-        for chunk_id in chunk_ids:
+        for requested_id in chunk_ids:
+            chunk_id = requested_id if requested_id in by_id else alias_of.get(requested_id, requested_id)
             if chunk_id not in by_id:
-                raise ChunkNotFoundError(chunk_id)
+                raise ChunkNotFoundError(requested_id)
             chunk, source, evidence_version, unit = by_id[chunk_id]
             # Prefer the chunk's own file (CP8's multi-file "local_folder"
             # sources put several files under one Source row, each tracked
@@ -249,6 +290,7 @@ class EvidenceResolver:
                     source_id=source.id,
                     sheet=sheet,
                     context=context,
+                    provisional=bool(chunk.provisional),
                     formula_regions=json.loads(evidence_version.formula_regions_json or "[]"),
                     location=format_location(
                         file_name=source_display_name,

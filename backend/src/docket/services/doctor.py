@@ -94,6 +94,24 @@ def lock_check(root: Path) -> Check:
             os.close(fd)
 
 
+def tier_check(settings) -> Check:
+    """Read-only one-liner: how many files are fully indexed vs keyword-only,
+    queue backlog and ETA (tiered indexing)."""
+    db_path = settings.sqlite_path
+    try:
+        if not db_path.exists():
+            return Check("Indexing progress", "OK", "Nothing indexed yet.")
+        from docket.services.ingestion.tiered import payload_from_dbapi, status_line
+
+        with closing(sqlite3.connect(db_path.absolute().as_uri() + "?mode=ro", uri=True, timeout=.2)) as db:
+            payload = payload_from_dbapi(db)
+        dead = payload["queue"]["tier1"]["dead"] + payload["queue"]["tier2"]["dead"]
+        return Check("Indexing progress", "WARN" if dead else "OK", status_line(payload),
+                     "Run: docket ingest --all --deepen --retry-dead" if dead else "")
+    except Exception:  # noqa: BLE001 -- older schema or unreadable: not a blocker
+        return Check("Indexing progress", "OK", "Not available (database not at the current schema yet).")
+
+
 def checks(settings, *, tags_fetcher=None, environment=None, terminal=None) -> list[Check]:
     """Never constructs AppContext, a database writer, or an inference gateway."""
     env = os.environ if environment is None else environment
@@ -143,6 +161,7 @@ def checks(settings, *, tags_fetcher=None, environment=None, terminal=None) -> l
         # Do not print JSON contents or paths from a damaged manifest.
         out.append(Check("Index manifest", "BLOCK", "The index manifest cannot be read.", "Back up the library, repair its manifest, then run docket reindex."))
     out.append(ann_index_check(settings))
+    out.append(tier_check(settings))
     db_path = settings.sqlite_path
     try:
         if not db_path.exists():

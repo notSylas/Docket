@@ -714,6 +714,24 @@ def ingest(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="With --rechunk: list what would be re-chunked, change nothing."
     ),
+    tier1_only: bool = typer.Option(
+        False,
+        "--tier1-only",
+        help="Quick pass only: make files keyword-searchable now (no embeddings); "
+        "finish later with --deepen. Queue state is saved, so it can be interrupted.",
+    ),
+    deepen: bool = typer.Option(
+        False,
+        "--deepen",
+        help="Work through the saved queue: any remaining quick passes first, then full "
+        "indexing of every file (resumable; ends with everything fully indexed).",
+    ),
+    prioritize: list[Path] = typer.Option(
+        None, "--prioritize", help="With --tier1-only/--deepen: folder or file to index first (repeatable)."
+    ),
+    retry_dead: bool = typer.Option(
+        False, "--retry-dead", help="With --tier1-only/--deepen: retry files that gave up after repeated failures."
+    ),
 ) -> None:
     """Run incremental ingestion, including recovery of temporarily missing sources."""
     if bool(source_id) == bool(all_sources):
@@ -721,6 +739,16 @@ def ingest(
         raise typer.Exit(code=1)
     if dry_run and not rechunk:
         typer.echo("Error: --dry-run only applies together with --rechunk.", err=True)
+        raise typer.Exit(code=1)
+    tiered = tier1_only or deepen
+    if tier1_only and deepen:
+        typer.echo("Error: pass --tier1-only or --deepen, not both.", err=True)
+        raise typer.Exit(code=1)
+    if (prioritize or retry_dead) and not tiered:
+        typer.echo("Error: --prioritize and --retry-dead need --tier1-only or --deepen.", err=True)
+        raise typer.Exit(code=1)
+    if tiered and (rechunk or dry_run):
+        typer.echo("Error: --tier1-only/--deepen cannot be combined with --rechunk.", err=True)
         raise typer.Exit(code=1)
 
     context = build_context()
@@ -739,6 +767,13 @@ def ingest(
 
     if rechunk:
         raise typer.Exit(code=_rechunk_sources(context, target_ids, dry_run))
+
+    if tiered:
+        raise typer.Exit(
+            code=_tiered_sources(
+                context, target_ids, tier1_only=tier1_only, prioritize=prioritize or [], retry_dead=retry_dead
+            )
+        )
 
     exit_code = 0
     stale_total = 0
@@ -778,6 +813,49 @@ def ingest(
         typer.echo(typer.style(stale_recipe_notice(stale_total), dim=True))
 
     raise typer.Exit(code=exit_code)
+
+
+def _tiered_sources(context, target_ids, *, tier1_only: bool, prioritize, retry_dead: bool) -> int:
+    """`docket ingest --tier1-only` / `--deepen`: enqueue (cheap, refreshes the
+    persisted queue from the folders) and drain it."""
+    from docket.services.ingestion.tiered import status_line, tier_status
+
+    exit_code = 0
+    indexer = context.tiered_indexer()
+    if retry_dead:
+        n = context.ingest_queue.retry_dead()
+        if n:
+            typer.echo(f"Retrying {n} job(s) that had given up.")
+    for target_id in target_ids:
+        try:
+            added = indexer.enqueue_source(target_id, touched=[Path(p) for p in prioritize])
+        except (SourceNotFoundError, SourceNotActiveError, FileNotFoundError) as exc:
+            typer.echo(f"Error ingesting {target_id}: {exc}", err=True)
+            exit_code = 1
+            continue
+        typer.echo(f"[{target_id}] queued {added['new']} new, {added['reset']} changed, {added['kept']} unchanged job(s).")
+    with quiet_ingest():
+        summary = indexer.run(tier2=not tier1_only)
+    first = f"; first file searchable after {summary.first_searchable_s:.1f}s" if summary.first_searchable_s is not None else ""
+    typer.echo(
+        f"quick pass: {summary.tier1_done} file(s){first}; full index: {summary.tier2_done} file(s); "
+        f"retrying: {summary.retried}; gave up: {summary.dead}; {summary.elapsed_s:.1f}s."
+    )
+    for path, err in summary.failed_paths[:10]:
+        typer.echo(f"  FAILED {path}: {err}")
+    typer.echo(status_line(tier_status(context.engine, context.ingest_queue)))
+    if summary.dead:
+        exit_code = 1
+    return exit_code
+
+
+@app.command("status")
+def status_command() -> None:
+    """Show indexing progress: files fully indexed, keyword-only, queue and ETA."""
+    from docket.services.ingestion.tiered import status_line, tier_status
+
+    context = build_context()
+    typer.echo(status_line(tier_status(context.engine, context.ingest_queue)))
 
 
 def _rechunk_sources(context, target_ids: list[str], dry_run: bool) -> int:

@@ -30,7 +30,7 @@ _BASE = (
     "JOIN evidence_versions ON evidence_versions.id = chunks.evidence_version_id "
     "WHERE fts_chunks MATCH :query "
     "AND sources.status = :active_status "
-    "AND evidence_versions.status = :ready_status "
+    "AND evidence_versions.status IN (:ready_status, :text_ready_status) "
 )
 _SQL = text(_BASE + "ORDER BY bm25(fts_chunks) LIMIT :limit")
 _SQL_SCOPED = text(
@@ -73,6 +73,7 @@ def phrase_search(
         "limit": limit,
         "active_status": SourceStatus.ACTIVE.name,
         "ready_status": VersionStatus.READY.name,
+        "text_ready_status": VersionStatus.TEXT_READY.name,
     }
     statement = _SQL
     if scope_version_ids is not None:

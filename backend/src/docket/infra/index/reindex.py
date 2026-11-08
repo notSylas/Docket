@@ -158,6 +158,12 @@ def _reindex_unlocked(
             _ELIGIBLE_CHUNKS_SQL,
             {"ready": VersionStatus.READY.name, "source_statuses": _INDEXED_SOURCE_STATUSES},
         ).all()
+        # Tiered indexing: keyword-only (TEXT_READY) chunks have no vectors but
+        # keep their FTS rows through a rebuild.
+        provisional_rows = conn.execute(
+            _ELIGIBLE_CHUNKS_SQL,
+            {"ready": VersionStatus.TEXT_READY.name, "source_statuses": _INDEXED_SOURCE_STATUSES},
+        ).all()
         version_ids = {
             row[0]
             for row in conn.execute(
@@ -250,7 +256,12 @@ def _reindex_unlocked(
                 always=live_pages is not None,
                 undo=undo,
             )
-            _rewrite_fts(engine, chunk_dicts, index_texts)
+            prov_dicts = [
+                {"chunk_id": r[0], "source_id": r[1], "text": r[3], "evidence_version_id": r[2]}
+                for r in provisional_rows
+            ]
+            prov_texts = [index_text_for_chunk(r[4], r[5], r[6], r[3]) for r in provisional_rows]
+            _rewrite_fts(engine, chunk_dicts + prov_dicts, index_texts + prov_texts)
             previous = read_manifest(manifest_path)
             write_manifest(
                 manifest_path,
