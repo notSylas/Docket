@@ -95,7 +95,7 @@ def _pretty_date(iso: str) -> str:
         return iso
 
 
-def compose(sf: StoredField, kind: str, chunk_text: str, label: str) -> str | None:
+def compose(sf: StoredField, kind: str, chunk_text: str, label: str, question: str = "") -> str | None:
     """The answer sentence (with its citation tag), or None if this field value
     cannot be stated safely."""
     cite = f"[{label}]"
@@ -109,6 +109,8 @@ def compose(sf: StoredField, kind: str, chunk_text: str, label: str) -> str | No
     if f == "expiration_or_term" and n:
         if re.fullmatch(r"\d{4}-\d{2}-\d{2}", n):
             return f"The agreement runs until {_pretty_date(n)} {cite}. The clause reads: \"{quote}\" {cite}"
+        if re.search(r"\bwhen\b|\bexpir", question, re.I):
+            return None  # a duration alone does not tell when the term ends
         return f"The term is {n} {cite}. The clause reads: \"{quote}\" {cite}"
     if f == "renewal_term" and n:
         return f"The agreement renews for {n} each time {cite}. The clause reads: \"{quote}\" {cite}"

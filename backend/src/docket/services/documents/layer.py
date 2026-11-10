@@ -81,7 +81,7 @@ class DocumentLayer:
             ev = resolved[0]
             if ev.evidence_version_id != decision.top_version_id:
                 return None
-            text_ = lookup.compose(sf, kind, ev.text, ev.citation_label)
+            text_ = lookup.compose(sf, kind, ev.text, ev.citation_label, question)
             if not text_:
                 return None
             return LookupAnswer(text_, sf.chunk_id, field, sf.file_name), ev

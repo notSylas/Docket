@@ -123,7 +123,7 @@ _OTHER_JURISDICTIONS = [
     "Philippines", "Vietnam", "Turkey", "Poland", "Portugal", "Greece", "Czech Republic",
     "Federal Republic of Germany", "United Kingdom", "Hungary", "Chile", "Argentina", "Peru",
     "Colombia", "Panama", "Cyprus", "Malta", "Mauritius", "Nigeria", "Kenya", "Egypt", "Saudi Arabia",
-    "Qatar", "Pakistan", "Bangladesh", "Sri Lanka", "United States",
+    "Qatar", "Pakistan", "Bangladesh", "Sri Lanka",
 ]
 _ALL_JURIS = sorted(_US_STATES + _OTHER_JURISDICTIONS, key=len, reverse=True)
 _JURIS_RE = re.compile(r"^(?:the\s+)?(?:(?:state|commonwealth|province|republic|kingdom|territory)\s+of\s+)?(?:the\s+)?(" + "|".join(re.escape(j) for j in _ALL_JURIS) + r")\b", re.I)
@@ -163,6 +163,12 @@ def _governing_law_candidates(ch: ChunkText) -> list[tuple[str, int, int, float,
                 conf -= 0.25
             start = s + lm.end() + jm.start(1)
             out.append((canon, start, s + lm.end() + jm.end(1), conf, 0))
+    # "governed by Michigan law" / "construed under New York State law"
+    for m in re.finditer(r"\b(?:governed|construed|interpreted)\s+(?:by|under|in\s+accordance\s+with)\s+(?:the\s+)?(?:internal\s+|substantive\s+)?(?:(?:state\s+of|commonwealth\s+of)\s+)?(" + "|".join(re.escape(j) for j in _ALL_JURIS) + r")(?:\s+state)?\s+law\b", text, re.I):
+        s, e = _sentence_bounds(text, m.start(), m.end())
+        canon = _CANON[m.group(1).lower()]
+        conf = 0.88 + (0.05 if _heading_boost(ch, r"govern|law|jurisdiction|miscellaneous|general") else 0)
+        out.append((canon, m.start(1), m.end(1), conf, 0))
     return out
 
 
@@ -205,7 +211,10 @@ def extract_effective_date(chunks: list[ChunkText]) -> list[FieldValue]:
             after = text[e:e + 70]
             sent_s, sent_e = _sentence_bounds(ch.text, s, e)
             if _EFF_AFTER.search(after) or _EFF_LABEL.search(before):
-                return [_fv("effective_date", ch, max(sent_s, s - 70), min(len(ch.text), e + 40), iso, 0.9, ch.text[s:e])]
+                # only an explicit "effective" label is trusted for a deterministic answer;
+                # "dated/made as of" is usually the execution date, which can differ
+                labelled = bool(re.search(r"effective", before[-45:] + after[:45], re.I))
+                return [_fv("effective_date", ch, max(sent_s, s - 70), min(len(ch.text), e + 40), iso, 0.9 if labelled else 0.7, ch.text[s:e])]
         # Explicit label elsewhere: "Effective Date: <date>" / "Effective Date means <date>"
         m = re.search(r"effective\s+date[^.\n]{0,60}?(?:means|is|shall\s+be|:)\s*", text, re.I)
         if m:
@@ -217,56 +226,69 @@ def extract_effective_date(chunks: list[ChunkText]) -> list[FieldValue]:
 _TERM_UNTIL = re.compile(r"(?:expires?|expir\w+|terminat\w+|continue\w*|remain\w*\s+in\s+(?:full\s+)?force)\b[^.]{0,80}?\b(?:on|until|through|ending|to)\s+", re.I)
 
 
+_TERM_ANCHOR = re.compile(
+    r"\b(?:the\s+)?(?:initial|primary|original|first)\s+term\b|\b(?:the\s+)?term\s+of\s+this\s+(?:agreement|contract|license)\s+(?:shall|will|is|begins?|commences?)\b|"
+    r"\bthe\s+term\s+(?:shall|will)\s+(?:be|commence|continue|begin)\b|\bthis\s+(?:agreement|contract)\s+(?:shall|will)\s+(?:continue|remain|be\s+effective)\b[^.]{0,40}\b(?:for|until)\b",
+    re.I,
+)
+_TERM_BAD_BETWEEN = re.compile(r"\b(?:cure|notice|breach|within|after\s+(?:receipt|written)|default|renew\w*|extend\w*|additional|successive)\b", re.I)
+
+
 def extract_term(chunks: list[ChunkText]) -> list[FieldValue]:
     best: FieldValue | None = None
     for ch in chunks:
         text = ch.text
-        for m in re.finditer(r"\b(?:initial\s+term|term\s+of\s+this\s+(?:agreement|contract|license)|the\s+term\b|primary\s+term|original\s+term)", text, re.I):
+        for m in _TERM_ANCHOR.finditer(text):
+            if re.search(r"\b(?:material|any|such|each|that|this)\s+$", text[max(0, m.start() - 12):m.start()], re.I):
+                continue
             s, e = _sentence_bounds(text, m.start(), m.end())
             sent = text[s:e]
-            if re.search(r"renew|extend|successive|additional\s+term|subsequent", sent[: m.start() - s + 60], re.I) and not re.search(r"initial", sent, re.I):
-                continue
-            conf = 0.0
-            norm = None
-            dur = parse_duration(sent[m.end() - s:])
-            if dur and re.search(r"\b(?:shall|will|is|be|of|for|commenc|continu|period)\b", sent[m.start() - s:m.end() - s + dur[1] + 30], re.I):
-                norm = f"{dur[0]} term"
-                conf = 0.85 if re.search(r"initial|primary|original|term\s+of\s+this", sent[:m.end() - s + 3], re.I) else 0.7
+            tail = text[m.end():min(len(text), m.end() + 140)]
+            norm, conf = None, 0.0
+            dur = parse_duration(tail)
+            if dur and not _TERM_BAD_BETWEEN.search(tail[:dur[1]]):
                 norm = dur[0]
+                conf = 0.85 if re.search(r"initial|primary|original|first|term\s+of\s+this", text[m.start():m.end()], re.I) else 0.7
             else:
                 um = _TERM_UNTIL.search(sent)
-                if um:
+                if um and not _TERM_BAD_BETWEEN.search(sent[:um.start()]):
                     ds = find_dates(sent[um.end():um.end() + 60])
                     if ds:
-                        norm = ds[0][0]
-                        conf = 0.8
-            if norm and not re.search(r"\b(?:renewal\s+term)\b", sent[:m.end() - s], re.I):
+                        norm, conf = ds[0][0], 0.8
+            if norm:
                 fv = FieldValue("expiration_or_term", sent.strip(), norm, ch.chunk_id, (s, e), round(conf + _heading_boost(ch, r"term"), 2))
                 if best is None or fv.confidence > best.confidence:
                     best = fv
     return [best] if best else []
 
 
-_RENEW = re.compile(r"\b(?:automatically\s+)?(?:renew(?:s|ed|al)?|extend(?:ed|s)?)\b", re.I)
+_RENEW_LEAD = re.compile(r"(?:for|of|each|every)\s+(?:(?:successive|additional|further|consecutive|subsequent|renewal|extended|automatic|like|equal|new)\s+)*(?:(?:periods?|terms?)\s+(?:of|equal\s+to)\s+)?(?:an\s+)?(?:additional\s+)?(?:period\s+of\s+)?$", re.I)
+_NOTICE_AFTER = re.compile(r"^\W*(?:\w+\W+){0,3}?(?:prior|notice|before|written|advance|in\s+advance|preceding)", re.I)
 
 
 def extract_renewal(chunks: list[ChunkText]) -> list[FieldValue]:
     best: FieldValue | None = None
     for ch in chunks:
         text = ch.text
-        for m in re.finditer(r"\b(?:automatically\s+renew\w*|renewal\s+terms?|successive\s+(?:periods|terms)|auto-?renew\w*|renew\w*\s+for)\b", text, re.I):
+        for m in re.finditer(r"\b(?:automatically\s+renew\w*|renewal\s+terms?|successive\s+(?:periods|terms)|auto-?renew\w*|renew\w*\s+for|extended\s+for)\b", text, re.I):
             s, e = _sentence_bounds(text, m.start(), m.end())
             sent = text[s:e]
-            window = text[m.start():min(len(text), m.end() + 140)]
-            dur = parse_duration(window)
-            if dur is None:
+            window_end = min(len(text), m.end() + 160)
+            chosen = None
+            for dm in _DURATION.finditer(text, m.start(), window_end):
+                lead = text[max(m.start(), dm.start() - 70):dm.start()]
+                if not _RENEW_LEAD.search(lead):
+                    continue
+                if _NOTICE_AFTER.match(text[dm.end():dm.end() + 40]):
+                    continue
+                chosen = parse_duration(text[dm.start():dm.end()])
+                break
+            if not chosen:
                 continue
             conf = 0.85
-            if re.search(r"successive|additional|each\s+(?:renewal|such)|automatic|for\s+a\s+(?:period|term)\s+of|renewal\s+term", sent, re.I):
+            if re.search(r"successive|additional|each\s+(?:renewal|such)|automatic|renewal\s+term", sent, re.I):
                 conf = 0.9
-            if re.search(r"\bnot\s+(?:to\s+)?renew|non-?renewal|notice\s+of\s+(?:non|intent)", window[:60], re.I) and "automatic" not in sent.lower():
-                conf = 0.5
-            fv = FieldValue("renewal_term", sent.strip(), dur[0], ch.chunk_id, (s, e), round(conf, 2))
+            fv = FieldValue("renewal_term", sent.strip(), chosen[0], ch.chunk_id, (s, e), round(conf, 2))
             if best is None or fv.confidence > best.confidence:
                 best = fv
     return [best] if best else []
@@ -318,23 +340,27 @@ def amount_to_str(m: re.Match[str]) -> str:
     return f"${base}{' ' + unit if unit else ''}"
 
 
+_CAP_AMOUNT = re.compile(
+    r"(?:exceed|exceeding|limited\s+to|not\s+(?:be\s+)?(?:greater|more|higher)\s+than|cap(?:ped)?\s+(?:at|of)|maximum[^.$]{0,40}?(?:of|equal\s+to)|in\s+an\s+amount\s+(?:not\s+(?:to\s+)?exceed(?:ing)?|equal\s+to)|equal\s+to)[^.$]{0,25}?"
+    r"(?:US\s*)?\$\s?(?P<n>\d[\d,]*(?:\.\d+)?)(?:\s*(?P<u>million|billion|thousand))?", re.I)
+
+
 def extract_liability_cap(chunks: list[ChunkText]) -> list[FieldValue]:
     best: FieldValue | None = None
     for ch in chunks:
         text = ch.text
-        for m in re.finditer(r"\b(?:aggregate\s+)?liabilit(?:y|ies)\b", text, re.I):
+        for m in re.finditer(r"\b(?:aggregate\s+|total\s+|maximum\s+)?liabilit(?:y|ies)\b", text, re.I):
             s, e = _sentence_bounds(text, m.start(), m.end())
             sent = text[s:e]
-            if not re.search(r"\b(?:exceed|in\s+no\s+event|limited\s+to|shall\s+not\s+be\s+(?:greater|more)|cap|maximum|not\s+exceed|total\s+liability)\b", sent, re.I):
+            if re.search(r"\binsurance\b|\bindemnif|\bdamages\s+(?:resulting|arising)\s+from\s+(?:third|any\s+third)", sent, re.I) and not re.search(r"in\s+no\s+event|aggregate\s+liabilit|total\s+liabilit", sent, re.I):
                 continue
-            if re.search(r"indemnif", sent, re.I) and not re.search(r"in\s+no\s+event|exceed|aggregate", sent, re.I):
-                continue
-            am = _AMOUNT.search(sent)
-            if am:
-                conf, norm = 0.85, amount_to_str(am)
-                if re.search(r"consequential|indirect|incidental|special|punitive|lost\s+profits", sent[: am.start()], re.I) and not re.search(r"exceed|aggregate", sent[: am.start()], re.I):
-                    conf -= 0.2
-            elif re.search(r"(?:fees|amounts?|charges|payments?)\s+(?:paid|payable)|purchase\s+price|contract\s+(?:price|value)", sent, re.I):
+            am = _CAP_AMOUNT.search(sent)
+            if am and am.start() >= max(0, m.start() - s - 250):
+                norm = f"${am.group('n').rstrip(',')}{' ' + am.group('u').lower() if am.group('u') else ''}"
+                conf = 0.85
+                if not re.search(r"in\s+no\s+event|aggregate|total|maximum|shall\s+not|limited", sent, re.I):
+                    conf = 0.7
+            elif re.search(r"(?:in\s+no\s+event|shall\s+not\s+exceed|limited\s+to|not\s+be\s+liable\s+for\s+more)[^.]{0,120}(?:fees|amounts?|charges|payments?)\s+(?:paid|payable)|purchase\s+price|contract\s+(?:price|value)", sent, re.I):
                 conf, norm = 0.7, "amount paid/payable (derived from fees)"
             else:
                 continue
@@ -353,7 +379,7 @@ def _presence(field: str, chunks: list[ChunkText], triggers: list[str], *, veto:
             for m in re.finditer(pat, ch.text, re.I):
                 s, e = _sentence_bounds(ch.text, m.start(), m.end())
                 sent = ch.text[s:e]
-                if veto and re.search(veto, ch.text[max(0, m.start() - 12):m.end() + 40], re.I):
+                if veto and re.search(veto, sent, re.I):
                     continue
                 conf = base + (_heading_boost(ch, heading) if heading else 0.0)
                 fv = FieldValue(field, sent.strip(), "present", ch.chunk_id, (s, e), round(conf, 2))
@@ -367,10 +393,12 @@ def _presence(field: str, chunks: list[ChunkText], triggers: list[str], *, veto:
 def extract_exclusivity(chunks):
     return _presence(
         "exclusivity", chunks,
-        [r"\bexclusive(?:ly)?\s+(?:right|rights|distribut\w+|license|licensee|supplier|provider|dealer|agent|manufactur\w+|territory|basis|sale|reseller|endorse\w+|partner)\b",
-         r"\b(?:sole\s+and\s+exclusive|exclusive\s+dealing|exclusivity)\b",
+        [r"\bexclusive(?:ly)?\s+(?:distribut\w+|supplier|dealer|reseller|agent|licensee|licensor|provider|manufactur\w+|endorse\w+|partner|source|vendor|basis|territory)\b",
+         r"\bexclusive\s+(?:rights?|licen[sc]es?)\s+(?:to|for|in)\s+(?:\w+\s+){0,3}?(?:sell|distribut\w+|market|promot\w+|suppl\w+|purchas\w+|manufactur\w+|resell\w*|commerciali[sz]\w+|import|endors\w+)",
+         r"\bexclusive\s+dealing\b",
+         r"\b(?:shall|will|agrees?\s+to)\s+(?:deal|purchase|buy|source|distribute|sell)[^.]{0,40}\bexclusively\b",
          r"\bgrants?\b[^.]{0,80}\bexclusive\b[^.]{0,30}\b(?:right|license|distribut)"],
-        veto=r"non-?\s?exclusive|not\s+exclusive|exclusive\s+(?:jurisdiction|venue|remedy|property|remedies|forum)",
+        veto=r"non-?\s?exclusiv|not\s+(?:be\s+)?exclusive|exclusive\s+(?:jurisdiction|venue|remedy|property|remedies|forum|liability|control|authority|ownership|benefit)|sole\s+and\s+exclusive\s+(?:remedy|liability|property)|exclusive\s+right[^.]{0,30}(?:prosecute|enforce|defend|file|prepare|change|decide|elect|settle|but\s+not)",
         heading=r"exclusiv",
     )
 
@@ -378,9 +406,10 @@ def extract_exclusivity(chunks):
 def extract_non_compete(chunks):
     return _presence(
         "non_compete", chunks,
-        [r"\bnon-?compet\w+", r"\bcovenant\s+not\s+to\s+compete\b",
-         r"\b(?:shall|will|agrees?\s+to|may)\s+not[^.]{0,100}\b(?:compet(?:e|ing|itive)|engage\s+in[^.]{0,40}(?:competing|similar)\s+business)"],
-        veto=r"non-?competi\w*\s+(?:products?\s+of\s+the\s+other)",
+        [r"\bcovenant\s+not\s+to\s+compete\b",
+         r"\bnon-?competition\s+(?:covenant|agreement|obligation|provision|restriction)s?\b",
+         r"\b(?:shall|will|agrees?\s+to|may)\s+not[^.]{0,100}\b(?:compete\s+with|competing\s+(?:business|products?|with)|engage\s+in[^.]{0,40}(?:competing|similar)\s+business|(?:sell|market|distribute|promote)[^.]{0,60}\bcompet\w+\s+(?:product|service))"],
+        veto=r"represent|warrant|not\s+under\s+any|does\s+not\s+(?:restrict|prohibit)|waive|exclusion|forward-looking|notwithstanding\s+Subsection",
         heading=r"compet|restrictive",
     )
 
@@ -409,10 +438,12 @@ def extract_audit_rights(chunks):
 def extract_insurance(chunks):
     out: FieldValue | None = None
     for ch in chunks:
-        for m in re.finditer(r"\b(?:maintain|carry|procure|obtain|keep|provide)\b[^.]{0,120}\binsurance\b|\binsurance\s+(?:coverage|policy|policies|requirements?)\b|\bshall\s+(?:at\s+all\s+times\s+)?(?:be\s+)?insured\b", ch.text, re.I):
+        for m in re.finditer(r"\b(?:maintain|carry|procure|obtain|keep|provide|have|purchase)\b[^.]{0,100}?\binsurance\b|\binsurance\s+(?:coverage|policy|policies)\b[^.]{0,80}\b(?:shall|must|will)\b", ch.text, re.I):
             s, e = _sentence_bounds(ch.text, m.start(), m.end())
             sent = ch.text[s:e]
-            if re.search(r"\b(?:waive|subrogat|insurance\s+(?:company|carrier)\s+(?:of|for)\s+the\s+other)\b", sent, re.I) and not re.search(r"maintain|carry|procure", sent, re.I):
+            if re.search(r"\bno\s+insurance|not\s+(?:be\s+)?required\s+to\s+(?:maintain|carry)|\bwaive|subrogat|insurance\s+(?:company|carrier)\s+of", sent, re.I):
+                continue
+            if not re.search(r"\b(?:shall|must|will|agrees?|required|at\s+its\s+own\s+(?:cost|expense)|at\s+all\s+times)\b", sent, re.I):
                 continue
             am = _AMOUNT.search(sent)
             conf = 0.85 + (_heading_boost(ch, r"insurance") or 0)
@@ -431,7 +462,7 @@ def extract_parties_field(chunks, parties: list[str]) -> list[FieldValue]:
         if all(p >= 0 for p in pos):
             s = min(pos)
             e = max(p + len(parties[i]) for i, p in enumerate(pos))
-            return [FieldValue("parties", " and ".join(parties), " | ".join(parties), ch.chunk_id, (s, e), 0.85)]
+            return [FieldValue("parties", " and ".join(parties), " | ".join(parties), ch.chunk_id, (s, e), 0.75)]
     return []
 
 

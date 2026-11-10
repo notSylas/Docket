@@ -16,7 +16,19 @@ from docket.infra.inference.gateway import FakeInferenceGateway
 from docket.infra.retrieval.resolver import EvidenceResolver
 from docket.services.documents import builder, family, lookup, routing
 from docket.services.documents.layer import DocumentLayer
-from conftest import _alembic_config
+from pathlib import Path
+
+from alembic.config import Config
+
+_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _alembic_config(sqlite_path):
+    config = Config(str(_ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(_ROOT / "src" / "docket" / "core" / "db" / "migrations"))
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{sqlite_path}")
+    return config
+
 from test_hybrid_retrieval import _insert_metadata
 from test_scale_step1a import _bulk_clone_versions
 
@@ -338,3 +350,25 @@ def test_service_field_lookup_bypasses_model_and_search(lib, monkeypatch):
     r2 = _service(e, Settings(doc_routing="on", field_lookup="on"), monkeypatch, calls, [[], []]).ask(
         "Summarize the Distributor Agreement with Zogenix, Inc.", mode=QueryMode.FAST)
     assert calls
+
+
+def test_doctor_documents_line_and_cli_build(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+
+    from docket.interfaces.cli.main import app
+    from docket.services.doctor import documents_check
+
+    monkeypatch.setenv("DOCKET_DATA_DIR", str(tmp_path / "scratch"))
+    r = CliRunner().invoke(app, ["documents", "build"])
+    assert r.exit_code == 0 and "Document records: 0 built" in r.output
+    db = tmp_path / "scratch" / "docket.sqlite3"
+    assert db.exists()
+    assert documents_check(db).status == "OK"
+    assert documents_check(tmp_path / "nope.sqlite3").status == "OK"
+
+
+def test_dated_as_of_is_not_trusted_as_effective_date():
+    from docket.services.documents.fields import ChunkText, extract_effective_date
+
+    f = extract_effective_date([ChunkText("c", "This Agreement is dated as of June 21, 2005 and made between", 0)])
+    assert f and f[0].normalized == "2005-06-21" and f[0].confidence < 0.8
