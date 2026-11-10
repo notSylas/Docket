@@ -1129,6 +1129,10 @@ class IngestionPipeline:
         else:
             job_status = IngestionJobStatus.SUCCEEDED
         self._finalize_job(job_id, job_status, error, stats_for(file_results))
+        if any(r.status not in ("unchanged", "skipped") for r in file_results):
+            # Under the writer lock this operation already holds. Cheap no-op
+            # for small libraries (flat scan, nothing to optimize).
+            self._index_manager.maintain()
         return IngestionJobResult(
             source_id=source_id,
             job_id=job_id,
@@ -1258,6 +1262,10 @@ class IngestionPipeline:
         }
 
         self._finalize_job(job_id, job_status, error, stats)
+        if any(r.status not in ("unchanged", "skipped") for r in file_results):
+            # Under the writer lock this operation already holds. Cheap no-op
+            # for small libraries (flat scan, nothing to optimize).
+            self._index_manager.maintain()
 
         return IngestionJobResult(
             source_id=source_id,

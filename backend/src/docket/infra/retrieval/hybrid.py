@@ -34,6 +34,7 @@ from sqlalchemy import Engine, bindparam, text
 from docket.core.config import settings
 from docket.core.db.models import SourceStatus, VersionStatus
 from docket.infra.index.manifest import IndexManifestGuard
+from docket.infra.index import tuning
 from docket.infra.index.vector_index import _sql_in_list
 from docket.infra.inference.gateway import InferenceGateway, format_query_for_embedding
 
@@ -203,6 +204,34 @@ _FTS_SEARCH_SCOPED_SQL = text(
 ).bindparams(bindparam("scope_version_ids", expanding=True))
 
 
+_FTS_SEARCH_VERSIONED_SQL = text(
+    "SELECT fts_chunks.chunk_id, chunks.evidence_version_id FROM fts_chunks "
+    "JOIN chunks ON chunks.id = fts_chunks.chunk_id "
+    "JOIN sources ON sources.id = chunks.source_id "
+    "JOIN evidence_versions ON evidence_versions.id = chunks.evidence_version_id "
+    "WHERE fts_chunks MATCH :query "
+    "AND sources.status = :active_status "
+    "AND evidence_versions.status = :ready_status "
+    "ORDER BY bm25(fts_chunks) LIMIT :limit"
+)
+
+
+def _fts_search_large_scope(
+    engine: Engine, params: dict[str, Any], top_k: int, scope: set[str]
+) -> list[str]:
+    """Scope too large for a bound `IN (...)` (SQLite caps bound variables):
+    take the unscoped eligible ranking and keep chunks inside the scope,
+    widening the fetch until `top_k` survive or the ranking is exhausted."""
+    fetch = max(top_k, 1) * 10
+    while True:
+        with engine.connect() as conn:
+            rows = conn.execute(_FTS_SEARCH_VERSIONED_SQL, {**params, "limit": fetch}).all()
+        good = [r[0] for r in rows if r[1] in scope]
+        if len(good) >= top_k or len(rows) < fetch:
+            return good[:top_k]
+        fetch *= 10
+
+
 def fts_search(
     engine: Engine, query: str, top_k: int, scope_version_ids: list[str] | None = None
 ) -> list[str]:
@@ -233,6 +262,11 @@ def fts_search(
     if scope_version_ids is not None:
         if not scope_version_ids:
             return []
+        if (
+            len(scope_version_ids) > _FTS_SCOPE_IN_MAX
+            and tuning.eligibility_mode() == "scalable"
+        ):
+            return _fts_search_large_scope(engine, params, top_k, set(scope_version_ids))
         statement = _FTS_SEARCH_SCOPED_SQL
         params["scope_version_ids"] = list(scope_version_ids)
     with engine.connect() as conn:
@@ -298,7 +332,7 @@ def _eligible_version_ids(engine: Engine) -> list[str]:
         return [row[0] for row in rows]
 
 
-def _search_eligible(
+def _search_eligible_legacy(
     table: Any,
     engine: Engine,
     query_vector: list[float],
@@ -321,6 +355,129 @@ def _search_eligible(
         .limit(top_k)
         .to_list()
     )
+
+
+# --- Eligibility at scale ---------------------------------------------------
+#
+# The legacy path (DOCKET_ELIGIBILITY_MODE=legacy) loads EVERY eligible version
+# id from SQLite and pastes them into one `evidence_version_id IN (...)`
+# predicate: O(files) per query in both time and string size (100k+ files =
+# multi-MB predicates). Options weighed for the replacement:
+#
+#   A. Coarse LanceDB prefilter on `source_id` (few values: one per indexed
+#      folder) + over-fetch + exact SQLite state check of the returned
+#      candidates, widening the fetch if too few survive.
+#   B. Denormalise a state column into LanceDB, updated on every transition
+#      (READY, supersede, revoke, purge). Rejected: a second source of truth
+#      that must be kept in sync across ~6 write paths; a missed update either
+#      leaks revoked content or hides valid content, and updating rows is a
+#      full-column rewrite on a multi-million-row table.
+#   C. Bounded IN list with fallback. Still O(files) in the common case.
+#
+# A is chosen: SQLite stays the single source of truth for state, so a
+# revoked/superseded/failed/pending version can never be served regardless of
+# what the vector table holds (it is verified per query on <= a few hundred
+# candidate versions via the primary key). Ineligible rows are normally absent
+# from LanceDB anyway (supersede/revoke/purge delete them), so over-fetch of
+# 3x almost always fills top_k in one round; if not, the fetch widens 4x per
+# round, and after the last round we fall back to the legacy exact path
+# (correctness over speed). Scope filters: a small scope is pushed into the
+# LanceDB prefilter exactly; a large scope is applied to the candidates
+# (the same widen-then-fallback loop).
+_OVERFETCH = 3
+_WIDEN = 4
+_MAX_ROUNDS = 3
+_SOURCE_IN_MAX = 256
+_SCOPE_PREFILTER_MAX = 2000
+_FTS_SCOPE_IN_MAX = 5000
+
+_SOURCE_STATUS_SQL = text("SELECT id, status FROM sources")
+
+
+def _source_filter(engine: Engine) -> tuple[list[str], str | None]:
+    """(active source ids, coarse LanceDB predicate or None). The predicate is
+    omitted when every source is active (it would exclude nothing) or there are
+    too many sources to list; the exact SQLite check does the real work."""
+    with engine.connect() as conn:
+        rows = conn.execute(_SOURCE_STATUS_SQL).all()
+    active = [r[0] for r in rows if r[1] == SourceStatus.ACTIVE.name]
+    if len(active) == len(rows) or len(active) > _SOURCE_IN_MAX or not active:
+        return active, None
+    return active, f"source_id IN ({_sql_in_list(active)})"
+
+
+def _eligible_among(engine: Engine, version_ids: list[str]) -> set[str]:
+    allowed: set[str] = set()
+    for i in range(0, len(version_ids), 5000):
+        allowed.update(_filter_active_and_current_versions(engine, version_ids[i : i + 5000]))
+    return allowed
+
+
+def _ann_search(table: Any, query_vector: list[float]):
+    query = table.search(query_vector)
+    try:
+        query = query.nprobes(tuning.ann_nprobes()).refine_factor(tuning.ann_refine_factor())
+    except Exception:  # noqa: BLE001 -- flat table / older client: knobs don't apply
+        pass
+    return query
+
+
+def _search_eligible_scalable(
+    table: Any,
+    engine: Engine,
+    query_vector: list[float],
+    top_k: int,
+    scope_version_ids: list[str] | None = None,
+) -> list:
+    active, source_where = _source_filter(engine)
+    if not active:
+        return []
+    scope_set: set[str] | None = None
+    wheres = [source_where] if source_where else []
+    if scope_version_ids is not None:
+        if not scope_version_ids:
+            return []
+        scope_set = set(scope_version_ids)
+        if len(scope_set) <= _SCOPE_PREFILTER_MAX:
+            wheres.append(f"evidence_version_id IN ({_sql_in_list(sorted(scope_set))})")
+            scope_set = None  # enforced exactly by the prefilter
+    where = " AND ".join(wheres) if wheres else None
+
+    fetch = max(top_k, 1) * _OVERFETCH
+    for _ in range(_MAX_ROUNDS):
+        query = _ann_search(table, query_vector)
+        if where:
+            query = query.where(where, prefilter=True)
+        rows = query.limit(fetch).to_list()
+        versions = list(dict.fromkeys(r["evidence_version_id"] for r in rows if r["evidence_version_id"]))
+        allowed = _eligible_among(engine, versions)
+        good = [
+            r
+            for r in rows
+            if r["evidence_version_id"] in allowed
+            and (scope_set is None or r["evidence_version_id"] in scope_set)
+        ]
+        exhausted = len(rows) < fetch
+        if len(good) >= top_k or exhausted:
+            return good[:top_k]
+        fetch *= _WIDEN
+    return _search_eligible_legacy(table, engine, query_vector, top_k, scope_version_ids)
+
+
+def _search_eligible(
+    table: Any,
+    engine: Engine,
+    query_vector: list[float],
+    top_k: int,
+    scope_version_ids: list[str] | None = None,
+) -> list:
+    """Nearest-neighbor search over `table` restricted to rows whose evidence
+    version is currently eligible (source ACTIVE, version READY) -- and, with
+    `scope_version_ids`, also inside that scope (an intersection, so a scope
+    can never widen eligibility). See the block comment above for the modes."""
+    if tuning.eligibility_mode() == "legacy":
+        return _search_eligible_legacy(table, engine, query_vector, top_k, scope_version_ids)
+    return _search_eligible_scalable(table, engine, query_vector, top_k, scope_version_ids)
 
 
 def vector_search(

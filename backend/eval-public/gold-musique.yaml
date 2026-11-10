@@ -1,0 +1,492 @@
+# MuSiQue multi-hop slice over eval-public/external/musique/corpus (not committed; rebuild with
+# eval-public/build_musique_slice.py). Source: MuSiQue-Full v1.0 dev, CC BY 4.0.
+# GENERATED: answers+aliases from the dataset, spans verified single-chunk. PUBLIC DATA, not a milestone
+# population. Do not edit by hand.
+version: 1
+population: public_musique
+questions:
+- id: musique-3hop1__347858_503371_21711
+  type: multi_doc
+  question: When was the Palau de la Generalitat constructed in the city where Martin of the place where Castiliscar
+    is located died?
+  answerable: true
+  must_contain:
+  - re:(?<![\w])built\ in\ the\ 15th\ century(?![\w])|(?<![\w])15th\ century(?![\w])
+  gold_spans:
+  - the province of Zaragoza, Aragon, Spain. According to the 2
+  - at in Barcelona, built in the 15th century for the kings of
+  - and Corsica and Count of Barcelona from 1396 and King of Sic
+  reviewed: true
+  origin: MuSiQue-Full dev 3hop1__347858_503371_21711 (3hop); answer 'built in the 15th century'; eval-public/build_musique_slice.py
+  source_documents:
+  - lib-4/castiliscar-15c61a1b.txt
+  - lib-0/gothic-architecture-c90c4362.txt
+  - lib-1/martin-of-aragon-1f57171f.txt
+  formula_dependent: false
+  split: dev
+- id: musique-2hop__472486_97805
+  type: multi_doc
+  question: Which war did the operator of the Fabian Wrede-class training ship serve in?
+  answerable: true
+  must_contain:
+  - re:(?<![\w])winter\ war(?![\w])
+  gold_spans:
+  - When the Winter War broke out the Finnish Navy moved to occu
+  - training ships used by Finnish Navy. The ships are used by
+  reviewed: true
+  origin: MuSiQue-Full dev 2hop__472486_97805 (2hop); answer 'Winter War'; eval-public/build_musique_slice.py
+  source_documents:
+  - lib-5/finnish-navy-e4c5f658.txt
+  - lib-2/fabian-wrede-class-training-ship-a80ecd96.txt
+  formula_dependent: false
+  split: dev
+- id: musique-4hop1__58323_375563_161848_61344
+  type: multi_doc
+  question: What continent is the country located near the country of citizenship of The Book Thief's author part
+    of?
+  answerable: true
+  must_contain:
+  - re:(?<![\w])submerged\ continent\ of\ zealandia(?![\w])|(?<![\w])zealandia(?![\w])
+  gold_spans:
+  - Children's Book Council of Australia Book of the Year Award.
+  - the separate, submerged continent of Zealandia. New Zealand
+  - ants at a Winter Games. New Zealand and Portugal took part i
+  - novel The Book Thief by Markus Zusak and adapted by Michael
+  reviewed: true
+  origin: MuSiQue-Full dev 4hop1__58323_375563_161848_61344 (4hop); answer 'submerged continent of Zealandia'; eval-public/build_musique_slice.py
+  source_documents:
+  - lib-1/the-messenger-zusak-novel-571c1127.txt
+  - lib-0/australia-continent-7c49939f.txt
+  - lib-1/1952-winter-olympics-4d77d6ea.txt
+  - lib-0/the-book-thief-film-bc5a8242.txt
+  formula_dependent: false
+  split: dev
+- id: musique-2hop__71294_494136
+  type: multi_doc
+  question: Who is the spouse of the actor who plays the father on I Can Only Imagine?
+  answerable: true
+  must_contain:
+  - re:(?<![\w])meg\ ryan(?![\w])
+  gold_spans:
+  - onship with his father (Dennis Quaid). Madeline Carroll, Pri
+  - y Steve Kloves that stars Meg Ryan, Dennis Quaid and James C
+  reviewed: true
+  origin: MuSiQue-Full dev 2hop__71294_494136 (2hop); answer 'Meg Ryan'; eval-public/build_musique_slice.py
+  source_documents:
+  - lib-3/i-can-only-imagine-film-e373ccc0.txt
+  - lib-1/flesh-and-bone-film-a37a71b6.txt
+  formula_dependent: false
+  split: dev
+- id: musique-2hop__80_59409
+  type: multi_doc
+  question: Who was the artist who did a duet with Beyonce in the single "Deja Vu" talking about in the song "Cry"?
+  answerable: true
+  must_contain:
+  - re:(?<![\w])three\ different\ relationships\ he\ had\ in\ the\ past(?![\w])
+  gold_spans:
+  - ingle "Déjà Vu", featuring Jay Z, reached the top five on th
+  - ed by three different relationships he had in the past, and
+  reviewed: true
+  origin: MuSiQue-Full dev 2hop__80_59409 (2hop); answer 'three different relationships he had in the past'; eval-public/build_musique_slice.py
+  source_documents:
+  - lib-0/beyonce-c478011d.txt
+  - lib-5/song-cry-8a2eca4e.txt
+  formula_dependent: false
+  split: dev
+- id: musique-2hop__58168_38663
+  type: multi_doc
+  question: What was the percentage that the Dow Jones fell when the US had the highest unemployment rate?
+  answerable: true
+  must_contain:
+  - re:(?<![\w])54\.7%(?![\w])
+  gold_spans:
+  - high as 25% during the Great Depression. More recently, it
+  - 17 months is similar to a 54.7% fall in the Great Depressio
+  reviewed: true
+  origin: MuSiQue-Full dev 2hop__58168_38663 (2hop); answer '54.7%'; eval-public/build_musique_slice.py
+  source_documents:
+  - lib-2/unemployment-in-the-united-states-72d899d7.txt
+  - lib-3/tanzania-d98738a7.txt
+  formula_dependent: false
+  split: dev
+- id: musique-2hop__864101_135373
+  type: multi_doc
+  question: What is the body of water that St. Matthew Island located in named after?
+  answerable: true
+  must_contain:
+  - re:(?<![\w])vitus\ bering(?![\w])
+  gold_spans:
+  - Bering Sea is named for Vitus Bering, a Danish navigator in
+  - ted as it is part of the Bering Sea unit of the Alaska Marit
+  reviewed: true
+  origin: MuSiQue-Full dev 2hop__864101_135373 (2hop); answer 'Vitus Bering'; eval-public/build_musique_slice.py
+  source_documents:
+  - lib-4/bering-sea-775aa136.txt
+  - lib-0/st-matthew-island-04df52a5.txt
+  formula_dependent: false
+  split: dev
+- id: musique-4hop1__105773_457883_650651_7262
+  type: multi_doc
+  question: Country A has an embassy from the country that produces the show Krystala. Who was a prominent figure
+    in the radio division of the network that created a version of the Biggest Loser for country A?
+  answerable: true
+  must_contain:
+  - re:(?<![\w])walter\ sabo(?![\w])
+  gold_spans:
+  - the Bruneian version of the NBC reality television series Th
+  - rtists such as Journey. Walter Sabo and his team at NBC brou
+  - ye/fantaserye) from the Philippines, where it was produced b
+  - ppines to the Sultanate of Brunei. Opened in 1984 after Brun
+  reviewed: true
+  origin: MuSiQue-Full dev 4hop1__105773_457883_650651_7262 (4hop); answer 'Walter Sabo'; eval-public/build_musique_slice.py
+  source_documents:
+  - lib-0/the-biggest-loser-brunei-lose-it-all-96636e79.txt
+  - lib-3/adult-contemporary-music-35221766.txt
+  - lib-4/krystala-9a544798.txt
+  - lib-3/embassy-of-the-philippines-bandar-seri-begawan-cc6998c0.txt
+  formula_dependent: false
+  split: dev
+- id: musique-3hop1__726561_132457_51423
+  type: multi_doc
+  question: What is the name of the castle in the city where the performers of Born A Lion was formed?
+  answerable: true
+  must_contain:
+  - re:(?<![\w])casa\ loma(?![\w])
+  gold_spans:
+  - Casa Loma (Spanish for ``Hill House '') is a Gothic Revival
+  - 'm by Canadian rock band Danko Jones. The album debuted at #5'
+  - a Canadian rock trio from Toronto, Ontario. The band consist
+  reviewed: true
+  origin: MuSiQue-Full dev 3hop1__726561_132457_51423 (3hop); answer 'Casa Loma'; eval-public/build_musique_slice.py
+  source_documents:
+  - lib-0/casa-loma-cce3df7a.txt
+  - lib-4/born-a-lion-cda1202f.txt
+  - lib-2/danko-jones-47d7cf1c.txt
+  formula_dependent: false
+  split: dev
+- id: musique-3hop2__25177_19506_23299
+  type: multi_doc
+  question: After the period which limited the supply of shellac; Białystok, Przemyśl were returned to what country
+    along with the region they had been given in the Treaty of Schönbrunn?
+  answerable: true
+  must_contain:
+  - re:(?<![\w])polish\ state(?![\w])
+  gold_spans:
+  - the Adriatic ports, while Galicia was given to the Poles and
+  - śl were returned to the Polish state at the end of World War
+  - 8 rpm. During and after World War II, when shellac supplies
+  reviewed: true
+  origin: MuSiQue-Full dev 3hop2__25177_19506_23299 (3hop); answer 'Polish state'; eval-public/build_musique_slice.py
+  source_documents:
+  - lib-5/napoleon-e6d66e51.txt
+  - lib-0/molotovribbentrop-pact-999b7b5a.txt
+  - lib-5/phonograph-record-fb77236b.txt
+  formula_dependent: false
+  split: dev
+- id: musique-3hop1__147135_159767_81096
+  type: multi_doc
+  question: Who won the Indy car race in the largest city and the state capital of the death state of Cochise?
+  answerable: true
+  must_contain:
+  - re:(?<![\w])mario\ andretti(?![\w])
+  gold_spans:
+  - treaty in 1872. Cochise County, Arizona is named after him.
+  - final career victory for Indy legend Mario Andretti (1993).
+  - pital and largest city is Phoenix. Arizona shares the Four C
+  reviewed: true
+  origin: MuSiQue-Full dev 3hop1__147135_159767_81096 (3hop); answer 'Mario Andretti'; eval-public/build_musique_slice.py
+  source_documents:
+  - lib-0/cochise-6d65cb37.txt
+  - lib-2/desert-diamond-west-valley-phoenix-grand-prix-57313d03.txt
+  - lib-5/arizona-baa76cf5.txt
+  formula_dependent: false
+  split: dev
+- id: musique-4hop1__9007_698949_157828_239539
+  type: multi_doc
+  question: The original language of the film titled and about the city of Tito's final resting place is the co-official
+    language of a country. Where are the headquarters for that country's national radio and TV broadcaster?
+  answerable: true
+  must_contain:
+  - re:(?<![\w])pristina(?![\w])
+  gold_spans:
+  - ris Malagurski) is a 2013 Serbian documentary film directed
+  - the "House of Flowers" in Belgrade on May 25 – the final res
+  - Media in Pristina have followed all elections held in Kosova
+  - ficial in the territory of Kosovo, and one of the three offi
+  reviewed: true
+  origin: MuSiQue-Full dev 4hop1__9007_698949_157828_239539 (4hop); answer 'Pristina'; eval-public/build_musique_slice.py
+  source_documents:
+  - lib-3/belgrade-film-1ba0ad71.txt
+  - lib-4/josip-broz-tito-d2a9441a.txt
+  - lib-5/media-in-pristina-bfedb031.txt
+  - lib-5/serbian-language-4f8ca04f.txt
+  formula_dependent: false
+  split: dev
+- id: musique-4hop1__17192_17130_70784_79935
+  type: multi_doc
+  question: When was the region immediately north of the region where the country that secured southern Lebanon
+    is located and the Persian Gulf created?
+  answerable: true
+  must_contain:
+  - re:(?<![\w])1930(?![\w])
+  gold_spans:
+  - the Coastal Road Massacre. Israel responded by launching an
+  - The Kingdom of Saudi Arabia is a country situated in Southwe
+  - ntry is situated in the Middle East at the southeastern shor
+  - ted in his establishing the Kingdom of Saudi Arabia in 1930.
+  reviewed: true
+  origin: MuSiQue-Full dev 4hop1__17192_17130_70784_79935 (4hop); answer '1930'; eval-public/build_musique_slice.py
+  source_documents:
+  - lib-4/israel-03193d08.txt
+  - lib-2/geography-of-saudi-arabia-6e26c0a5.txt
+  - lib-5/israel-edf86f2e.txt
+  - lib-3/history-of-saudi-arabia-b9c4e2f3.txt
+  formula_dependent: false
+  split: dev
+- id: musique-2hop__156700_63853
+  type: multi_doc
+  question: What is the source of the river of which Kraai River is a tributary?
+  answerable: true
+  must_contain:
+  - re:(?<![\w])thaba\ putsoa(?![\w])
+  gold_spans:
+  - he way to Aliwal North, where it joins the Orange River at .
+  - Augrabies Falls Source Thaba Putsoa - location Maloti Mount
+  reviewed: true
+  origin: MuSiQue-Full dev 2hop__156700_63853 (2hop); answer 'Thaba Putsoa'; eval-public/build_musique_slice.py
+  source_documents:
+  - lib-0/kraai-river-3501b7c7.txt
+  - lib-1/orange-river-88e4be43.txt
+  formula_dependent: false
+  split: dev
+- id: musique-2hop__157339_156796
+  type: multi_doc
+  question: Into what river does the river that Thuli River turns into flow?
+  answerable: true
+  must_contain:
+  - re:(?<![\w])limpopo\ river(?![\w])|(?<![\w])limpopo(?![\w])
+  gold_spans:
+  - major tributary of the Shashe River in Zimbabwe. It rises n
+  - -bank tributary of the Limpopo River in Zimbabwe. It rises n
+  reviewed: true
+  origin: MuSiQue-Full dev 2hop__157339_156796 (2hop); answer 'Limpopo River'; eval-public/build_musique_slice.py
+  source_documents:
+  - lib-4/thuli-river-06f2e6da.txt
+  - lib-3/shashe-river-46999e61.txt
+  formula_dependent: false
+  split: dev
+- id: musique-2hop__223823_29905
+  type: multi_doc
+  question: How many mandatory transmitters of the Canadian Broadcasting Centre's owner were updated before the
+    deadline?
+  answerable: true
+  must_contain:
+  - re:(?<![\w])only\ about\ half(?![\w])
+  gold_spans:
+  - oup debuted in a concert at CBC's Glenn Gould Studio. The fo
+  - ', 2011, CBC converted only about half of the analogue transm'
+  reviewed: true
+  origin: MuSiQue-Full dev 2hop__223823_29905 (2hop); answer 'only about half'; eval-public/build_musique_slice.py
+  source_documents:
+  - lib-5/african-guitar-summit-44e33037.txt
+  - lib-1/cbc-television-7282cc7f.txt
+  formula_dependent: false
+  split: dev
+- id: musique-2hop__24661_66233
+  type: multi_doc
+  question: When does the new season of the Carolina Hurricanes' league start?
+  answerable: true
+  must_contain:
+  - re:(?<![\w])october\ 3,\ 2018(?![\w])
+  gold_spans:
+  - um. The Carolina Hurricanes NHL hockey team is also located
+  - scheduled to begin on October 3, 2018, and will end on April
+  reviewed: true
+  origin: MuSiQue-Full dev 2hop__24661_66233 (2hop); answer 'October 3, 2018'; eval-public/build_musique_slice.py
+  source_documents:
+  - lib-2/north-carolina-99d1477c.txt
+  - lib-3/201819-nhl-season-1d8ae81f.txt
+  formula_dependent: false
+  split: dev
+- id: musique-2hop__623501_297043
+  type: multi_doc
+  question: What watercourse is the river on which the Lostock Dam is located the mouth of?
+  answerable: true
+  must_contain:
+  - re:(?<![\w])hunter\ river(?![\w])
+  gold_spans:
+  - et spillway across the Paterson River upstream of the villag
+  - ver that is part of the Hunter River catchment, is located i
+  reviewed: true
+  origin: MuSiQue-Full dev 2hop__623501_297043 (2hop); answer 'Hunter River'; eval-public/build_musique_slice.py
+  source_documents:
+  - lib-0/lostock-dam-6294dcea.txt
+  - lib-2/paterson-river-d9454861.txt
+  formula_dependent: false
+  split: dev
+- id: musique-2hop__428940_135373
+  type: multi_doc
+  question: After what is the body of water Partridge Lake is part of named?
+  answerable: true
+  must_contain:
+  - re:(?<![\w])vitus\ bering(?![\w])
+  gold_spans:
+  - Bering Sea is named for Vitus Bering, a Danish navigator in
+  - nada that is part of the Bering Sea drainage basin. The prim
+  reviewed: true
+  origin: MuSiQue-Full dev 2hop__428940_135373 (2hop); answer 'Vitus Bering'; eval-public/build_musique_slice.py
+  source_documents:
+  - lib-4/bering-sea-775aa136.txt
+  - lib-2/partridge-lake-bc-yukon-1c8ba270.txt
+  formula_dependent: false
+  split: dev
+- id: musique-2hop__72118_83769
+  type: multi_doc
+  question: Who did the person portraying Batman in the Justice League movie play in Dazed and Confused?
+  answerable: true
+  must_contain:
+  - re:(?<![\w])fred\ o'bannion(?![\w])
+  gold_spans:
+  - and violently paddled. Fred O'Bannion (Ben Affleck), a senio
+  - 'Ben Affleck as Bruce Wayne / Batman: A wealthy socialite, an'
+  reviewed: true
+  origin: MuSiQue-Full dev 2hop__72118_83769 (2hop); answer "Fred O'Bannion"; eval-public/build_musique_slice.py
+  source_documents:
+  - lib-5/dazed-and-confused-film-b6c91355.txt
+  - lib-3/justice-league-film-61d316e4.txt
+  formula_dependent: false
+  split: dev
+- id: musique-3hop1__103890_10659_67187
+  type: multi_doc
+  question: Who was the first elected president of the country where, along with the nation where Ágnes Konkoly
+    is from, many expelled French Jews relocated to?
+  answerable: true
+  must_contain:
+  - re:(?<![\w])gabriel\ narutowicz(?![\w])
+  gold_spans:
+  - president of Poland, Gabriel Narutowicz, was sworn in as pre
+  - ted eastwards, settling in Poland and Hungary. The Jews were
+  - was crowned Miss Universe Hungary 2012 and represented her c
+  reviewed: true
+  origin: MuSiQue-Full dev 3hop1__103890_10659_67187 (3hop); answer 'Gabriel Narutowicz'; eval-public/build_musique_slice.py
+  source_documents:
+  - lib-3/president-of-poland-24196f64.txt
+  - lib-5/middle-ages-090652da.txt
+  - lib-4/agnes-konkoly-a9179833.txt
+  formula_dependent: false
+  split: dev
+- id: musique-3hop1__639955_834494_34109
+  type: multi_doc
+  question: What is the PBS station of the city in the same county as Helvetia?
+  answerable: true
+  must_contain:
+  - re:(?<![\w])kuat\-tv\ 6(?![\w])|(?<![\w])kuat\-tv(?![\w])
+  gold_spans:
+  - is a populated place in Pima County, Arizona, that was settl
+  - ecreation offerings within Pima County including Tucson, AZ.
+  - V) and KWBA 58 (The CW). KUAT-TV 6 is a PBS affiliate run by
+  reviewed: true
+  origin: MuSiQue-Full dev 3hop1__639955_834494_34109 (3hop); answer 'KUAT-TV 6'; eval-public/build_musique_slice.py
+  source_documents:
+  - lib-5/helvetia-arizona-f567c85b.txt
+  - lib-1/pima-county-natural-resources-parks-and-recreation-fca6eef2.txt
+  - lib-2/tucson-arizona-018fce83.txt
+  formula_dependent: false
+  split: dev
+- id: musique-3hop1__573244_339990_15538
+  type: multi_doc
+  question: When did the state where Kashinka Hollow is located in reinstate the death penalty?
+  answerable: true
+  must_contain:
+  - re:(?<![\w])1984(?![\w])
+  gold_spans:
+  - ndum but reinstated it in a 1984 joint death penalty/life im
+  - The Socialist Party of Oregon in Columbia County, Oregon beg
+  - Branch Briar Creek in Columbia County, Pennsylvania, in the
+  reviewed: true
+  origin: MuSiQue-Full dev 3hop1__573244_339990_15538 (3hop); answer '1984'; eval-public/build_musique_slice.py
+  source_documents:
+  - lib-2/capital-punishment-in-the-united-states-1aabd61c.txt
+  - lib-4/socialist-party-of-oregon-columbia-county-oregon-31e3ca9b.txt
+  - lib-5/kashinka-hollow-c5612591.txt
+  formula_dependent: false
+  split: dev
+- id: musique-3hop1__462960_160545_34751
+  type: multi_doc
+  question: What year did the country where Pao Sarasin was born form an alliance with Japan?
+  answerable: true
+  must_contain:
+  - re:(?<![\w])1941(?![\w])
+  gold_spans:
+  - tricts (khet) of Bangkok, Thailand. Its neighbours, clockwis
+  - liance with the Japanese in 1941, as the Japanese forces wer
+  - ed at Siriraj Hospital in Bangkok after a month-long hospita
+  reviewed: true
+  origin: MuSiQue-Full dev 3hop1__462960_160545_34751 (3hop); answer '1941'; eval-public/build_musique_slice.py
+  source_documents:
+  - lib-4/bang-bon-district-d2513337.txt
+  - lib-0/pacific-war-39ac1c7e.txt
+  - lib-3/pao-sarasin-80f90f0b.txt
+  formula_dependent: false
+  split: dev
+- id: musique-4hop3__474028_88460_30152_20999-unans
+  type: out_of_corpus
+  question: How were people from whom new coins were a proclamation of independence by the Somali Muslim Ajuran
+    Empire expelled from the natural boundary between Thailand and A Don's country?
+  answerable: false
+  reviewed: true
+  origin: MuSiQue-Full dev 4hop3__474028_88460_30152_20999 unanswerable variant (4hop; one supporting paragraph
+    removed, dataset answer 'The dynasty regrouped and defeated the Portuguese' not derivable); eval-public/build_musique_slice.py
+  source_documents: []
+  formula_dependent: false
+  split: dev
+- id: musique-2hop__821197_368148-unans
+  type: out_of_corpus
+  question: In which county is Southern Maryland Electric Cooperative headquartered?
+  answerable: false
+  reviewed: true
+  origin: MuSiQue-Full dev 2hop__821197_368148 unanswerable variant (2hop; one supporting paragraph removed, dataset
+    answer 'Charles County' not derivable); eval-public/build_musique_slice.py
+  source_documents: []
+  formula_dependent: false
+  split: dev
+- id: musique-2hop__132929_684936-unans
+  type: out_of_corpus
+  question: What company eventually became the company that made the Skyflash missle?
+  answerable: false
+  reviewed: true
+  origin: MuSiQue-Full dev 2hop__132929_684936 unanswerable variant (2hop; one supporting paragraph removed, dataset
+    answer 'BAC' not derivable); eval-public/build_musique_slice.py
+  source_documents: []
+  formula_dependent: false
+  split: dev
+- id: musique-2hop__485221_544917-unans
+  type: out_of_corpus
+  question: What body of water includes the terrain feature where Coffee Swamp is located?
+  answerable: false
+  reviewed: true
+  origin: MuSiQue-Full dev 2hop__485221_544917 unanswerable variant (2hop; one supporting paragraph removed, dataset
+    answer 'Lake Superior' not derivable); eval-public/build_musique_slice.py
+  source_documents: []
+  formula_dependent: false
+  split: dev
+- id: musique-3hop1__108833_720914_27537-unans
+  type: out_of_corpus
+  question: Why did Roncalli leave the place where artist who made The Bacchanal of the Andrians died?
+  answerable: false
+  reviewed: true
+  origin: MuSiQue-Full dev 3hop1__108833_720914_27537 unanswerable variant (3hop; one supporting paragraph removed,
+    dataset answer 'for the conclave in Rome' not derivable); eval-public/build_musique_slice.py
+  source_documents: []
+  formula_dependent: false
+  split: dev
+- id: musique-3hop1__131783_131926_89261-unans
+  type: out_of_corpus
+  question: Where does the body of water by the city where The Minikahda Club empty into the Gulf of Mexico?
+  answerable: false
+  reviewed: true
+  origin: MuSiQue-Full dev 3hop1__131783_131926_89261 unanswerable variant (3hop; one supporting paragraph removed,
+    dataset answer 'the Mississippi River Delta' not derivable); eval-public/build_musique_slice.py
+  source_documents: []
+  formula_dependent: false
+  split: dev

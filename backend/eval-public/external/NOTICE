@@ -1,0 +1,11 @@
+Third-party public datasets used by the slices in this folder. The data itself is
+NOT committed (see .gitignore); only the builders and gold files in eval-public/ are.
+
+FinQA  -  Chen et al., "FinQA: A Dataset of Numerical Reasoning over Financial Data",
+          EMNLP 2021. https://github.com/czyssrs/FinQA  (test.json, MIT License,
+          Copyright (c) 2021 Zhiyu Chen). Underlying filings are public S&P 500 annual reports.
+
+MuSiQue - Trivedi et al., "MuSiQue: Multihop Questions via Single-hop Question
+          Composition", TACL 2022. https://github.com/StonyBrookNLP/musique
+          (MuSiQue-Full v1.0 dev, CC BY 4.0). Paragraphs derive from Wikipedia
+          (CC BY-SA). Mirror used for download: huggingface.co/datasets/bdsaglam/musique.
