@@ -520,16 +520,19 @@ class QueryService:
                     abstained=False, validation_warnings=[], mode=QueryMode.FAST.value,
                     standalone_query=standalone, scoped_to=scoped_to, doc_layer=doc_info,
                 )
-        search_scope = doc_layer.restrict_scope(route_decision, scope_ids) if doc_layer is not None else scope_ids
-        routed_scope = search_scope is not scope_ids and search_scope != scope_ids
-        if routed_scope:
-            doc_info["restricted_to"] = len(search_scope or [])
+        search_scope = scope_ids
         with phase("search"):
-            ranked_chunks = self._hybrid(question, standalone, search_scope)
-        if routed_scope and not ranked_chunks:
-            doc_info["fallback"] = "empty routed search"
-            search_scope = scope_ids
             ranked_chunks = self._hybrid(question, standalone, scope_ids)
+        extra_scope = doc_layer.routed_scope(route_decision, scope_ids) if doc_layer is not None else None
+        if extra_scope:
+            # Additive: the global legs above are untouched; chunks of the one
+            # named document are appended as extra candidates (never removed).
+            with phase("search"):
+                boost = self._hybrid(question, standalone, extra_scope, top_k=doc_layer.extra_k)
+            have = {rc.chunk_id for rc in ranked_chunks}
+            added = [rc for rc in boost if rc.chunk_id not in have]
+            ranked_chunks = list(ranked_chunks) + added
+            doc_info["added_chunks"] = len(added)
         if not ranked_chunks and named_ids:
             # The named file yields nothing retrievable: say so; never widen the
             # search to other files behind the user's back.
@@ -638,13 +641,13 @@ class QueryService:
             self._doc_layer = layer
         return layer if (layer.routing_on or layer.lookup_on or layer.family_on) else None
 
-    def _hybrid(self, question: str, standalone: str | None, scope_ids: list[str] | None):
+    def _hybrid(self, question: str, standalone: str | None, scope_ids: list[str] | None, top_k: int | None = None):
         return hybrid_search(
             engine=self._engine,
             table=self._table,
             gateway=self._gateway,
             query=question,
-            top_k=self._top_k,
+            top_k=top_k or self._top_k,
             page_table=self._page_table,
             manifest_guard=self._manifest_guard,
             **({"extra_queries": [standalone]} if standalone else {}),

@@ -116,8 +116,15 @@ def extract_entities(question: str) -> list[Entity]:
     return ents
 
 
+_JOIN_CUES = re.compile(
+    r"\b(?:and\s+(?:the|its|their)\s+\w+|budget|approval|approved|amend\w*|compar\w+|versus|vs\.?|both|together\s+with|"
+    r"cross-?ref\w*|related\s+to|according\s+to\s+the\s+\w+\s+and|memo|between\s+the\s+\w+\s+and\s+the|difference)\b",
+    re.I,
+)
+
+
 def is_list_question(question: str) -> bool:
-    return bool(_LIST_CUES.search(question))
+    return bool(_LIST_CUES.search(question) or _JOIN_CUES.search(question))
 
 
 @dataclass
@@ -179,7 +186,9 @@ def route(engine: Engine, question: str, top_n: int = 8, *, scope_version_ids: l
     ents = extract_entities(question)
     if not ents:
         return RouteDecision(False, reason="no named entity")
-    if not any(e.kind in ("party", "quoted", "id") for e in ents):
+    if any(e.kind == "id" for e in ents):
+        return RouteDecision(False, reason="identifier points elsewhere", entities=[e.text for e in ents])
+    if not any(e.kind in ("party", "quoted") for e in ents):
         return RouteDecision(False, reason="only generic titles named", entities=[e.text for e in ents])
     fq = _fts_query(ents)
     if not fq:

@@ -54,13 +54,17 @@ class DocumentLayer:
             logger.warning("document routing failed; searching globally", exc_info=True)
             return None
 
-    def restrict_scope(self, decision: routing.RouteDecision | None, scope_ids: list[str] | None) -> list[str] | None:
-        if not self.routing_on or decision is None or not decision.routed or not decision.version_ids:
-            return scope_ids
-        if scope_ids is None:
-            return list(decision.version_ids)
-        inter = [v for v in decision.version_ids if v in set(scope_ids)]
-        return inter or scope_ids
+    extra_k = 4
+
+    def routed_scope(self, decision: routing.RouteDecision | None, scope_ids: list[str] | None) -> list[str] | None:
+        """Version ids whose chunks are ADDED as extra candidates. Only when the
+        question names exactly one document strongly; never narrows the pool."""
+        if not self.routing_on or decision is None or not decision.routed or not decision.top_unique:
+            return None
+        vid = decision.top_version_id
+        if scope_ids is not None and vid not in set(scope_ids):
+            return None
+        return [vid]
 
     def lookup_answer(self, question: str, decision: routing.RouteDecision | None, resolver: Any) -> tuple[LookupAnswer, Any] | None:
         """(answer, resolved_evidence) or None. `resolver.resolve_many` supplies the real

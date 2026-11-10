@@ -218,15 +218,18 @@ def test_lookup_requires_unique_document(migrated_sqlite_engine):
     assert layer.lookup_answer(q, dec, _FakeResolver(e)) is None  # two near-identical docs: never pick one
 
 
-def test_restrict_scope_intersects(lib):
+def test_routed_scope_only_single_strong_document(lib):
     e, sf = lib
     builder.build_all(sf)
     layer = DocumentLayer(e, sf, Settings(doc_routing="on"))
     dec = layer.route("Under the Distributor Agreement with Zogenix, Inc., what law?", None)
-    assert layer.restrict_scope(dec, None) == ["ev_z"]
-    assert layer.restrict_scope(dec, ["ev_z", "ev_b"]) == ["ev_z"]
-    assert layer.restrict_scope(dec, ["ev_b"]) == ["ev_b"]  # disjoint: keep the outer scope
-    assert DocumentLayer(e, sf, Settings()).restrict_scope(dec, None) is None
+    assert layer.routed_scope(dec, None) == ["ev_z"]
+    assert layer.routed_scope(dec, ["ev_b"]) is None  # outside the outer scope
+    assert DocumentLayer(e, sf, Settings()).routed_scope(dec, None) is None
+    for q in ("Does the approval AM-01 for the Zogenix Distributor Agreement match the budget row?",
+              "Compare the Zogenix Distributor Agreement and the Bloom Maintenance Agreement.",
+              "What does the memo say about the Zogenix Distributor Agreement and the budget?"):
+        assert not layer.route(q, None).routed, q
 
 
 def test_amendment_links_and_family_latest(migrated_sqlite_engine):
@@ -318,23 +321,26 @@ def _service(e, settings, monkeypatch, calls, results):
                            resolver=EvidenceResolver(get_session_factory(e)), settings=settings)
 
 
-def test_service_flags_off_unchanged_and_on_scopes(lib, monkeypatch):
+def test_service_routing_is_additive_never_narrowing(lib, monkeypatch):
     e, sf = lib
     builder.build_all(sf)
     q = "Under the Distributor Agreement with Zogenix, Inc., which jurisdiction's law governs the agreement?"
     calls: list = []
     off = _service(e, Settings(), monkeypatch, calls, [[]])
     off.ask(q, mode=QueryMode.FAST)
-    assert "scope_version_ids" not in calls[0]
+    assert len(calls) == 1 and "scope_version_ids" not in calls[0]
+    # on: the global search is identical and unscoped; a second small scoped search adds candidates
     calls.clear()
-    on = _service(e, Settings(doc_routing="on"), monkeypatch, calls, [[], []])
+    on = _service(e, Settings(doc_routing="on"), monkeypatch, calls, [["c_b1"], ["c_z1"]])
     r = on.ask(q, mode=QueryMode.FAST)
-    assert calls[0]["scope_version_ids"] == ["ev_z"]
-    # an empty routed search falls back to the global search
+    assert "scope_version_ids" not in calls[0] and calls[0]["top_k"] == off._top_k
+    assert calls[1]["scope_version_ids"] == ["ev_z"] and calls[1]["top_k"] == 4
+    assert r.doc_layer["added_chunks"] == 1
+    # G6 shape: evidence spans several files, the question names them -> no routing, global only
     calls.clear()
-    on2 = _service(e, Settings(doc_routing="on"), monkeypatch, calls, [[], []])
-    on2.ask(q, mode=QueryMode.FAST)
-    assert len(calls) == 2 and "scope_version_ids" not in calls[1]
+    _service(e, Settings(doc_routing="on"), monkeypatch, calls, [["c_b1", "c_z1"]]).ask(
+        "Does the approval AM-01 for the Zogenix Distributor Agreement match the Bloom budget row?", mode=QueryMode.FAST)
+    assert len(calls) == 1 and "scope_version_ids" not in calls[0]
 
 
 def test_service_field_lookup_bypasses_model_and_search(lib, monkeypatch):
