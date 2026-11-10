@@ -349,7 +349,12 @@ class IngestionPipeline:
         writer_lock: WriterLock | None = None,
         mail_parser: MailParser | None = None,
         mail_recipe: ChunkRecipe | None = None,
+        parse_pool=None,
     ) -> None:
+        # Optional `ParsePool`: Docling-family files are parsed ahead of the
+        # writer in worker processes; everything else (and every write) stays
+        # on this thread, in discovery order.
+        self._parse_pool = parse_pool
         self._writer_lock = writer_lock or lock_for_sessions(session_factory)
         self._session_factory = session_factory
         self._evidence_manager = evidence_manager
@@ -444,6 +449,76 @@ class IngestionPipeline:
         )
 
     # -- internal helpers ---------------------------------------------------
+
+    def _is_pooled_family(self, path: Path) -> bool:
+        return path.suffix.lower() in DOCLING_EXTENSIONS
+
+    def _reset_pool(self) -> None:
+        if self._parse_pool is not None:
+            self._parse_pool.reset()
+
+    def _prefetch(self, source_id: str, files: list[Path], index: int) -> None:
+        """Keep the parse pool's look-ahead window full (index is 0-based, the
+        file about to be ingested). Skips files that look unchanged."""
+        pool = self._parse_pool
+        if pool is None:
+            return
+        for path in files[index : index + pool.window]:
+            if pool.in_flight() >= pool.window:
+                break
+            if self._is_pooled_family(path) and not self._evidence_manager.looks_unchanged(
+                source_id, path
+            ):
+                pool.submit(source_id, path)
+
+    def _try_clone_duplicate(self, source_id: str, path: Path, evidence_version) -> int | None:
+        """If another READY version holds identical bytes (a copy under a
+        different path), clone its parsed units/chunks (and reuse its vectors
+        when the index text is unchanged) instead of parsing and embedding
+        again. Provenance stays per path: the new version keeps its own
+        `file_path`, units and chunk ids. Skipped when the visual index or
+        formula transcription is on (those need per-version page work)."""
+        s = self._settings
+        if not getattr(s, "reuse_duplicate_content", True):
+            return None
+        if s.visual_index_enabled or s.formula_transcription_enabled:
+            return None
+        recipe = self._recipes[FAMILY_DOCLING]
+        donor_id = self._chunk_writer.find_clone_donor(
+            content_hash=evidence_version.content_hash,
+            exclude_version_id=evidence_version.id,
+            parser_name=self._parser.parser_name,
+            parser_version=self._parser.parser_version,
+            recipe_id=recipe.id,
+        )
+        if donor_id is None:
+            return None
+        self._clear_version_chunks(evidence_version.id)
+        self._chunk_writer.ensure_recipe_row(recipe)
+        records, donors = self._chunk_writer.clone_version(
+            donor_version_id=donor_id, new_version_id=evidence_version.id, recipe=recipe
+        )
+        self._index_manager.upsert_cloned_chunks(records, donors)
+        if self._parse_pool is not None:
+            self._parse_pool.discard(source_id, path)
+        return len(records)
+
+    def _parse_docling(self, source_id: str, path: Path):
+        if self._parse_pool is not None:
+            parsed = self._parse_pool.take(source_id, path)
+            if parsed is not None:
+                return parsed
+        return self._parser.parse(source_id, path)
+
+    def _check_file_size(self, path: Path) -> None:
+        cap = getattr(self._settings, "max_file_bytes", 0)
+        if cap and cap > 0:
+            try:
+                size = path.stat().st_size
+            except OSError:
+                return
+            if size > cap:
+                raise ValueError(f"file too large: {size} bytes exceeds the {cap} byte limit")
 
     def _load_active_source(self, source_id: str) -> Source:
         with self._session_factory() as session:
@@ -594,6 +669,7 @@ class IngestionPipeline:
 
     def _ingest_one_file(self, source_id: str, path: Path) -> FileIngestResult:
         suffix = path.suffix.lower()
+        self._check_file_size(path)
 
         if suffix in MAIL_EXTENSIONS:
             return self._ingest_one_mail_file(source_id, path)
@@ -629,7 +705,10 @@ class IngestionPipeline:
             # processed (visual index / formula transcription), which is
             # handled by a narrower backfill pass below, not a full re-ingest.
             needs_formula_backfill = evidence_version.formula_regions_json is None
-            needs_page_image_backfill = evidence_version.page_images_json is None
+            needs_page_image_backfill = (
+                evidence_version.page_images_json is None
+                and self._settings.page_images_needed
+            )
             needs_transcription_backfill = (
                 self._settings.formula_transcription_enabled
                 and evidence_version.formula_transcriptions_json is None
@@ -641,7 +720,7 @@ class IngestionPipeline:
                     # Only this branch re-parses (and so re-renders
                     # pages) -- something is genuinely missing that can
                     # only come from Docling.
-                    parsed = self._parser.parse(source_id, path)
+                    parsed = self._parse_docling(source_id, path)
                     if needs_formula_backfill:
                         self._formula_transcriber.save_regions(
                             evidence_version.id, parsed.formula_regions
@@ -658,7 +737,7 @@ class IngestionPipeline:
                                 page_images=parsed.page_images,
                             )
                     else:
-                        page_image_hashes = json.loads(evidence_version.page_images_json)
+                        page_image_hashes = json.loads(evidence_version.page_images_json or "{}")
                 else:
                     # Regions + page images are already stored;
                     # transcription is the only thing missing (e.g. the
@@ -667,7 +746,7 @@ class IngestionPipeline:
                     # re-render every page for nothing -- transcription
                     # only ever depends on page images already existing.
                     formula_regions = json.loads(evidence_version.formula_regions_json)
-                    page_image_hashes = json.loads(evidence_version.page_images_json)
+                    page_image_hashes = json.loads(evidence_version.page_images_json or "{}")
 
                 if needs_transcription_backfill:
                     self._formula_transcriber.transcribe(
@@ -687,10 +766,21 @@ class IngestionPipeline:
         # try/except exists only to record FAILED before letting that
         # exception propagate, not to change how it's handled.
         try:
-            parsed = self._parser.parse(source_id, path)
+            cloned = self._try_clone_duplicate(source_id, path, evidence_version)
+            if cloned is not None:
+                self._evidence_manager.mark_version_status(evidence_version.id, VersionStatus.READY)
+                return FileIngestResult(path=path, status="ingested", chunks_written=cloned)
+            parsed = self._parse_docling(source_id, path)
             self._formula_transcriber.save_regions(evidence_version.id, parsed.formula_regions)
-            page_image_hashes = self._visual_indexer.save_page_images(
-                evidence_version.id, parsed.page_images
+            # Page images are only generated/stored when something consumes
+            # them (`Settings.page_images_needed`); otherwise
+            # `page_images_json` stays NULL, which the unchanged-file
+            # backfill above treats as "images wanted later" only once a
+            # consumer is switched on.
+            page_image_hashes = (
+                self._visual_indexer.save_page_images(evidence_version.id, parsed.page_images)
+                if self._settings.page_images_needed
+                else {}
             )
             if self._settings.visual_index_enabled:
                 self._visual_indexer.index_pages(
@@ -1095,6 +1185,7 @@ class IngestionPipeline:
                 rules = IgnoreRules()
             total = len(targets)
             for index, path in enumerate(targets, start=1):
+                self._prefetch(source_id, targets, index - 1)
                 emit(ProgressEvent("start", index, total, path))
                 job_files.update(job_id, path)
                 try:
@@ -1104,6 +1195,7 @@ class IngestionPipeline:
                 file_results.append(result)
                 job_files.update(job_id, path, result)
                 emit(ProgressEvent("done", index, total, path, result))
+                self._index_manager.note_file_done()
             if any(r.status not in ("unchanged", "skipped") for r in file_results):
                 self._index_manager.reconcile_source(
                     source_id,
@@ -1111,6 +1203,7 @@ class IngestionPipeline:
                     current_version_ids=self._chunk_writer.ready_version_ids_for_source(source_id),
                 )
         except BaseException as exc:
+            self._reset_pool()
             self._finalize_job(
                 job_id,
                 IngestionJobStatus.FAILED,
@@ -1119,6 +1212,7 @@ class IngestionPipeline:
             )
             raise
 
+        self._reset_pool()
         files_failed = sum(1 for r in file_results if r.status == "failed")
         files_processed = len(file_results)
         error: str | None = None
@@ -1203,6 +1297,7 @@ class IngestionPipeline:
             job_files.prepare(job_id, files)
             total = len(files)
             for index, path in enumerate(files, start=1):
+                self._prefetch(source_id, files, index - 1)
                 emit(ProgressEvent("start", index, total, path))
                 job_files.update(job_id, path)
                 try:
@@ -1212,6 +1307,7 @@ class IngestionPipeline:
                 file_results.append(result)
                 job_files.update(job_id, path, result)
                 emit(ProgressEvent("done", index, total, path, result))
+                self._index_manager.note_file_done()
 
             # Single end-of-run reconcile pass -- see module docstring for why
             # this must be whole-source, not per-file.
@@ -1222,6 +1318,7 @@ class IngestionPipeline:
                 current_version_ids=self._chunk_writer.ready_version_ids_for_source(source_id),
             )
         except BaseException as exc:
+            self._reset_pool()
             # Interrupted (Ctrl-C etc.): don't leave the job row RUNNING forever.
             self._finalize_job(
                 job_id,
@@ -1235,6 +1332,7 @@ class IngestionPipeline:
             )
             raise
 
+        self._reset_pool()
         files_failed = sum(1 for r in file_results if r.status == "failed")
         files_processed = len(file_results)
 

@@ -39,6 +39,7 @@ from sqlalchemy import Engine, bindparam, text
 from docket.core.writer_lock import WriterLock
 from docket.core.db.models import SourceStatus, VersionStatus
 from docket.infra.index.context import INDEX_TEXT_VERSION, index_text_for_chunk
+from docket.infra.index.fts_index import ensure_fts_chunk_map_in
 from docket.infra.index.manifest import new_manifest, read_manifest, write_manifest
 from docket.infra.index.vector_index import LanceIndexWriter
 from docket.infra.inference.gateway import InferenceGateway, embed_texts
@@ -324,3 +325,4 @@ def _rewrite_fts(engine: Engine, chunk_dicts: list[dict], index_texts: list[str]
                 ),
                 {**row, "text": index_text},
             )
+        ensure_fts_chunk_map_in(conn)

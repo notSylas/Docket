@@ -176,6 +176,9 @@ class AppContext:
             context.__dict__["gateway"] = gateway
         if parser is not None:
             context.__dict__["parser"] = parser
+            # An injected parser (tests, eval) is used in-process: the pool
+            # would build real Docling workers and bypass it.
+            context.__dict__["parse_pool"] = None
         return context
 
     @cached_property
@@ -188,7 +191,32 @@ class AppContext:
 
     @cached_property
     def parser(self) -> DoclingParser:
-        return DoclingParser()
+        return DoclingParser(
+            generate_page_images=self.settings.page_images_needed,
+            max_pages=self.settings.parse_max_pages,
+            skip_ocr_with_text_layer=self.settings.pdf_skip_ocr_with_text_layer,
+        )
+
+    @cached_property
+    def parse_pool(self):
+        """Process pool for parallel Docling parsing; `None` (sequential,
+        in-process) when `DOCKET_PARSE_WORKERS=1`."""
+        if self.settings.parse_workers <= 1:
+            return None
+        from functools import partial
+
+        from docket.services.ingestion.parse_pool import ParsePool
+
+        return ParsePool(
+            partial(
+                DoclingParser,
+                generate_page_images=self.settings.page_images_needed,
+                max_pages=self.settings.parse_max_pages,
+                skip_ocr_with_text_layer=self.settings.pdf_skip_ocr_with_text_layer,
+            ),
+            workers=self.settings.parse_workers,
+            timeout_s=self.settings.parse_timeout_s,
+        )
 
     @cached_property
     def gateway(self) -> OllamaGateway:
@@ -281,6 +309,7 @@ class AppContext:
             settings=self.settings,
             source_manager=self.source_manager,
             manifest_guard=self.index_manifest_guard,
+            parse_pool=self.parse_pool,
         )
 
     @cached_property

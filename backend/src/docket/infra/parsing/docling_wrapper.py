@@ -251,6 +251,36 @@ def _insert_page_markers(markdown: str, document: object) -> str:
     return result
 
 
+def pdf_has_text_layer(path, *, min_chars: int = 40, min_fraction: float = 0.9) -> bool:
+    """True when at least `min_fraction` of the PDF's pages carry a real text
+    layer (>= `min_chars` extractable characters). Any failure (pypdfium2
+    missing, encrypted or corrupt file) reads as "no text layer", so the
+    caller falls back to the normal OCR-capable conversion."""
+    try:
+        import pypdfium2 as pdfium
+
+        pdf = pdfium.PdfDocument(str(path))
+        try:
+            total = len(pdf)
+            if total == 0:
+                return False
+            good = 0
+            for i in range(total):
+                page = pdf[i]
+                textpage = page.get_textpage()
+                try:
+                    if textpage.count_chars() >= min_chars:
+                        good += 1
+                finally:
+                    textpage.close()
+                    page.close()
+            return good / total >= min_fraction
+        finally:
+            pdf.close()
+    except Exception:  # noqa: BLE001
+        return False
+
+
 class DoclingParser:
     """Parses documents via Docling and returns normalized markdown text.
 
@@ -259,7 +289,12 @@ class DoclingParser:
     and reused across ``parse()`` calls, mirroring the spike's usage.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        generate_page_images: bool = True,
+        max_pages: int = 0,
+        skip_ocr_with_text_layer: bool = False,
+    ) -> None:
         from docling.document_converter import DocumentConverter, PdfFormatOption
         from docling.datamodel.base_models import InputFormat
         from docling.datamodel.pipeline_options import PdfPipelineOptions
@@ -274,9 +309,11 @@ class DoclingParser:
         # is worth the extra memory/time per page during ingestion.
         options = PdfPipelineOptions(
             do_formula_enrichment=False,
-            generate_page_images=True,
+            generate_page_images=generate_page_images,
             images_scale=PAGE_IMAGES_SCALE,
         )
+        self._generate_page_images = generate_page_images
+        self._max_pages = max_pages
         self._converter = DocumentConverter(
             format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=options)}
         )
@@ -312,7 +349,20 @@ class DoclingParser:
             # Cheap magic-byte check first: a text file named *.pdf is
             # reported as "not a valid PDF file" without invoking Docling.
             check_file_signature(path)
-            result = self._converter.convert(str(path))
+            converter = self._converter
+            if (
+                getattr(self, "_skip_ocr_with_text_layer", False)
+                and Path(path).suffix.lower() == ".pdf"
+                and pdf_has_text_layer(path)
+            ):
+                if self._converter_no_ocr is None:
+                    self._converter_no_ocr = self._build_converter(False)
+                converter = self._converter_no_ocr
+            max_pages = getattr(self, "_max_pages", 0)
+            if max_pages and max_pages > 0:
+                result = converter.convert(str(path), max_num_pages=max_pages)
+            else:
+                result = converter.convert(str(path))
             markdown = result.document.export_to_markdown()
             # Marker insertion runs on the raw (still-escaped) markdown --
             # see `_insert_page_markers`'s docstring for why -- then
@@ -324,7 +374,7 @@ class DoclingParser:
             annotated_markdown = _insert_page_markers(markdown, result.document)
             text_with_page_markers = unescape_markdown(annotated_markdown)
             formula_regions = _formula_regions(result.document)
-            page_images = _page_images(result.document)
+            page_images = _page_images(result.document) if getattr(self, "_generate_page_images", True) else {}
         except Exception as exc:  # noqa: BLE001 -- intentionally broad, see docstring
             raise ParseError(source_id, path, exc) from exc
 

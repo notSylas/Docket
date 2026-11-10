@@ -111,6 +111,45 @@ class ContentAddressedStore:
         self._atomic_write(object_path, data)
         return content_hash
 
+    def put_file(self, path: Path, *, chunk_size: int = 1 << 20) -> str:
+        """Store the file at ``path`` by streaming it (constant memory),
+        returning its sha256. Hashes while copying into a temp file in the
+        object directory, then atomically moves it into place; a no-op copy
+        (temp discarded) if the object already exists."""
+        tmp_dir = self.objects_dir
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        tmp_path = tmp_dir / f".tmp-{uuid.uuid4().hex}"
+        digest = hashlib.sha256()
+        try:
+            with open(path, "rb") as src, open(tmp_path, "wb") as dst:
+                while block := src.read(chunk_size):
+                    digest.update(block)
+                    dst.write(block)
+                dst.flush()
+                os.fsync(dst.fileno())
+            content_hash = digest.hexdigest()
+            final = self._object_path(content_hash)
+            if final.exists():
+                tmp_path.unlink(missing_ok=True)
+            else:
+                final.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(tmp_path, final)
+            return content_hash
+        except BaseException:
+            tmp_path.unlink(missing_ok=True)
+            raise
+
+    @staticmethod
+    def hash_file(path: Path, *, chunk_size: int = 1 << 20) -> tuple[str, int]:
+        """Streaming ``(sha256 hex, size in bytes)`` of a file."""
+        digest = hashlib.sha256()
+        size = 0
+        with open(path, "rb") as f:
+            while block := f.read(chunk_size):
+                digest.update(block)
+                size += len(block)
+        return digest.hexdigest(), size
+
     def exists(self, content_hash: str) -> bool:
         return self._object_path(content_hash).exists()
 

@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -23,6 +24,26 @@ class Settings(BaseSettings):
     # table until this is explicitly turned on (checkpoint 3 or a later
     # explicit decision).
     visual_index_enabled: bool = False
+
+    # Page PNGs are ~300 KB/page (34x the raw PDF bytes in the scale
+    # measurements) and are only consumed by the visual index and formula
+    # transcription. They are generated and stored only when one of those is
+    # on, or when this is set explicitly (DOCKET_STORE_PAGE_IMAGES=true).
+    store_page_images: bool = False
+
+    # Parse worker pool (heavy Docling parser only). 1 = sequential, in-process.
+    # DOCKET_PARSE_WORKERS / DOCKET_PARSE_TIMEOUT_S / DOCKET_MAX_FILE_BYTES /
+    # DOCKET_PARSE_MAX_PAGES (0 = no page cap).
+    parse_workers: int = max(1, min(4, (os.cpu_count() or 4) // 4))
+    parse_timeout_s: float = 600.0
+    max_file_bytes: int = 512 * 1024 * 1024
+    parse_max_pages: int = 0
+    # Experimental: convert PDFs that already have a text layer with Docling's
+    # OCR disabled (DOCKET_PDF_SKIP_OCR_WITH_TEXT_LAYER=true). Off by default.
+    pdf_skip_ocr_with_text_layer: bool = False
+    # Reuse the parsed units/chunks/vectors of an identical READY file
+    # instead of parsing it again (DOCKET_REUSE_DUPLICATE_CONTENT=false disables).
+    reuse_duplicate_content: bool = True
 
     # Discovery ignore rules (hidden folders, virtualenvs, site-packages,
     # node_modules, Office lock files, `.docketignore`). Escape hatch:
@@ -199,6 +220,14 @@ class Settings(BaseSettings):
     # the storage budget (part 01 section 7) for up to 30 days for no real
     # benefit.
     blob_trash_grace_days: int = 7
+
+    @property
+    def page_images_needed(self) -> bool:
+        return bool(
+            self.store_page_images
+            or self.visual_index_enabled
+            or self.formula_transcription_enabled
+        )
 
     @property
     def sqlite_path(self) -> Path:

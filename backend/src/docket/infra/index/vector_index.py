@@ -12,6 +12,7 @@ correct.
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from pathlib import Path
 from typing import Sequence
@@ -19,6 +20,8 @@ from typing import Sequence
 from sqlalchemy import Engine, text
 
 from docket.infra.index.base import ChunkRecord
+
+logger = logging.getLogger(__name__)
 
 _VECTOR_COLUMN = "vector"
 _VERSION_COLUMN = "evidence_version_id"
@@ -52,6 +55,7 @@ class LanceIndexWriter:
         # SQLite engine, used only to backfill `evidence_version_id` on a
         # legacy table (from `chunks`, the source of truth).
         self._engine = engine
+        self._scalar_checked = False
 
     def _open_table(self):
         """Return the table, or `None` if it hasn't been created yet."""
@@ -63,7 +67,23 @@ class LanceIndexWriter:
             return None
         if _VERSION_COLUMN not in table.schema.names:
             self._add_version_column(table)
+        if not self._scalar_checked:
+            self._ensure_chunk_id_index(table)
+            self._scalar_checked = True
         return table
+
+    def _ensure_chunk_id_index(self, table) -> None:
+        """BTREE scalar index on `chunk_id` so existence checks and
+        merge_insert keyed on it do not scan the whole column. Best effort:
+        a failure only costs speed."""
+        try:
+            from lancedb.index import BTree
+
+            if any(list(c.columns) == ["chunk_id"] for c in table.list_indices()):
+                return
+            table.create_index("chunk_id", config=BTree(), replace=False)
+        except Exception:  # noqa: BLE001
+            logger.debug("chunk_id scalar index unavailable", exc_info=True)
 
     def _add_version_column(self, table) -> None:
         """Upgrade a table written before `evidence_version_id` existed: add
@@ -137,11 +157,22 @@ class LanceIndexWriter:
         table = self._open_table()
         if table is None:
             self._db.create_table(self._table_name, data=rows)
+            self._scalar_checked = False
+            self._open_table()
             return
 
-        table.merge_insert("chunk_id").when_matched_update_all().when_not_matched_insert_all().execute(
-            rows
-        )
+        # Append-only for ids not already present (the common case: one
+        # indexed lookup instead of a merge_insert join per file); merge_insert
+        # only for true re-ingest of ids that exist.
+        present = self.existing_chunk_ids([r["chunk_id"] for r in rows])
+        new_rows = [r for r in rows if r["chunk_id"] not in present]
+        old_rows = [r for r in rows if r["chunk_id"] in present]
+        if new_rows:
+            table.add(new_rows)
+        if old_rows:
+            table.merge_insert(
+                "chunk_id"
+            ).when_matched_update_all().when_not_matched_insert_all().execute(old_rows)
 
     def delete(self, chunk_ids: Sequence[str]) -> None:
         chunk_ids = list(chunk_ids)
@@ -173,6 +204,24 @@ class LanceIndexWriter:
             return set()
         rows = table.search().where(f"chunk_id IN ({_sql_in_list(chunk_ids)})").to_list()
         return {row["chunk_id"] for row in rows}
+
+    def vectors_for(self, chunk_ids: Sequence[str]) -> dict[str, list[float]]:
+        """Stored embeddings for `chunk_ids` (those that exist)."""
+        chunk_ids = list(chunk_ids)
+        table = self._open_table()
+        if not chunk_ids or table is None:
+            return {}
+        out: dict[str, list[float]] = {}
+        for i in range(0, len(chunk_ids), 500):
+            batch = chunk_ids[i : i + 500]
+            rows = (
+                table.search()
+                .where(f"chunk_id IN ({_sql_in_list(batch)})")
+                .select(["chunk_id", _VECTOR_COLUMN])
+                .to_list()
+            )
+            out.update({r["chunk_id"]: list(r[_VECTOR_COLUMN]) for r in rows})
+        return out
 
     def chunk_ids_for_source(self, source_id: str) -> set[str]:
         table = self._open_table()

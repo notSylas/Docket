@@ -224,6 +224,7 @@ def test_page_images_disabled_by_default_no_vlm_or_index_calls(env, monkeypatch)
     writes. Page images are still captured/stored (item 3/4 of the
     checkpoint is unconditional) -- only the VLM+embedding+LanceDB-write step
     is gated."""
+    env.pipeline._settings.store_page_images = True  # storage is opt-in since Step 1b
     path = env.folder / "multipage.docx"
     _write_docx(path, "Multi", "placeholder body")
     page_images = {1: b"fake-png-bytes-page-1", 2: b"fake-png-bytes-page-2"}

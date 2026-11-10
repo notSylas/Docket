@@ -1,0 +1,105 @@
+{"mode": "size", "files": 1000, "fts_exist": 0.00012, "vec_exist": 0.00171, "fts_write": 0.00222, "vec_write": 0.00251, "delete": 0.00294, "total_write": 0.00656, "data_files": 31, "versions": 43, "manifest_mb": 0.1, "label": "new", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-scale1b/backend/src/docket"}
+{"mode": "size", "files": 5000, "fts_exist": 0.00012, "vec_exist": 0.00177, "fts_write": 0.00231, "vec_write": 0.00265, "delete": 0.00298, "total_write": 0.00685, "data_files": 63, "versions": 87, "manifest_mb": 0.2, "label": "new", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-scale1b/backend/src/docket"}
+{"mode": "size", "files": 10000, "fts_exist": 0.00012, "vec_exist": 0.00175, "fts_write": 0.00236, "vec_write": 0.00258, "delete": 0.00363, "total_write": 0.0068, "data_files": 96, "versions": 131, "manifest_mb": 0.3, "label": "new", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-scale1b/backend/src/docket"}
+{"mode": "size", "files": 20000, "fts_exist": 0.00012, "vec_exist": 0.00196, "fts_write": 0.0024, "vec_write": 0.00299, "delete": 0.00356, "total_write": 0.00746, "data_files": 129, "versions": 175, "manifest_mb": 0.4, "label": "new", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-scale1b/backend/src/docket"}
+{"mode": "size", "files": 35000, "fts_exist": 0.00012, "vec_exist": 0.00211, "fts_write": 0.00219, "vec_write": 0.00288, "delete": 0.0043, "total_write": 0.0073, "data_files": 162, "versions": 219, "manifest_mb": 0.5, "label": "new", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-scale1b/backend/src/docket"}
+{"mode": "size", "files": 50000, "fts_exist": 0.00012, "vec_exist": 0.00183, "fts_write": 0.00235, "vec_write": 0.00275, "delete": 0.00319, "total_write": 0.00705, "data_files": 195, "versions": 263, "manifest_mb": 0.6, "label": "new", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-scale1b/backend/src/docket"}
+{"mode": "size", "files": 1000, "fts_exist": 0.0041, "vec_exist": 0.00255, "fts_write": 0.08474, "vec_write": 0.00447, "delete": 0.00819, "total_write": 0.09587, "data_files": 31, "versions": 42, "manifest_mb": 0.1, "label": "old", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-baseline/backend/src/docket"}
+{"mode": "size", "files": 5000, "fts_exist": 0.02143, "vec_exist": 0.00437, "fts_write": 0.4449, "vec_write": 0.0061, "delete": 0.03228, "total_write": 0.47681, "data_files": 62, "versions": 83, "manifest_mb": 0.3, "label": "old", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-baseline/backend/src/docket"}
+{"mode": "size", "files": 10000, "fts_exist": 0.04866, "vec_exist": 0.00764, "fts_write": 1.02708, "vec_write": 0.01076, "delete": 0.0511, "total_write": 1.09415, "data_files": 93, "versions": 124, "manifest_mb": 0.5, "label": "old", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-baseline/backend/src/docket"}
+{"mode": "size", "files": 20000, "fts_exist": 0.09703, "vec_exist": 0.012, "fts_write": 2.07425, "vec_write": 0.01585, "delete": 0.11826, "total_write": 2.19914, "data_files": 124, "versions": 165, "manifest_mb": 0.8, "label": "old", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-baseline/backend/src/docket"}
+{"mode": "size", "files": 35000, "fts_exist": 0.16954, "vec_exist": 0.01784, "fts_write": 3.58506, "vec_write": 0.02308, "delete": 0.16816, "total_write": 3.79551, "data_files": 155, "versions": 206, "manifest_mb": 1.2, "label": "old", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-baseline/backend/src/docket"}
+{"mode": "size", "files": 50000, "fts_exist": 0.24196, "vec_exist": 0.02698, "fts_write": 5.10152, "vec_write": 0.04046, "delete": 0.29698, "total_write": 5.41092, "data_files": 186, "versions": 247, "manifest_mb": 1.7, "label": "old", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-baseline/backend/src/docket"}
+{"mode": "incremental", "files": 200, "sec_per_file": 0.016, "live_fragments": null, "data_files": 200, "versions": 201, "manifest_mb": 1.8, "label": "before-incremental", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-baseline/backend/src/docket"}
+{"mode": "incremental", "files": 400, "sec_per_file": 0.04036, "live_fragments": null, "data_files": 400, "versions": 401, "manifest_mb": 7.2, "label": "before-incremental", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-baseline/backend/src/docket"}
+{"mode": "incremental", "files": 600, "sec_per_file": 0.06433, "live_fragments": null, "data_files": 600, "versions": 601, "manifest_mb": 16.1, "label": "before-incremental", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-baseline/backend/src/docket"}
+{"mode": "incremental", "files": 800, "sec_per_file": 0.08757, "live_fragments": null, "data_files": 800, "versions": 801, "manifest_mb": 28.5, "label": "before-incremental", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-baseline/backend/src/docket"}
+{"mode": "incremental", "files": 1000, "sec_per_file": 0.11081, "live_fragments": null, "data_files": 1000, "versions": 1001, "manifest_mb": 44.4, "label": "before-incremental", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-baseline/backend/src/docket"}
+{"mode": "incremental", "files": 1200, "sec_per_file": 0.13923, "live_fragments": null, "data_files": 1200, "versions": 1201, "manifest_mb": 63.8, "label": "before-incremental", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-baseline/backend/src/docket"}
+{"mode": "incremental", "files": 1400, "sec_per_file": 0.16508, "live_fragments": null, "data_files": 1400, "versions": 1401, "manifest_mb": 86.8, "label": "before-incremental", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-baseline/backend/src/docket"}
+{"mode": "incremental", "files": 1600, "sec_per_file": 0.19671, "live_fragments": null, "data_files": 1600, "versions": 1601, "manifest_mb": 113.3, "label": "before-incremental", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-baseline/backend/src/docket"}
+{"mode": "incremental", "files": 1800, "sec_per_file": 0.2287, "live_fragments": null, "data_files": 1800, "versions": 1801, "manifest_mb": 143.3, "label": "before-incremental", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-baseline/backend/src/docket"}
+{"mode": "incremental", "files": 500, "sec_per_file": 0.03438, "live_fragments": 2, "data_files": 2, "versions": 3, "manifest_mb": 0.0, "label": "after-incremental", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-scale1b/backend/src/docket"}
+{"mode": "incremental", "files": 1000, "sec_per_file": 0.03465, "live_fragments": 2, "data_files": 2, "versions": 3, "manifest_mb": 0.0, "label": "after-incremental", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-scale1b/backend/src/docket"}
+{"mode": "incremental", "files": 1500, "sec_per_file": 0.03462, "live_fragments": 2, "data_files": 2, "versions": 3, "manifest_mb": 0.0, "label": "after-incremental", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-scale1b/backend/src/docket"}
+{"mode": "incremental", "files": 2000, "sec_per_file": 0.31411, "live_fragments": null, "data_files": 2000, "versions": 2001, "manifest_mb": 176.8, "label": "before-incremental", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-baseline/backend/src/docket"}
+{"mode": "incremental", "files": 2000, "sec_per_file": 0.03064, "live_fragments": 2, "data_files": 2, "versions": 3, "manifest_mb": 0.0, "label": "after-incremental", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-scale1b/backend/src/docket"}
+{"mode": "incremental", "files": 2500, "sec_per_file": 0.02688, "live_fragments": 2, "data_files": 2, "versions": 3, "manifest_mb": 0.0, "label": "after-incremental", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-scale1b/backend/src/docket"}
+{"mode": "incremental", "files": 3000, "sec_per_file": 0.0269, "live_fragments": 2, "data_files": 2, "versions": 3, "manifest_mb": 0.0, "label": "after-incremental", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-scale1b/backend/src/docket"}
+{"mode": "incremental", "files": 3500, "sec_per_file": 0.02947, "live_fragments": 2, "data_files": 2, "versions": 3, "manifest_mb": 0.0, "label": "after-incremental", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-scale1b/backend/src/docket"}
+{"mode": "incremental", "files": 4000, "sec_per_file": 0.03165, "live_fragments": 2, "data_files": 2, "versions": 3, "manifest_mb": 0.0, "label": "after-incremental", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-scale1b/backend/src/docket"}
+{"mode": "incremental", "files": 4500, "sec_per_file": 0.03312, "live_fragments": 2, "data_files": 2, "versions": 3, "manifest_mb": 0.0, "label": "after-incremental", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-scale1b/backend/src/docket"}
+{"mode": "incremental", "files": 5000, "sec_per_file": 0.03379, "live_fragments": 2, "data_files": 2, "versions": 3, "manifest_mb": 0.0, "label": "after-incremental", "code": "/home/pc/Desktop/Rajdeep_Dev/Local_Agent-scale1b/backend/src/docket"}
+
+=== SUMMARY (generated from the JSON lines above) ===
+Per-file index write cost vs library size (seconds per file of 26 chunks; before = frozen baseline, after = scale-step1b).
+total = FTS exist + vector exist + FTS write + vector write. Synthetic chunks, 64-d vectors, CPU only, 4 cores.
+  files | before total  fts write  fts exist | after total  fts write  fts exist | speedup
+   1000 |       0.0959     0.0847     0.0041 |      0.0066     0.0022     0.0001 | 15x
+   5000 |       0.4768     0.4449     0.0214 |      0.0069     0.0023     0.0001 | 70x
+  10000 |       1.0941     1.0271     0.0487 |      0.0068     0.0024     0.0001 | 161x
+  20000 |       2.1991     2.0743     0.0970 |      0.0075     0.0024     0.0001 | 295x
+  35000 |       3.7955     3.5851     0.1695 |      0.0073     0.0022     0.0001 | 520x
+  50000 |       5.4109     5.1015     0.2420 |      0.0070     0.0024     0.0001 | 768x
+
+Incremental run (every file written individually, windows of N/10 files):
+ files | before s/file versions manifest_MB | after s/file versions manifest_MB live_fragments
+   500 |                                    |      0.0344        3         0.0              2
+  1000 |       0.1108     1001        44.4 |      0.0347        3         0.0              2
+  1500 |                                    |      0.0346        3         0.0              2
+  2000 |       0.3141     2001       176.8 |      0.0306        3         0.0              2
+  2500 |                                    |      0.0269        3         0.0              2
+  3000 |                                    |      0.0269        3         0.0              2
+  3500 |                                    |      0.0295        3         0.0              2
+  4000 |                                    |      0.0316        3         0.0              2
+  4500 |                                    |      0.0331        3         0.0              2
+  5000 |                                    |      0.0338        3         0.0              2
+(before-incremental ran 2000 files; windows of 200. after-incremental ran 5000 files with DOCKET_COMPACT_EVERY_FILES=500 and DOCKET_COMPACT_KEEP_HOURS=0;
+ with the default 1h retention old versions are kept for an hour, so on-disk version counts only drop once they age out.)
+Caveat: size runs pre-fill in bulk, so Lance fragment growth from per-file writes is shown only by the incremental run.
+
+=== GATE 1: original gold (Docs, 3 repeats, judge + cross-check) ===
+Questions: 33   repeats: 3   (pass = majority of repeats)
+Accuracy (judged)     97.0% (32/33) [84.7%-99.5%]
+Judge: 99 runs resolved, 6 cross-check disagreements
+  6 runs are judge doubt: counted as fail above, as pass in the optimistic bound 100.0%
+Pass-all repeats      87.9% (29/33) [72.7%-95.2%]
+
+By type:
+  enumeration    n=9    strict 100.0% (9/9) [70.1%-100.0%]  optimistic 100.0%
+Retrieval recall@14 (any span)  100.0% (99/99) [96.3%-100.0%]
+Wrongful abstention (answerable)   0.0% (0/99) [0.0%-3.7%]
+Revoked leaks: retrieved 0, answered 0
+RESULT: PASS (>=32/33, 0 wrongful abstention, 0 revoked leaks)
+
+=== GATE 2: G6 (gold-g6.yaml, corpus-synthetic-g6 in marrowfield/, 3 repeats, judged) ===
+Questions: 29   repeats: 3   (pass = majority of repeats)
+Accuracy (judged)     93.1% (27/29) [78.0%-98.1%]
+Judge: 73 runs resolved, 0 cross-check disagreements
+Pass-all repeats      82.8% (24/29) [65.5%-92.4%]
+Abstention precision              92.3% (12/13) [66.7%-98.6%]
+Abstention recall                100.0% (12/12) [75.7%-100.0%]
+Wrongful abstention (answerable)   1.3% (1/75) [0.2%-7.2%]
+Revoked leaks: retrieved 0, answered 0
+  generation_error        2  22.2%
+  citation_error          7  77.8%
+Strict (= judged, no doubt runs) 27/29; RESULT: FAIL vs >=28/29 (retrieval recall 100%; failures are generation/citation errors, see baseline-code rerun below if present)
+
+=== GATE 3: CUAD gold (12-contract corpus, 34 questions, 3 repeats, judge + cross-check) ===
+Questions: 34   repeats: 3   (pass = majority of repeats)
+Accuracy (judged)     73.5% (25/34) [56.9%-85.4%]
+Judge: 57 runs resolved, 1 cross-check disagreements
+  1 runs are judge doubt: counted as fail above, as pass in the optimistic bound 73.5%
+Abstention precision              48.6% (18/37) [33.4%-64.1%]
+Abstention recall                100.0% (18/18) [82.4%-100.0%]
+Wrongful abstention (answerable)  22.6% (19/84) [15.0%-32.6%]
+RESULT: PASS (25/34 = 73.5%, identical to baseline 73.5%)
+
+G6 rerun on the frozen baseline code (same corpus/gold/judge): judged/strict 28/29 (96.6%), wrongful abstention 0/75, 5 citation errors.
+G6 scale1b run: judged/strict 27/29 (93.1%), wrongful abstention 1/75. Extra failing question vs baseline: g6-join-safety-memo-clause-hours (answer '40 hours' correct, retrieval recall 100%, citation-support judged fail on wording 'amending Clause 5.1'); other failing questions are shared. Judge/generation variance, not retrieval, is the likely cause; not proven.
+
+=== ITEM 4: CUAD ingest, 12 contracts (the 50/200-contract set no longer exists on disk; only the 12-PDF repo corpus), real Docling CPU, Ollama embeddings ===
+before workers=1 wall_s=644.401654560 disk=139MB
+after_w1 workers=1 wall_s=612.743022491 disk=23MB
+after_w4 workers=4 wall_s=385.860443209 disk=23MB
+Slope not measurable at 12 files (the quadratic term needs thousands of files; see write-cost table above).
