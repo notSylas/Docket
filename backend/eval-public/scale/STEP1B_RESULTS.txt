@@ -57,3 +57,17 @@ Incremental run (every file written individually, windows of N/10 files):
 (before-incremental ran 2000 files; windows of 200. after-incremental ran 5000 files with DOCKET_COMPACT_EVERY_FILES=500 and DOCKET_COMPACT_KEEP_HOURS=0;
  with the default 1h retention old versions are kept for an hour, so on-disk version counts only drop once they age out.)
 Caveat: size runs pre-fill in bulk, so Lance fragment growth from per-file writes is shown only by the incremental run.
+
+=== GATE 1: original gold (Docs, 3 repeats, judge + cross-check) ===
+Questions: 33   repeats: 3   (pass = majority of repeats)
+Accuracy (judged)     97.0% (32/33) [84.7%-99.5%]
+Judge: 99 runs resolved, 6 cross-check disagreements
+  6 runs are judge doubt: counted as fail above, as pass in the optimistic bound 100.0%
+Pass-all repeats      87.9% (29/33) [72.7%-95.2%]
+
+By type:
+  enumeration    n=9    strict 100.0% (9/9) [70.1%-100.0%]  optimistic 100.0%
+Retrieval recall@14 (any span)  100.0% (99/99) [96.3%-100.0%]
+Wrongful abstention (answerable)   0.0% (0/99) [0.0%-3.7%]
+Revoked leaks: retrieved 0, answered 0
+RESULT: PASS (>=32/33, 0 wrongful abstention, 0 revoked leaks)
