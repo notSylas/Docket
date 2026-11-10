@@ -149,6 +149,17 @@ def mcp_command() -> None:
         engine.dispose()
 
 
+@app.command("worker")
+def worker_command() -> None:
+    """Serve line-delimited JSON-RPC over stdio for the docketd service.
+
+    Read-only: ping, status, sources.list and query.ask. Not for interactive use.
+    """
+    from docket.interfaces.worker import run
+
+    run()
+
+
 @feedback_app.command("review")
 def feedback_review(
     item_id: str = typer.Argument(..., help="Full saved feedback ID."),

@@ -57,3 +57,49 @@ Incremental run (every file written individually, windows of N/10 files):
 (before-incremental ran 2000 files; windows of 200. after-incremental ran 5000 files with DOCKET_COMPACT_EVERY_FILES=500 and DOCKET_COMPACT_KEEP_HOURS=0;
  with the default 1h retention old versions are kept for an hour, so on-disk version counts only drop once they age out.)
 Caveat: size runs pre-fill in bulk, so Lance fragment growth from per-file writes is shown only by the incremental run.
+
+=== GATE 1: original gold (Docs, 3 repeats, judge + cross-check) ===
+Questions: 33   repeats: 3   (pass = majority of repeats)
+Accuracy (judged)     97.0% (32/33) [84.7%-99.5%]
+Judge: 99 runs resolved, 6 cross-check disagreements
+  6 runs are judge doubt: counted as fail above, as pass in the optimistic bound 100.0%
+Pass-all repeats      87.9% (29/33) [72.7%-95.2%]
+
+By type:
+  enumeration    n=9    strict 100.0% (9/9) [70.1%-100.0%]  optimistic 100.0%
+Retrieval recall@14 (any span)  100.0% (99/99) [96.3%-100.0%]
+Wrongful abstention (answerable)   0.0% (0/99) [0.0%-3.7%]
+Revoked leaks: retrieved 0, answered 0
+RESULT: PASS (>=32/33, 0 wrongful abstention, 0 revoked leaks)
+
+=== GATE 2: G6 (gold-g6.yaml, corpus-synthetic-g6 in marrowfield/, 3 repeats, judged) ===
+Questions: 29   repeats: 3   (pass = majority of repeats)
+Accuracy (judged)     93.1% (27/29) [78.0%-98.1%]
+Judge: 73 runs resolved, 0 cross-check disagreements
+Pass-all repeats      82.8% (24/29) [65.5%-92.4%]
+Abstention precision              92.3% (12/13) [66.7%-98.6%]
+Abstention recall                100.0% (12/12) [75.7%-100.0%]
+Wrongful abstention (answerable)   1.3% (1/75) [0.2%-7.2%]
+Revoked leaks: retrieved 0, answered 0
+  generation_error        2  22.2%
+  citation_error          7  77.8%
+Strict (= judged, no doubt runs) 27/29; RESULT: FAIL vs >=28/29 (retrieval recall 100%; failures are generation/citation errors, see baseline-code rerun below if present)
+
+=== GATE 3: CUAD gold (12-contract corpus, 34 questions, 3 repeats, judge + cross-check) ===
+Questions: 34   repeats: 3   (pass = majority of repeats)
+Accuracy (judged)     73.5% (25/34) [56.9%-85.4%]
+Judge: 57 runs resolved, 1 cross-check disagreements
+  1 runs are judge doubt: counted as fail above, as pass in the optimistic bound 73.5%
+Abstention precision              48.6% (18/37) [33.4%-64.1%]
+Abstention recall                100.0% (18/18) [82.4%-100.0%]
+Wrongful abstention (answerable)  22.6% (19/84) [15.0%-32.6%]
+RESULT: PASS (25/34 = 73.5%, identical to baseline 73.5%)
+
+G6 rerun on the frozen baseline code (same corpus/gold/judge): judged/strict 28/29 (96.6%), wrongful abstention 0/75, 5 citation errors.
+G6 scale1b run: judged/strict 27/29 (93.1%), wrongful abstention 1/75. Extra failing question vs baseline: g6-join-safety-memo-clause-hours (answer '40 hours' correct, retrieval recall 100%, citation-support judged fail on wording 'amending Clause 5.1'); other failing questions are shared. Judge/generation variance, not retrieval, is the likely cause; not proven.
+
+=== ITEM 4: CUAD ingest, 12 contracts (the 50/200-contract set no longer exists on disk; only the 12-PDF repo corpus), real Docling CPU, Ollama embeddings ===
+before workers=1 wall_s=644.401654560 disk=139MB
+after_w1 workers=1 wall_s=612.743022491 disk=23MB
+after_w4 workers=4 wall_s=385.860443209 disk=23MB
+Slope not measurable at 12 files (the quadratic term needs thousands of files; see write-cost table above).

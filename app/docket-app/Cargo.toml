@@ -1,0 +1,15 @@
+[package]
+name = "docket-app"
+version.workspace = true
+edition = "2021"
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+docket-proto = { version = "0.1.0", path = "../docket-proto" }
+eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts", "x11", "wayland"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+
+[lints]
+workspace = true
