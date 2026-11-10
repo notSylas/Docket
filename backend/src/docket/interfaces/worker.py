@@ -148,6 +148,14 @@ def build_methods(context: Any, service_factory: Callable[[Any, Any], Any]) -> d
             out["chunks"] = int(context.readiness.snapshot().chunks)
         except Exception:  # noqa: BLE001
             pass
+        try:
+            # Tiered indexing: counts per state, ETA from measured speeds, coverage.
+            from docket.services.ingestion.tiered import status_line, tier_status
+
+            payload = tier_status(context.engine, context.ingest_queue)
+            out["indexing"] = {**payload, "summary": status_line(payload)}
+        except Exception:  # noqa: BLE001 -- advisory
+            pass
         return out
 
     def sources_list(_params: dict, _notify: Notify) -> dict:
