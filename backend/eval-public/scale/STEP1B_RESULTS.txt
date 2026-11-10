@@ -71,3 +71,26 @@ Retrieval recall@14 (any span)  100.0% (99/99) [96.3%-100.0%]
 Wrongful abstention (answerable)   0.0% (0/99) [0.0%-3.7%]
 Revoked leaks: retrieved 0, answered 0
 RESULT: PASS (>=32/33, 0 wrongful abstention, 0 revoked leaks)
+
+=== GATE 2: G6 (gold-g6.yaml, corpus-synthetic-g6 in marrowfield/, 3 repeats, judged) ===
+Questions: 29   repeats: 3   (pass = majority of repeats)
+Accuracy (judged)     93.1% (27/29) [78.0%-98.1%]
+Judge: 73 runs resolved, 0 cross-check disagreements
+Pass-all repeats      82.8% (24/29) [65.5%-92.4%]
+Abstention precision              92.3% (12/13) [66.7%-98.6%]
+Abstention recall                100.0% (12/12) [75.7%-100.0%]
+Wrongful abstention (answerable)   1.3% (1/75) [0.2%-7.2%]
+Revoked leaks: retrieved 0, answered 0
+  generation_error        2  22.2%
+  citation_error          7  77.8%
+Strict (= judged, no doubt runs) 27/29; RESULT: FAIL vs >=28/29 (retrieval recall 100%; failures are generation/citation errors, see baseline-code rerun below if present)
+
+=== GATE 3: CUAD gold (12-contract corpus, 34 questions, 3 repeats, judge + cross-check) ===
+Questions: 34   repeats: 3   (pass = majority of repeats)
+Accuracy (judged)     73.5% (25/34) [56.9%-85.4%]
+Judge: 57 runs resolved, 1 cross-check disagreements
+  1 runs are judge doubt: counted as fail above, as pass in the optimistic bound 73.5%
+Abstention precision              48.6% (18/37) [33.4%-64.1%]
+Abstention recall                100.0% (18/18) [82.4%-100.0%]
+Wrongful abstention (answerable)  22.6% (19/84) [15.0%-32.6%]
+RESULT: PASS (25/34 = 73.5%, identical to baseline 73.5%)
