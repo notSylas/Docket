@@ -639,6 +639,13 @@ class IngestionPipeline:
         self._index_manager.upsert_chunks(records)
         return records
 
+    def _document_hook(self, evidence_version_id: str) -> None:
+        """Document-layer record for a READY version (flag-gated; never raises)."""
+        if getattr(self._settings, "documents_build_enabled", False):
+            from docket.services.documents.builder import build_for_version
+
+            build_for_version(self._session_factory, evidence_version_id)
+
     def _drop_superseded_index_entries(
         self, before_id: str | None, evidence_version: EvidenceVersion
     ) -> None:
@@ -648,6 +655,9 @@ class IngestionPipeline:
         repair path)."""
         if before_id is not None and before_id != evidence_version.id:
             self._index_manager.delete_version(before_id)
+            from docket.services.documents.builder import delete_for_version
+
+            delete_for_version(self._session_factory, before_id)
 
     def _discover_files(self, root: Path) -> list[Path]:
         """Recursively walk `root` for ingestable files. Recursive (not just
@@ -769,6 +779,7 @@ class IngestionPipeline:
             cloned = self._try_clone_duplicate(source_id, path, evidence_version)
             if cloned is not None:
                 self._evidence_manager.mark_version_status(evidence_version.id, VersionStatus.READY)
+                self._document_hook(evidence_version.id)
                 return FileIngestResult(path=path, status="ingested", chunks_written=cloned)
             parsed = self._parse_docling(source_id, path)
             self._formula_transcriber.save_regions(evidence_version.id, parsed.formula_regions)
@@ -804,6 +815,7 @@ class IngestionPipeline:
             raise
 
         self._evidence_manager.mark_version_status(evidence_version.id, VersionStatus.READY)
+        self._document_hook(evidence_version.id)
         return FileIngestResult(path=path, status="ingested", chunks_written=len(records))
 
     def _ingest_one_xlsx_file(self, source_id: str, path: Path) -> FileIngestResult:
@@ -843,6 +855,7 @@ class IngestionPipeline:
             raise
 
         self._evidence_manager.mark_version_status(evidence_version.id, VersionStatus.READY)
+        self._document_hook(evidence_version.id)
         return FileIngestResult(path=path, status="ingested", chunks_written=len(records))
 
     def _ingest_one_pptx_file(self, source_id: str, path: Path) -> FileIngestResult:
@@ -881,6 +894,7 @@ class IngestionPipeline:
             raise
 
         self._evidence_manager.mark_version_status(evidence_version.id, VersionStatus.READY)
+        self._document_hook(evidence_version.id)
         return FileIngestResult(path=path, status="ingested", chunks_written=len(records))
 
     def _ingest_one_text_file(self, source_id: str, path: Path) -> FileIngestResult:
@@ -900,6 +914,7 @@ class IngestionPipeline:
                 version.id, VersionStatus.FAILED, failure_reason=condense_error(exc))
             raise
         self._evidence_manager.mark_version_status(version.id, VersionStatus.READY)
+        self._document_hook(version.id)
         return FileIngestResult(path=path, status="ingested", chunks_written=len(records))
 
     def _ingest_one_mail_file(self, source_id: str, path: Path) -> FileIngestResult:
@@ -920,6 +935,7 @@ class IngestionPipeline:
             self._evidence_manager.mark_version_status(version.id, VersionStatus.FAILED, failure_reason=condense_error(exc))
             raise
         self._evidence_manager.mark_version_status(version.id, VersionStatus.READY)
+        self._document_hook(version.id)
         return FileIngestResult(path, "ingested", chunks_written=len(records), notice=parsed.notice)
 
     # -- recipe drift / re-chunk -------------------------------------------
@@ -1005,6 +1021,7 @@ class IngestionPipeline:
             )
             return FileIngestResult(path=candidate.path, status="failed", error=str(exc))
         self._evidence_manager.mark_version_status(candidate.version_id, VersionStatus.READY)
+        self._document_hook(candidate.version_id)
         return FileIngestResult(path=candidate.path, status="ingested", chunks_written=len(records),
                                 notice=getattr(parsed, "notice", None))
 

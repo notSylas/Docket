@@ -162,6 +162,19 @@ class Settings(BaseSettings):
     id_followup_per_id: int = 2
     id_followup_max: int = 6
 
+    # Document layer (Step 2). All default off. `documents_build` fills the
+    # `documents`/`document_fields` tables during ingestion (also implied by any
+    # query flag below). `doc_routing` ("on") restricts chunk search to the
+    # top documents when the question names one confidently; `field_lookup`
+    # ("on") answers named-contract field questions deterministically from
+    # extracted fields; `family_latest` ("on") prefers the latest version of a
+    # document family and notes the earlier one. Env: DOCKET_DOC_ROUTING etc.
+    documents_build: bool = False
+    doc_routing: str = "off"
+    doc_routing_top_n: int = 8
+    field_lookup: str = "off"
+    family_latest: str = "off"
+
     # Re-bracket citation labels the model copied without brackets (env
     # DOCKET_BARE_CITATION_REPAIR=0 disables). Exact-label only; see
     # citations.repair_bare_citations.
@@ -227,6 +240,13 @@ class Settings(BaseSettings):
             self.store_page_images
             or self.visual_index_enabled
             or self.formula_transcription_enabled
+        )
+
+    @property
+    def documents_build_enabled(self) -> bool:
+        on = ("on", "1", "true", "yes")
+        return self.documents_build or any(
+            str(v).lower() in on for v in (self.doc_routing, self.field_lookup, self.family_latest)
         )
 
     @property
