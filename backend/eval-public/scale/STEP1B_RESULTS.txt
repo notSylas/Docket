@@ -97,3 +97,9 @@ RESULT: PASS (25/34 = 73.5%, identical to baseline 73.5%)
 
 G6 rerun on the frozen baseline code (same corpus/gold/judge): judged/strict 28/29 (96.6%), wrongful abstention 0/75, 5 citation errors.
 G6 scale1b run: judged/strict 27/29 (93.1%), wrongful abstention 1/75. Extra failing question vs baseline: g6-join-safety-memo-clause-hours (answer '40 hours' correct, retrieval recall 100%, citation-support judged fail on wording 'amending Clause 5.1'); other failing questions are shared. Judge/generation variance, not retrieval, is the likely cause; not proven.
+
+=== ITEM 4: CUAD ingest, 12 contracts (the 50/200-contract set no longer exists on disk; only the 12-PDF repo corpus), real Docling CPU, Ollama embeddings ===
+before workers=1 wall_s=644.401654560 disk=139MB
+after_w1 workers=1 wall_s=612.743022491 disk=23MB
+after_w4 workers=4 wall_s=385.860443209 disk=23MB
+Slope not measurable at 12 files (the quadratic term needs thousands of files; see write-cost table above).
