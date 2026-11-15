@@ -448,6 +448,23 @@ class IngestionPipeline:
             source_manager if source_manager is not None else SourceManager(session_factory)
         )
 
+    def run_ingestion_for_paths(self, *args, **kwargs) -> IngestionJobResult:
+        try:
+            return self._run_ingestion_for_paths_impl(*args, **kwargs)
+        finally:
+            self._release_pool_workers()
+
+    def run_ingestion_for_source(self, *args, **kwargs) -> IngestionJobResult:
+        try:
+            return self._run_ingestion_for_source_impl(*args, **kwargs)
+        finally:
+            self._release_pool_workers()
+
+    def _release_pool_workers(self) -> None:
+        """Free the parse workers' memory once a run ends (restart is lazy)."""
+        if self._parse_pool is not None:
+            self._parse_pool.shutdown_workers()
+
     # -- internal helpers ---------------------------------------------------
 
     def _is_pooled_family(self, path: Path) -> bool:
@@ -1099,7 +1116,7 @@ class IngestionPipeline:
         return self._ingest_one_file(source_id, path)
 
     @writer_operation("refreshing library files")
-    def run_ingestion_for_paths(
+    def _run_ingestion_for_paths_impl(
         self,
         source_id: str,
         paths: list[Path],
@@ -1237,7 +1254,7 @@ class IngestionPipeline:
         )
 
     @writer_operation("indexing a folder")
-    def run_ingestion_for_source(
+    def _run_ingestion_for_source_impl(
         self,
         source_id: str,
         progress: Callable[[ProgressEvent], None] | None = None,
