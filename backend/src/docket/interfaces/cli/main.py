@@ -125,6 +125,29 @@ formulas_app = typer.Typer(help="Verify a sample of formula transcriptions again
 app.add_typer(formulas_app, name="formulas")
 library_app = typer.Typer(help="Maintain stored library data.")
 app.add_typer(library_app, name="library")
+documents_app = typer.Typer(help="Document records: type, parties, dates and contract fields.")
+app.add_typer(documents_app, name="documents")
+
+
+@documents_app.command("build")
+def documents_build(
+    source: str | None = typer.Option(None, "--source", help="Only this source id."),
+    force: bool = typer.Option(False, "--force", help="Rebuild rows even when already current."),
+) -> None:
+    """Build (or refresh) document records from stored chunks. Idempotent; never re-parses files."""
+    from docket.core.writer_lock import lock_for_sessions
+    from docket.services.documents.builder import build_all
+
+    context = build_context()
+    lock = lock_for_sessions(context.session_factory)
+    with lock.hold("building document records"):
+        stats = build_all(context.session_factory, source, force=force)
+    typer.echo(
+        f"Document records: {stats.built} built, {stats.skipped} unchanged, {stats.removed} removed, "
+        f"{stats.linked} amendment links, {stats.fields} extracted fields in total."
+    )
+
+
 feedback_app = typer.Typer(help="Review private feedback and export draft evaluation cases.")
 app.add_typer(feedback_app, name="feedback")
 

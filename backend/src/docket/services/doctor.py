@@ -167,6 +167,7 @@ def checks(settings, *, tags_fetcher=None, environment=None, terminal=None) -> l
                      "Enter folder paths in the terminal; the graphical folder picker is optional." if not display else ""))
     out.append(lock_check(root))
     out.append(connector_check(db_path))
+    out.append(documents_check(db_path))
     return out
 
 
@@ -194,6 +195,23 @@ def ann_index_check(settings) -> Check:
                      "" if stats["unindexed_rows"] <= max(1000, rows // 10) else "Run docket reindex or finish an ingest to optimize it.")
     except Exception:
         return Check("Vector index", "OK", "Vector index state could not be read (not required).")
+
+
+def documents_check(db_path: Path) -> Check:
+    """Read-only count of document records against READY versions."""
+    try:
+        if not db_path.exists():
+            raise FileNotFoundError
+        with closing(sqlite3.connect(db_path.absolute().as_uri() + "?mode=ro", uri=True, timeout=.2)) as db:
+            ready = db.execute("SELECT COUNT(*) FROM evidence_versions WHERE status = 'READY'").fetchone()[0]
+            docs = db.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+            fields = db.execute("SELECT COUNT(*) FROM document_fields").fetchone()[0]
+    except (sqlite3.Error, OSError):
+        return Check("Document records", "OK", "No document records yet (optional).")
+    if docs == 0:
+        return Check("Document records", "OK", f"None built ({ready:,} ready files); optional. Build with: docket documents build")
+    return Check("Document records", "OK" if docs <= ready else "WARN", f"{docs:,} records for {ready:,} ready files, {fields:,} extracted fields.",
+                 "Run: docket documents build" if docs > ready else "")
 
 
 def connector_check(db_path: Path) -> Check:
