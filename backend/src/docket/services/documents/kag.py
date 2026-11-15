@@ -288,7 +288,7 @@ _VARIANT_SQL = (
     "WHERE v.variant IN ({ph})"
 )
 _DOCS_SQL = (
-    "SELECT de.entity_id, d.id, d.evidence_version_id, d.file_name, d.doc_text "
+    "SELECT de.entity_id, d.id, d.evidence_version_id, d.file_name, d.doc_text, de.role, d.title "
     "FROM kag_document_entities de JOIN documents d ON d.id = de.document_id "
     "JOIN evidence_versions ev ON ev.id = d.evidence_version_id JOIN sources s ON s.id = ev.source_id "
     "WHERE de.entity_id IN ({ph}) AND s.status = :active AND ev.status = :ready"
@@ -377,18 +377,24 @@ def _plan(engine: Engine, question: str, scope_version_ids: list[str] | None) ->
         names = {r[0]: r[1] for r in conn.execute(
             text("SELECT id, display FROM kag_entities WHERE id IN (" + ",".join(str(int(e)) for e in ent_ids) + ")"))}
     scope = set(scope_version_ids) if scope_version_ids is not None else None
-    docs_by_entity: dict[int, dict[int, tuple[str, str | None, str]]] = {}
-    for eid, did, vid, fname, dtext in rows:
+    # entity -> {document_id: (version_id, file_name, doc_text, role_rank, title)}
+    docs_by_entity: dict[int, dict[int, tuple[str, str | None, str, int, str]]] = {}
+    for eid, did, vid, fname, dtext, role, title in rows:
         if scope is not None and vid not in scope:
             continue
-        docs_by_entity.setdefault(eid, {})[did] = (vid, fname, dtext or "")
+        rank = 0 if role in ("party", "filename") else 1
+        old_ = docs_by_entity.setdefault(eid, {}).get(did)
+        if old_ is None or rank < old_[3]:
+            docs_by_entity[eid][did] = (vid, fname, dtext or "", rank, title or "")
     ent_names = [names.get(e, str(e)) for e in ent_ids]
     # each named span is satisfied by the docs of ANY of its candidate entities; all spans must hold
-    per_span: list[dict[int, tuple[str, str | None, str]]] = []
+    per_span: list[dict[int, tuple[str, str | None, str, int, str]]] = []
     for span, ids in by_span.items():
-        union: dict[int, tuple[str, str | None, str]] = {}
+        union: dict[int, tuple[str, str | None, str, int, str]] = {}
         for e in ids:
-            union.update(docs_by_entity.get(e, {}))
+            for did, v in docs_by_entity.get(e, {}).items():
+                if did not in union or v[3] < union[did][3]:
+                    union[did] = v
         per_span.append(union)
     if any(not d for d in per_span):
         return KagPlan(reason="named entity has no document in scope", entities=ent_names, clause=clause)
@@ -397,7 +403,16 @@ def _plan(engine: Engine, question: str, scope_version_ids: list[str] | None) ->
         common &= set(d)
     if not common:
         return KagPlan(reason="named entities share no document", entities=ent_names, clause=clause)
-    docs = {did: per_span[0].get(did) or next(d[did] for d in per_span if did in d) for did in common}
+    docs = {did: (lambda vs: (vs[0][0], vs[0][1], vs[0][2], max(v[3] for v in vs), vs[0][4]))([d[did] for d in per_span]) for did in common}
+    # Narrow a crowd of candidates: a document where the name is a party beats one that merely
+    # mentions it, then the one whose title shares the most words with the question.
+    if len(docs) > 1:
+        q_tokens = _title_tokens(question)
+        def key(did: int) -> tuple[int, int]:
+            v = docs[did]
+            return (v[3], -len(q_tokens & _title_tokens(f"{v[4]} {v[1] or ''}")))
+        best = min(key(d) for d in docs)
+        docs = {d: v for d, v in docs.items() if key(d) == best}
     # exact copies of one file (same text) count as one document
     distinct_text = {t[2][:2000] for t in docs.values()}
     if len(docs) == 1 or len(distinct_text) == 1:
@@ -420,6 +435,35 @@ def _plan(engine: Engine, question: str, scope_version_ids: list[str] | None) ->
         p.clause_chunk_ids = {c: float(cf) for c, cf in crow}
         p.clause_absent = bool(mode == "unique" and clause.can_be_absent and not crow)
     return p
+
+
+_TITLE_STOP = _STOP | _SUFFIX_WORDS | {
+    "pdf", "txt", "docx", "exhibit", "ex", "what", "much", "many", "does", "required", "notice", "party", "between",
+}
+
+
+def _title_tokens(s: str) -> set[str]:
+    return {t[:-1] if len(t) > 4 and t.endswith("s") else t for t in _clean(s) if len(t) > 3 and t not in _TITLE_STOP and not t.isdigit()}
+
+
+def dedupe_ids(engine: Engine, ids: list[str]) -> list[str]:
+    """Drop chunks whose text hash repeats an earlier id (the same file ingested under several
+    sources would otherwise fill every slot with identical passages). Order is preserved."""
+    if len(ids) < 2:
+        return ids
+    with engine.connect() as conn:
+        rows = conn.execute(text("SELECT id, content_hash FROM chunks WHERE id IN (" + ",".join(f":i{j}" for j in range(len(ids))) + ")"),
+                            {f"i{j}": c for j, c in enumerate(ids)}).all()
+    h = {r[0]: r[1] for r in rows}
+    seen: set[str] = set()
+    out: list[str] = []
+    for c in ids:
+        k = h.get(c) or c
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(c)
+    return out
 
 
 def scoped_query(question: str, plan_: KagPlan) -> str:

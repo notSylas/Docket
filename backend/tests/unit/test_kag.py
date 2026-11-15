@@ -219,3 +219,67 @@ def test_deleting_document_cascades_graph(lib):
         assert c.execute(text("SELECT COUNT(*) FROM kag_document_entities")).scalar_one() > 0  # Bloom's edges stay
         assert c.execute(text("SELECT COUNT(*) FROM kag_document_entities WHERE document_id NOT IN (SELECT id FROM documents)")).scalar_one() == 0
         assert c.execute(text("SELECT COUNT(*) FROM kag_document_clauses WHERE chunk_id LIKE 'c_z%'")).scalar_one() == 0
+
+
+def test_party_role_beats_mention_when_many_documents_name_the_entity(migrated_sqlite_engine):
+    e = migrated_sqlite_engine
+    main = ("HOSTING AGREEMENT\nThis Hosting Agreement is entered into as of May 9, 2019 by and between "
+            "International Business Machines Corporation (\"IBM\") and Quantum Group Inc (\"Quantum\").")
+    _insert_metadata(e, [_rec("c_m0", "ev_m", main, 0)])
+    _name(e, "ev_m", "/lib/Quantum_Hosting Agreement.pdf", 100.0)
+    for i in range(4):  # four other contracts that only mention IBM in passing
+        body = (f"SUPPLY AGREEMENT {i}\nThis Supply Agreement is entered into by and between Acme{i} Holdings Corporation and Beta{i} Industries Inc. "
+                "Supplier shall not use software from International Business Machines Corporation.")
+        _insert_metadata(e, [_rec(f"c_o{i}", f"ev_o{i}", body, 0)])
+        _name(e, f"ev_o{i}", f"/lib/Other{i}.pdf", 100.0)
+    builder.build_all(get_session_factory(e), kag=True)
+    p = kag.plan(e, "What is the liability cap under the Hosting Agreement with International Business Machines Corporation?")
+    assert p.active and p.version_ids == ["ev_m"]
+
+
+def test_dedupe_ids_collapses_identical_text(lib):
+    e, _ = lib
+    with e.begin() as c:
+        c.execute(text("UPDATE chunks SET content_hash='same' WHERE id IN ('c_z1','c_b1')"))
+    assert kag.dedupe_ids(e, ["c_z1", "c_z0", "c_b1", "c_b0"]) == ["c_z1", "c_z0", "c_b0"]
+
+
+def _kag_service(e, settings, monkeypatch, calls, results):
+    from test_document_layer import _service
+
+    return _service(e, settings, monkeypatch, calls, results)
+
+
+def test_service_flag_off_is_one_unscoped_search(lib, monkeypatch):
+    from docket.services.query.classifier import QueryMode
+
+    e, _ = lib
+    calls: list = []
+    svc = _kag_service(e, Settings(), monkeypatch, calls, [["c_b1"]])
+    r = svc.ask("Which jurisdiction's law governs the Distributor Agreement with Zogenix, Inc.?", mode=QueryMode.FAST)
+    assert len(calls) == 1 and "scope_version_ids" not in calls[0]
+    assert not (r.doc_layer or {}).get("kag")
+
+
+def test_service_kag_adds_scoped_candidates_and_keeps_global(lib, monkeypatch):
+    from docket.services.query.classifier import QueryMode
+
+    e, _ = lib
+    calls: list = []
+    svc = _kag_service(e, Settings(kag_scoping="on"), monkeypatch, calls, [["c_b1", "c_b0"], ["c_z1", "c_z0"]])
+    r = svc.ask("Which jurisdiction's law governs the Distributor Agreement with Zogenix, Inc.?", mode=QueryMode.FAST)
+    assert "scope_version_ids" not in calls[0]            # global search untouched
+    assert calls[1]["scope_version_ids"] == ["ev_z"]       # scoped search inside the matched document
+    assert r.doc_layer["kag"]["mode"] == "unique" and r.doc_layer["kag"]["scoped_chunks"] >= 1
+    assert r.doc_layer["kag"]["new_from_scope"] >= 1
+
+
+def test_service_kag_no_entity_falls_back_to_global_only(lib, monkeypatch):
+    from docket.services.query.classifier import QueryMode
+
+    e, _ = lib
+    calls: list = []
+    svc = _kag_service(e, Settings(kag_scoping="on"), monkeypatch, calls, [["c_b1"]])
+    r = svc.ask("Which agreements restrict assignment?", mode=QueryMode.FAST)
+    assert len(calls) == 1 and "scope_version_ids" not in calls[0]
+    assert r.doc_layer["kag"]["mode"] == "none"

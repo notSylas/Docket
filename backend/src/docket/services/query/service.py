@@ -694,9 +694,9 @@ class QueryService:
                 return ranked_chunks, plan
             with phase("search"):
                 scoped = self._hybrid(
-                    kag_graph.scoped_query(question, plan), standalone, plan.version_ids, top_k=10
+                    kag_graph.scoped_query(question, plan), standalone, plan.version_ids, top_k=30
                 )
-            ids = [rc.chunk_id for rc in scoped]
+            ids = kag_graph.dedupe_ids(self._engine, [rc.chunk_id for rc in scoped])
             if plan.clause_chunk_ids:
                 ids = sorted(ids, key=lambda c: (c not in plan.clause_chunk_ids, ids.index(c)))
             ids = ids[:6]
@@ -704,9 +704,12 @@ class QueryService:
                 return ranked_chunks, plan
             have = {rc.chunk_id: rc for rc in list(ranked_chunks) + list(scoped)}
             limit = max(len(ranked_chunks), self._top_k)
-            fused = kag_graph.fuse([rc.chunk_id for rc in ranked_chunks], ids, limit)
+            glob_ids = [rc.chunk_id for rc in ranked_chunks]
+            fused_all = kag_graph.fuse(glob_ids, ids, limit * 3)
+            keep = set(kag_graph.dedupe_ids(self._engine, [c for c, _ in fused_all]))
+            fused = [(c, sc) for c, sc in fused_all if c in keep][:limit]
             doc_info["kag"]["scoped_chunks"] = len(ids)
-            doc_info["kag"]["new_from_scope"] = len({c for c, _ in fused} - {rc.chunk_id for rc in ranked_chunks})
+            doc_info["kag"]["new_from_scope"] = len({c for c, _ in fused} - set(glob_ids))
             return [RankedChunk(chunk_id=c, score=sc, provisional=have[c].provisional) for c, sc in fused], plan
         except Exception:  # noqa: BLE001
             logger.warning("kag scoping failed; using the global pool", exc_info=True)
