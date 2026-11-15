@@ -485,11 +485,34 @@ def fuse(global_ids: list[str], scoped_ids: list[str], limit: int, *, scoped_wei
     return sorted(scores.items(), key=lambda kv: kv[1], reverse=True)[:limit]
 
 
-def absent_note(plan_: KagPlan) -> str:
+def absent_note(plan_: KagPlan, cite_label: str | None = None) -> str:
+    """Prompt addendum for a deterministic "no such clause" finding.
+
+    `cite_label` must be the citation tag of a REAL excerpt of the named document that is in the
+    prompt (the caller picks it); without one the model is not told to cite and the normal
+    citation/abstention rules apply, so nothing is ever cited that was not shown."""
     name = plan_.file_name or "the named document"
     label = plan_.clause.label if plan_.clause else "that clause"
-    return (
+    head = (
         f"\n\nClause check (deterministic scan of every passage of {name}): no passage of that document mentions "
-        f"{label}. If the excerpts above do not show it, say plainly that {name} contains no {label} "
-        "provision, and cite the document with one of its excerpts. Do not guess a value."
+        f"{label}. "
     )
+    if not cite_label:
+        return head + (
+            f"If the excerpts above do not show it, say plainly that {name} contains no {label} provision. "
+            "Do not guess a value."
+        )
+    return head + (
+        f"The excerpts above do not show it, so the answer to the question is that {name} contains no {label} "
+        "provision. That is a complete, answerable finding: do NOT reply with the abstention sentence. "
+        f"State it plainly in one sentence naming {name}, and end the sentence with the citation tag {cite_label} "
+        "(an excerpt of that same document). Do not guess a value or describe a clause that is not in the excerpts."
+    )
+
+
+def pick_cite_label(plan_: KagPlan, resolved) -> str | None:
+    """Citation tag of the best-ranked prompt excerpt that belongs to the planned document."""
+    for rc in resolved:
+        if rc.evidence_version_id in set(plan_.version_ids):
+            return rc.citation_label
+    return None
