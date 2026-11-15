@@ -153,3 +153,85 @@ def test_pipeline_parallel_equals_sequential_and_survives_failures(tmp_path):
     seq_chunks = [c for c in seq[1][1]]
     pool_chunks = [c for c in pooled[1][1] if not c[0].startswith("z_")]
     assert seq_chunks == pool_chunks
+
+
+# -- idle shutdown / lifecycle ------------------------------------------------
+
+import multiprocessing  # noqa: E402
+
+
+def _children():
+    return [c for c in multiprocessing.active_children() if c.is_alive()]
+
+
+def _wait(pred, limit=15.0):
+    end = time.time() + limit
+    while time.time() < end:
+        if pred():
+            return True
+        time.sleep(0.1)
+    return pred()
+
+
+def test_idle_shutdown_then_lazy_restart(tmp_path):
+    p = ParsePool(make_fast, workers=2, timeout_s=5, idle_s=0.5)
+    try:
+        a, b = _docx(tmp_path, "a.docx", "one"), _docx(tmp_path, "b.docx", "two")
+        p.submit("s", a)
+        assert p.take("s", a).text.endswith("one")
+        assert _children()
+        assert _wait(lambda: not _children())  # released after idle
+        p.submit("s", b)
+        assert p.take("s", b).text.endswith("two")  # restarted lazily
+    finally:
+        p.close()
+    assert not _children()
+
+
+def test_idle_zero_means_never(tmp_path):
+    p = ParsePool(make_fast, workers=1, timeout_s=5, idle_s=0)
+    try:
+        a = _docx(tmp_path, "a.docx", "one")
+        p.submit("s", a)
+        p.take("s", a)
+        time.sleep(1.5)
+        assert _children()
+    finally:
+        p.close()
+
+
+def test_shutdown_workers_end_of_run_and_reuse(tmp_path):
+    p = ParsePool(make_fast, workers=2, timeout_s=5, idle_s=0)
+    try:
+        a, b = _docx(tmp_path, "a.docx", "one"), _docx(tmp_path, "b.docx", "two")
+        p.submit("s", a)
+        p.take("s", a)
+        p.shutdown_workers()
+        assert not _children()
+        p.submit("s", b)
+        assert p.take("s", b).text.endswith("two")
+    finally:
+        p.close()
+    assert not _children()
+
+
+def test_close_idempotent(tmp_path):
+    p = ParsePool(make_fast, workers=1, timeout_s=5)
+    a = _docx(tmp_path, "a.docx", "one")
+    p.submit("s", a)
+    p.take("s", a)
+    p.close()
+    p.close()
+    assert not _children()
+
+
+def test_close_while_worker_busy(tmp_path):
+    p = ParsePool(make_fast, workers=1, timeout_s=60, idle_s=0, grace_s=1)
+    hang = _docx(tmp_path, "h.docx", "HANG")
+    p.submit("s", hang)
+    assert _wait(lambda: bool(_children()))
+    time.sleep(1.0)  # let the worker pick up the file
+    t0 = time.time()
+    p.close()
+    assert time.time() - t0 < 20
+    assert not _children()

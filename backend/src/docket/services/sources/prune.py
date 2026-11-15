@@ -48,6 +48,11 @@ def supersede_and_deindex(
     evidence_manager.mark_version_status(version_id, VersionStatus.SUPERSEDED)
     if index_manager is not None:
         index_manager.delete_version(version_id)
+    factory = getattr(evidence_manager, "session_factory", None)
+    if factory is not None:
+        from docket.services.documents.builder import delete_for_version
+
+        delete_for_version(factory, version_id)
 
 
 def _is_invalid_file(path: Path) -> bool:

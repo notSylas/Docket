@@ -23,6 +23,7 @@ import multiprocessing
 import os
 import queue
 import threading
+import time
 from concurrent.futures import Future
 from pathlib import Path
 from typing import Any, Callable
@@ -73,11 +74,28 @@ class _Slot:
         child.close()
         self._proc, self._conn = proc, parent
 
-    def kill(self) -> None:
-        if self._proc is not None:
+    def stop(self, grace_s: float = 5.0) -> None:
+        """Ask the worker to exit cleanly (so its runtime can release
+        semaphores/shared memory); kill it if it has not left within grace."""
+        proc, conn = self._proc, self._conn
+        if proc is not None and conn is not None:
             try:
-                self._proc.kill()
-                self._proc.join(5)
+                conn.send(None)
+                proc.join(grace_s)
+            except Exception:  # noqa: BLE001
+                pass
+        self.kill()
+
+    def kill(self) -> None:
+        proc = self._proc
+        if proc is not None:
+            try:
+                if proc.is_alive():
+                    proc.terminate()
+                    proc.join(2)
+                if proc.is_alive():
+                    proc.kill()
+                proc.join(5)
             except Exception:  # noqa: BLE001
                 pass
         if self._conn is not None:
@@ -118,12 +136,22 @@ class ParsePool:
         workers: int,
         timeout_s: float | None = 600.0,
         mp_context: str = "spawn",
+        idle_s: float | None = None,
+        grace_s: float = 10.0,
     ) -> None:
+        if idle_s is None:
+            try:
+                idle_s = float(os.environ.get("DOCKET_PARSE_IDLE_S", "120"))
+            except ValueError:
+                idle_s = 120.0
+        self._idle_s = idle_s if idle_s and idle_s > 0 else None
+        self._grace_s = grace_s
         self.workers = max(1, workers)
         self._timeout_s = timeout_s if timeout_s and timeout_s > 0 else None
         self._ctx = multiprocessing.get_context(mp_context)
         self._factory = parser_factory
         self._queue: queue.Queue = queue.Queue()
+        self._close_lock = threading.Lock()
         self._futures: dict[tuple[str, str], Future] = {}
         self._lock = threading.Lock()
         self._threads: list[threading.Thread] = []
@@ -142,15 +170,20 @@ class ParsePool:
         for _ in range(self.workers):
             slot = _Slot(self._ctx, self._factory)
             self._slots.append(slot)
-            t = threading.Thread(target=self._loop, args=(slot,), daemon=True)
+            t = threading.Thread(target=self._loop, args=(slot, self._queue), daemon=True)
             t.start()
             self._threads.append(t)
 
-    def _loop(self, slot: _Slot) -> None:
+    def _loop(self, slot: _Slot, q: queue.Queue) -> None:
         while True:
-            task = self._queue.get()
+            try:
+                task = q.get(timeout=self._idle_s)
+            except queue.Empty:
+                # Idle: release the (multi-GB) worker; run() restarts it lazily.
+                slot.stop(self._grace_s)
+                continue
             if task is None:
-                slot.kill()
+                slot.stop(self._grace_s)
                 return
             fut, source_id, path = task
             if not fut.set_running_or_notify_cancel():
@@ -201,12 +234,28 @@ class ParsePool:
         for f in futs:
             f.cancel()
 
+    def shutdown_workers(self) -> None:
+        """Stop all worker processes now (end of a run). The pool stays usable:
+        the next `submit` starts fresh workers. Unconsumed work is dropped; a
+        worker mid-file gets a grace period, then is killed."""
+        with self._close_lock:
+            self.reset()
+            with self._lock:
+                threads, slots, q = self._threads, self._slots, self._queue
+                self._threads, self._slots = [], []
+                self._queue = queue.Queue()
+            for _ in threads:
+                q.put(None)
+            deadline = time.monotonic() + self._grace_s
+            for t in threads:
+                t.join(max(0.0, deadline - time.monotonic()))
+            for slot in slots:  # anything still busy: kill (unblocks its thread)
+                slot.kill()
+            for t in threads:
+                t.join(5)
+
     def close(self) -> None:
         if self._closed:
             return
         self._closed = True
-        self.reset()
-        for _ in self._threads:
-            self._queue.put(None)
-        for slot in self._slots:
-            slot.kill()
+        self.shutdown_workers()

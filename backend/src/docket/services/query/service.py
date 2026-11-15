@@ -151,6 +151,9 @@ class QueryResult(BaseModel):
     # Optional for older consumers. Seconds, exclusive phases plus overhead.
     latency_by_phase: dict[str, float] | None = None
     latency_s: float | None = None
+    # Document layer record (None unless a DOCKET_DOC_ROUTING/FIELD_LOOKUP/
+    # FAMILY_LATEST flag did something): {"routed": [...], "lookup": field, ...}.
+    doc_layer: dict[str, Any] | None = None
 
 
 # Tools whose successful results make chunks citable on the agent path.
@@ -531,24 +534,41 @@ class QueryService:
                 standalone=standalone, scoped_to=scoped_to,
                 warning="the named file is outside the selected scope",
             )
+        doc_layer = self._get_doc_layer()
+        doc_info: dict[str, Any] = {}
+        route_decision = None
+        if doc_layer is not None and not named_ids:
+            with phase("doc_route"):
+                route_decision = doc_layer.route(question, scope_ids)
+            if route_decision is not None:
+                doc_info["route"] = {
+                    "routed": route_decision.routed, "reason": route_decision.reason,
+                    "documents": len(route_decision.version_ids), "top_score": round(route_decision.top_score, 2),
+                }
+            looked = doc_layer.lookup_answer(question, route_decision, self._resolver)
+            if looked is not None:
+                answer_obj, ev = looked
+                doc_info["lookup"] = answer_obj.field
+                return QueryResult(
+                    question=question, answer=answer_obj.answer,
+                    citations=[Citation(citation_label=ev.citation_label, chunk_id=ev.chunk_id,
+                                        source_display_name=ev.source_display_name)],
+                    abstained=False, validation_warnings=[], mode=QueryMode.FAST.value,
+                    standalone_query=standalone, scoped_to=scoped_to, doc_layer=doc_info,
+                )
+        search_scope = scope_ids
         with phase("search"):
-            ranked_chunks = hybrid_search(
-                engine=self._engine,
-                table=self._table,
-                gateway=self._gateway,
-                query=question,
-                top_k=self._top_k,
-                page_table=self._page_table,
-                manifest_guard=self._manifest_guard,
-                **({"extra_queries": [standalone]} if standalone else {}),
-                **({"scope_version_ids": scope_ids} if scope_ids is not None else {}),
-                **(
-                    {"pool_k": self._settings.retrieval_pool_k}
-                    if self._settings.retrieval_pool_k is not None
-                    else {}
-                ),
-            )
-
+            ranked_chunks = self._hybrid(question, standalone, scope_ids)
+        extra_scope = doc_layer.routed_scope(route_decision, scope_ids) if doc_layer is not None else None
+        if extra_scope:
+            # Additive: the global legs above are untouched; chunks of the one
+            # named document are appended as extra candidates (never removed).
+            with phase("search"):
+                boost = self._hybrid(question, standalone, extra_scope, top_k=doc_layer.extra_k)
+            have = {rc.chunk_id for rc in ranked_chunks}
+            added = [rc for rc in boost if rc.chunk_id not in have]
+            ranked_chunks = list(ranked_chunks) + added
+            doc_info["added_chunks"] = len(added)
         if not ranked_chunks and named_ids:
             # The named file yields nothing retrievable: say so; never widen the
             # search to other files behind the user's back.
@@ -592,7 +612,12 @@ class QueryService:
                 scoped_to=scoped_to,
             )
         if self._settings.id_followup:
-            resolved = self._append_id_followups(question, resolved, scope_ids)
+            resolved = self._append_id_followups(question, resolved, search_scope)
+        family_note = None
+        if doc_layer is not None:
+            resolved, family_note = doc_layer.family_filter(resolved)
+            if family_note:
+                doc_info["family_note"] = True
         # Token-budget fitting is FAST-PATH ONLY: `resolved` is in rank order
         # (best first), so dropping the tail drops the weakest chunks. Agent
         # chunks are in read order, not rank order, so the agent path has no
@@ -627,16 +652,48 @@ class QueryService:
         with phase("generation"):
             answer = self._gateway.generate(system=system, prompt=prompt, **self._answer_opts())
 
-        return self._finalize_answer(
+        result = self._finalize_answer(
             question=question, answer=answer, resolved=resolved,
             mode=QueryMode.FAST, retry_system=system, retry_prompt=prompt,
             dropped_chunk_ids=dropped,
-        ).model_copy(update={
+        )
+        if family_note and not result.abstained:
+            result = result.model_copy(update={"answer": f"{result.answer}\n\n{family_note}"})
+        return result.model_copy(update={
+            "doc_layer": doc_info or None,
             "standalone_query": standalone,
             "scoped_to": scoped_to,
             "ambiguity": ambiguity.to_dict() if ambiguity is not None else None,
             "compute": compute_record,
         })
+
+    def _get_doc_layer(self):
+        """The document layer, or None when every flag is off (the default)."""
+        layer = getattr(self, "_doc_layer", None)
+        if layer is None:
+            from docket.services.documents.layer import DocumentLayer
+
+            layer = DocumentLayer(self._engine, get_session_factory(self._engine), self._settings)
+            self._doc_layer = layer
+        return layer if (layer.routing_on or layer.lookup_on or layer.family_on) else None
+
+    def _hybrid(self, question: str, standalone: str | None, scope_ids: list[str] | None, top_k: int | None = None):
+        return hybrid_search(
+            engine=self._engine,
+            table=self._table,
+            gateway=self._gateway,
+            query=question,
+            top_k=top_k or self._top_k,
+            page_table=self._page_table,
+            manifest_guard=self._manifest_guard,
+            **({"extra_queries": [standalone]} if standalone else {}),
+            **({"scope_version_ids": scope_ids} if scope_ids is not None else {}),
+            **(
+                {"pool_k": self._settings.retrieval_pool_k}
+                if self._settings.retrieval_pool_k is not None
+                else {}
+            ),
+        )
 
     def _get_workbook_reader(self) -> WorkbookReader:
         if self._workbook_reader is None:

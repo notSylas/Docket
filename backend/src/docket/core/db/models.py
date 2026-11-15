@@ -267,6 +267,11 @@ class EvidenceVersion(Base):
     chunks: Mapped[list["Chunk"]] = relationship(
         back_populates="evidence_version", cascade="all, delete-orphan"
     )
+    # Document-layer record (one per version; see docket.services.documents).
+    # The cascade makes purge/delete paths remove it with the version.
+    document: Mapped["Document | None"] = relationship(
+        back_populates="evidence_version", cascade="all, delete-orphan", uselist=False
+    )
 
 
 class EvidenceUnit(Base):
@@ -538,3 +543,57 @@ class IngestQueueItem(Base):
             text("recency_day DESC"), "byte_size", text("mtime DESC"), "id",
         ),
     )
+
+
+class Document(Base):
+    """Document-layer record for one evidence version: type, title, parties,
+    dates, family and a short text used for document-level search. Derived
+    deterministically from stored chunks (no re-parse); safe to rebuild."""
+
+    __tablename__ = "documents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    evidence_version_id: Mapped[str] = mapped_column(
+        ForeignKey("evidence_versions.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    source_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    file_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    doc_type: Mapped[str] = mapped_column(String, nullable=False, default="other")
+    title: Mapped[str | None] = mapped_column(String, nullable=True)
+    parties_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    dates_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    family_key: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    source_mtime: Mapped[float | None] = mapped_column(Float, nullable=True)
+    doc_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    supersedes_document_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 'replaces' (amended-and-restated / replaces) or 'amends' (partial amendment).
+    supersedes_kind: Mapped[str | None] = mapped_column(String, nullable=True)
+    extractor_version: Mapped[str] = mapped_column(String, nullable=False, default="1")
+
+    evidence_version: Mapped["EvidenceVersion"] = relationship(back_populates="document")
+    fields: Mapped[list["DocumentField"]] = relationship(
+        back_populates="document", cascade="all, delete-orphan"
+    )
+
+
+class DocumentField(Base):
+    """One deterministically extracted contract field, with the chunk and
+    character span that support it (so a citation is real)."""
+
+    __tablename__ = "document_fields"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    field: Mapped[str] = mapped_column(String, nullable=False)
+    value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    normalized: Mapped[str | None] = mapped_column(String, nullable=True)
+    evidence_chunk_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    char_span: Mapped[str | None] = mapped_column(String, nullable=True)  # "start:end" in the chunk text
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    extractor_version: Mapped[str] = mapped_column(String, nullable=False, default="1")
+
+    document: Mapped["Document"] = relationship(back_populates="fields")
