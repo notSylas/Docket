@@ -597,3 +597,52 @@ class DocumentField(Base):
     extractor_version: Mapped[str] = mapped_column(String, nullable=False, default="1")
 
     document: Mapped["Document"] = relationship(back_populates="fields")
+
+
+class KagEntity(Base):
+    """KAG-lite graph node: one normalised party/company name (shared by documents)."""
+
+    __tablename__ = "kag_entities"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    norm: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    display: Mapped[str] = mapped_column(String, nullable=False)
+    kind: Mapped[str] = mapped_column(String, nullable=False, default="party")
+
+
+class KagEntityVariant(Base):
+    __tablename__ = "kag_entity_variants"
+
+    entity_id: Mapped[int] = mapped_column(
+        ForeignKey("kag_entities.id", ondelete="CASCADE"), primary_key=True
+    )
+    variant: Mapped[str] = mapped_column(String, primary_key=True, index=True)
+
+
+class KagDocumentEntity(Base):
+    """Edge document -> entity; `chunk_id` is the chunk the name was read from."""
+
+    __tablename__ = "kag_document_entities"
+
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True
+    )
+    entity_id: Mapped[int] = mapped_column(
+        ForeignKey("kag_entities.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+    role: Mapped[str] = mapped_column(String, primary_key=True, default="party")
+    chunk_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class KagDocumentClause(Base):
+    """Edge document -> clause type -> chunk (deterministic keyword classification)."""
+
+    __tablename__ = "kag_document_clauses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    clause_type: Mapped[str] = mapped_column(String, nullable=False)
+    chunk_id: Mapped[str] = mapped_column(String, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.6)

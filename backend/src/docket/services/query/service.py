@@ -96,6 +96,7 @@ from docket.core.db.engine import get_session_factory
 from docket.infra.evidence.store import ContentAddressedStore
 from docket.infra.evidence.workbook_reader import WorkbookReader
 from docket.infra.parsing.tokens import get_token_counter
+from docket.services.documents import kag as kag_graph, routing
 from docket.infra.retrieval.hybrid import hybrid_search
 from docket.infra.retrieval.id_followup import followup_chunk_ids
 from docket.infra.retrieval.resolver import ChunkNotFoundError, EvidenceResolver, ResolvedEvidence
@@ -569,6 +570,9 @@ class QueryService:
             added = [rc for rc in boost if rc.chunk_id not in have]
             ranked_chunks = list(ranked_chunks) + added
             doc_info["added_chunks"] = len(added)
+        kag_plan = None
+        if not named_ids and ranked_chunks and self._kag_on():
+            ranked_chunks, kag_plan = self._kag_scope(question, standalone, scope_ids, ranked_chunks, doc_info)
         if not ranked_chunks and named_ids:
             # The named file yields nothing retrievable: say so; never widen the
             # search to other files behind the user's back.
@@ -641,6 +645,9 @@ class QueryService:
                         [(o.file, o.fiscal_year, o.context_lines) for o in ambiguity.options]
                     )
 
+        if kag_plan is not None and kag_plan.clause_absent:
+            system += kag_graph.absent_note(kag_plan)
+
         # Flagged deterministic compute stage: default off, and then nothing
         # below differs from the previous behaviour.
         compute_record: dict[str, Any] | None = None
@@ -666,6 +673,47 @@ class QueryService:
             "ambiguity": ambiguity.to_dict() if ambiguity is not None else None,
             "compute": compute_record,
         })
+
+    def _kag_on(self) -> bool:
+        return str(getattr(self._settings, "kag_scoping", "off")).lower() in ("on", "1", "true", "yes")
+
+    def _kag_scope(self, question, standalone, scope_ids, ranked_chunks, doc_info):
+        """KAG-lite soft scoping. Returns (ranked_chunks, plan); on any doubt the
+        pool is returned unchanged. Scoped candidates are fused with, never
+        substituted for, the global pool."""
+        from docket.infra.retrieval.hybrid import RankedChunk
+
+        try:
+            if routing.is_list_question(question):
+                doc_info["kag"] = {"mode": "none", "reason": "list question"}
+                return ranked_chunks, None
+            with phase("kag_plan"):
+                plan = kag_graph.plan(self._engine, question, scope_ids)
+            doc_info["kag"] = plan.to_dict()
+            if not plan.active:
+                return ranked_chunks, plan
+            with phase("search"):
+                scoped = self._hybrid(
+                    kag_graph.scoped_query(question, plan), standalone, plan.version_ids, top_k=30
+                )
+            ids = kag_graph.dedupe_ids(self._engine, [rc.chunk_id for rc in scoped])
+            if plan.clause_chunk_ids:
+                ids = sorted(ids, key=lambda c: (c not in plan.clause_chunk_ids, ids.index(c)))
+            ids = ids[:6]
+            if not ids:
+                return ranked_chunks, plan
+            have = {rc.chunk_id: rc for rc in list(ranked_chunks) + list(scoped)}
+            limit = max(len(ranked_chunks), self._top_k)
+            glob_ids = [rc.chunk_id for rc in ranked_chunks]
+            fused_all = kag_graph.fuse(glob_ids, ids, limit * 3)
+            keep = set(kag_graph.dedupe_ids(self._engine, [c for c, _ in fused_all]))
+            fused = [(c, sc) for c, sc in fused_all if c in keep][:limit]
+            doc_info["kag"]["scoped_chunks"] = len(ids)
+            doc_info["kag"]["new_from_scope"] = len({c for c, _ in fused} - set(glob_ids))
+            return [RankedChunk(chunk_id=c, score=sc, provisional=have[c].provisional) for c, sc in fused], plan
+        except Exception:  # noqa: BLE001
+            logger.warning("kag scoping failed; using the global pool", exc_info=True)
+            return ranked_chunks, None
 
     def _get_doc_layer(self):
         """The document layer, or None when every flag is off (the default)."""
