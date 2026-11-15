@@ -55,7 +55,7 @@ def _preamble(chunks: list[Chunk], limit: int = 3500) -> str:
     return "\n".join(out)[:limit]
 
 
-def build_document(session: Session, version: EvidenceVersion) -> Document | None:
+def build_document(session: Session, version: EvidenceVersion, kag: bool = False) -> Document | None:
     """Replace the document row for `version` (caller commits). None when the
     version has no chunks."""
     chunks = _chunks_for(session, version.id)
@@ -94,6 +94,10 @@ def build_document(session: Session, version: EvidenceVersion) -> Document | Non
         session.flush()
     session.add(row)
     session.flush()
+    if kag:
+        from docket.services.documents import kag as kag_graph
+
+        kag_graph.write_graph(session, row.id, chunks, parties, first_text)
     if doc_type in _CONTRACTISH or doc_type in ("other", "report"):
         cts = [ChunkText(c.id, c.text, c.ordinal, c.heading) for c in chunks]
         if doc_type in _CONTRACTISH:
@@ -107,7 +111,7 @@ def build_document(session: Session, version: EvidenceVersion) -> Document | Non
     return row
 
 
-def build_for_version(session_factory: sessionmaker, version_id: str) -> bool:
+def build_for_version(session_factory: sessionmaker, version_id: str, kag: bool = False) -> bool:
     """Ingestion hook: never raises (a document-layer failure must not fail an
     ingest). Returns True when a row was written."""
     try:
@@ -115,7 +119,7 @@ def build_for_version(session_factory: sessionmaker, version_id: str) -> bool:
             version = session.get(EvidenceVersion, version_id)
             if version is None or version.status not in (VersionStatus.READY, VersionStatus.PENDING):
                 return False
-            row = build_document(session, version)
+            row = build_document(session, version, kag)
             if row is not None:
                 family.link_document(session, row)
             session.commit()
@@ -169,7 +173,7 @@ def delete_for_source(session_factory: sessionmaker, source_id: str) -> None:
         logger.warning("document delete failed for source %s", source_id, exc_info=True)
 
 
-def build_all(session_factory: sessionmaker, source_id: str | None = None, *, force: bool = False) -> BuildStats:
+def build_all(session_factory: sessionmaker, source_id: str | None = None, *, force: bool = False, kag: bool = False) -> BuildStats:
     """Backfill for an existing library. Skips versions that already have a
     current-extractor row unless `force`; prunes rows that are no longer
     servable first."""
@@ -190,11 +194,16 @@ def build_all(session_factory: sessionmaker, source_id: str | None = None, *, fo
                 select(Document.evidence_version_id, Document.extractor_version)
             ).all()
         }
+        if kag:  # a row without graph edges is not current for a KAG build
+            has_graph = set(session.execute(text(
+                "SELECT d.evidence_version_id FROM documents d WHERE EXISTS "
+                "(SELECT 1 FROM kag_document_clauses c WHERE c.document_id = d.id)")).scalars())
+            have = {v: x for v, x in have.items() if v in has_graph}
     for vid in ids:
         if not force and have.get(vid) == EXTRACTOR_VERSION:
             stats.skipped += 1
             continue
-        if build_for_version(session_factory, vid):
+        if build_for_version(session_factory, vid, kag):
             stats.built += 1
         else:
             stats.skipped += 1

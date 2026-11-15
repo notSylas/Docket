@@ -709,7 +709,10 @@ class IngestionPipeline:
         if getattr(self._settings, "documents_build_enabled", False):
             from docket.services.documents.builder import build_for_version
 
-            build_for_version(self._session_factory, evidence_version_id)
+            build_for_version(
+                self._session_factory, evidence_version_id,
+                str(getattr(self._settings, "kag_scoping", "off")).lower() in ("on", "1", "true", "yes"),
+            )
 
     def _drop_superseded_index_entries(
         self, before_id: str | None, evidence_version: EvidenceVersion

@@ -141,7 +141,10 @@ def documents_build(
     context = build_context()
     lock = lock_for_sessions(context.session_factory)
     with lock.hold("building document records"):
-        stats = build_all(context.session_factory, source, force=force)
+        stats = build_all(
+            context.session_factory, source, force=force,
+            kag=str(context.settings.kag_scoping).lower() in ("on", "1", "true", "yes"),
+        )
     typer.echo(
         f"Document records: {stats.built} built, {stats.skipped} unchanged, {stats.removed} removed, "
         f"{stats.linked} amendment links, {stats.fields} extracted fields in total."

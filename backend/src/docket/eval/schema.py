@@ -299,6 +299,8 @@ class RunRecord(BaseModel):
     # Per gold span: does it appear in any indexed chunk of the corpus? Lets the
     # report tell a parse/chunk failure from a retrieval failure.
     spans_indexed: list[bool] = Field(default_factory=list)
+    # Document-layer / KAG record for the answer (None when no flag acted).
+    doc_layer: dict[str, Any] | None = None
     error: str | None = None
 
 

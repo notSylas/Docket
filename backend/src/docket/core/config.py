@@ -182,6 +182,10 @@ class Settings(BaseSettings):
     doc_routing_top_n: int = 8
     field_lookup: str = "off"
     family_latest: str = "off"
+    # KAG-lite (env DOCKET_KAG_SCOPING=on): entity graph built at ingest; when a
+    # question names exactly one (or <= 3) documents, clause-focused search runs
+    # inside them and is RRF-fused with the global pool (never exclusive).
+    kag_scoping: str = "off"
 
     # Re-bracket citation labels the model copied without brackets (env
     # DOCKET_BARE_CITATION_REPAIR=0 disables). Exact-label only; see
@@ -254,7 +258,7 @@ class Settings(BaseSettings):
     def documents_build_enabled(self) -> bool:
         on = ("on", "1", "true", "yes")
         return self.documents_build or any(
-            str(v).lower() in on for v in (self.doc_routing, self.field_lookup, self.family_latest)
+            str(v).lower() in on for v in (self.doc_routing, self.field_lookup, self.family_latest, self.kag_scoping)
         )
 
     @property

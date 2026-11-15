@@ -385,6 +385,7 @@ class EvalRunner:
         record.scoped_to = result.scoped_to
         record.ambiguity = result.ambiguity
         record.compute = result.compute
+        record.doc_layer = getattr(result, "doc_layer", None)
         record.latency_by_phase = getattr(result, "latency_by_phase", None)
         record.scope_label = getattr(result, "scope_label", None)
         record.scope_file_count = getattr(result, "scope_file_count", None)
