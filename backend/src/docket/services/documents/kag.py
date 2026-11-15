@@ -25,7 +25,7 @@ from docket.core.db.models import SourceStatus, VersionStatus
 
 _SUFFIX_WORDS = {
     "inc", "incorporated", "corp", "corporation", "co", "company", "llc", "ltd", "limited", "plc", "lp",
-    "llp", "sa", "nv", "bv", "gmbh", "ag", "lc", "pllc", "pty", "holdings",
+    "llp", "sa", "nv", "bv", "gmbh", "ag", "lc", "pllc", "pty", "holdings", "holding",
 }
 _STOP = {
     "the", "a", "an", "of", "and", "or", "for", "to", "in", "on", "by", "with", "under", "what", "which", "who",
@@ -85,17 +85,47 @@ def name_variants(display: str) -> set[str]:
 
 _CORP_IN_TEXT = re.compile(
     r"\b((?:[A-Z][\w'’&.\-]*)(?:\s+(?:[A-Z][\w'’&.\-]*|of|and|&|de|the))*?,?\s+"
-    r"(?:Inc\.?|Incorporated|Corp\.?|Corporation|LLC|L\.L\.C\.|Ltd\.?|Limited|Co\.|Company|PLC|GmbH|S\.A\.|N\.V\.|B\.V\.|LP|L\.P\.|LLP))"
+    r"(?i:Inc\.?|Incorporated|Corp\.?|Corporation|LLC|L\.L\.C\.|Ltd\.?|Limited|Co\.|Company|PLC|GmbH|S\.A\.|N\.V\.|B\.V\.|LP|L\.P\.|LLP))(?![\w])"
 )
 
 
-def preamble_entities(parties: list[str], preamble: str) -> list[tuple[str, str]]:
-    """[(display, role)] : parties first, then other corporate names in the preamble."""
+def plausible_name(display: str) -> bool:
+    """A company/party name, not a sentence fragment: short, mostly capitalised words, no field labels."""
+    words = display.split()
+    if not (1 <= len(words) <= 8) or re.search(r"[:;\[\]]|\d{3,}", display):
+        return False
+    alpha = [w for w in words if re.search(r"[A-Za-z]", w)]
+    if not alpha:
+        return False
+    # a sentence end inside the name ("... Property. Company") means two phrases were glued together
+    if any(w.endswith(".") and len(w) > 4 and w[:-1].lower() not in _SUFFIX_WORDS for w in words[:-1]):
+        return False
+    caps = sum(1 for w in alpha if w[:1].isupper() or w.lower() in ("of", "and", "&", "de", "the", "for"))
+    return caps / len(alpha) >= 0.8
+
+
+def filename_entity(file_name: str | None) -> str | None:
+    """Company-like leading segment of a file name ('ReedsInc_2019_..pdf' -> 'Reeds Inc'); None when it is a
+    generic word or does not look like a name."""
+    if not file_name:
+        return None
+    stem = re.sub(r"\.[A-Za-z0-9]{1,5}$", "", file_name)
+    seg = re.split(r"[_\-]\s*\d|_|\s+-\s+|\s\(", stem)[0].strip()
+    seg = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", seg)  # camel case -> words
+    seg = re.sub(r"\s+", " ", seg).strip(" ,.-")
+    if not seg or len(seg) < 4 or len(seg.split()) > 5 or re.search(r"\d", seg):
+        return None
+    key = core_name(seg)
+    return seg if usable_variant(key) else None
+
+
+def preamble_entities(parties: list[str], preamble: str, file_name: str | None = None) -> list[tuple[str, str]]:
+    """[(display, role)] : parties first, then other corporate names in the preamble, then the file-name company."""
     out: list[tuple[str, str]] = []
     seen: set[str] = set()
     for p in parties:
         k = core_name(p)
-        if k and k not in seen:
+        if k and k not in seen and plausible_name(p) and usable_variant(k):
             seen.add(k)
             out.append((p, "party"))
     for m in _CORP_IN_TEXT.finditer(re.sub(r"\s+", " ", preamble)[:3000]):
@@ -105,9 +135,14 @@ def preamble_entities(parties: list[str], preamble: str) -> list[tuple[str, str]
             words.pop(0)
         d = " ".join(words)
         k = core_name(d)
-        if k and usable_variant(k) and k not in seen and len(d.split()) <= 8:
+        if k and usable_variant(k) and k not in seen and plausible_name(d):
             seen.add(k)
             out.append((d, "mention"))
+    fe = filename_entity(file_name)
+    if fe:
+        k = core_name(fe)
+        if k not in seen:
+            out.append((fe, "filename"))
     return out
 
 
@@ -139,16 +174,16 @@ CLAUSE_TYPES: tuple[ClauseType, ...] = (
                _c(r"\bcompet|non-?compet"), "compete competing competitor non-compete restrict", True),
     ClauseType("anti_assignment", "assignment restriction", _c(r"\bassign(?:s|ed|ing|ment|ments|able)?\b"),
                _c(r"\bassign"), "assign assignment consent transfer", True),
-    ClauseType("liability_cap", "liability cap", _c(r"limitation\s+of\s+liabilit|liabilit\w*[^.]{0,120}(?:exceed|cap|limit|aggregate)|in\s+no\s+event[^.]{0,250}liab"),
+    ClauseType("liability_cap", "liability cap", _c(r"limitation\s+of\s+liabilit|liabilit\w*[^.]{0,200}(?:exceed|cap|limit|aggregate|maximum)|(?:exceed|cap|limit|aggregate|maximum)[^.]{0,200}liabilit|in\s+no\s+event"),
                _c(r"(?:cap|caps|capped|limit\w*)\b[^?]{0,40}liabilit|liabilit\w*\s+cap|maximum\s+liabilit"), "limitation of liability aggregate exceed cap", True),
-    ClauseType("termination_for_convenience", "termination for convenience", _c(r"terminat\w*[^.]{0,160}(?:convenience|without\s+cause|any\s+reason|no\s+reason)|(?:convenience|without\s+cause)[^.]{0,100}terminat"),
+    ClauseType("termination_for_convenience", "termination for convenience", _c(r"\bconvenience\b|without\s+(?:cause|reason)|any\s+reason|no\s+reason|at\s+will"),
                _c(r"terminat\w*[^?]{0,80}convenience|convenience[^?]{0,80}terminat|notice[^?]{0,40}(?:is\s+)?(?:required|needed)[^?]{0,20}terminat|how\s+(?:much|many)[^?]{0,30}notice[^?]{0,40}terminat"),
                "terminate termination convenience without cause written notice days", True),
-    ClauseType("license_grant", "license grant", _c(r"(?:hereby\s+)?grants?\b[^.]{0,100}licen[sc]e|licen[sc]e\s+grant|grant\s+of\s+(?:a\s+)?licen"),
+    ClauseType("license_grant", "license grant", _c(r"\bgrants?\b|licen[sc]e"),
                _c(r"licen[sc]e\s+grant|grants?\b[^?]{0,40}licen|scope\s+of\s+(?:the\s+)?licen"), "grant license licensed rights scope", True),
     ClauseType("termination", "termination", _c(r"\bterminat"),
                _c(r"\bterminat"), "terminate termination notice", True),
-    ClauseType("renewal", "renewal", _c(r"\brenew|automatically\s+extend|extended\s+for"),
+    ClauseType("renewal", "renewal", _c(r"\brenew|\bextend|\bextension|successive"),
                _c(r"\brenew|auto-?renew"), "renew renewal extended successive period", True),
     ClauseType("governing_law", "governing law", _c(r"governing\s+law|governed\s+(?:by|in)|laws?\s+of\s+the\s+(?:state|commonwealth|republic)|construed\s+in\s+accordance"),
                _c(r"governing\s+law|\bgoverned\b|\bjurisdiction\b[^?]{0,30}\b(?:law|govern)|which\s+law|what\s+law|\bgoverns\b|law\s+govern"), "governed by laws of the state governing law", False),
@@ -188,7 +223,7 @@ def classify_chunk(chunk_text: str, heading: str | None = None) -> list[tuple[st
 
 # --- build ---------------------------------------------------------------
 
-def write_graph(session, document_id: int, chunks, parties: list[str], preamble: str) -> tuple[int, int]:
+def write_graph(session, document_id: int, chunks, parties: list[str], preamble: str, file_name: str | None = None) -> tuple[int, int]:
     """Replace this document's graph rows (caller commits). `chunks`: objects with id/text/heading/ordinal.
     Returns (entity_edges, clause_links)."""
     from sqlalchemy import delete, select
@@ -199,7 +234,7 @@ def write_graph(session, document_id: int, chunks, parties: list[str], preamble:
     session.execute(delete(KagDocumentClause).where(KagDocumentClause.document_id == document_id))
     first_chunk = chunks[0].id if chunks else None
     edges = 0
-    for display, role in preamble_entities(parties, preamble):
+    for display, role in preamble_entities(parties, preamble, file_name):
         key = core_name(display)
         if not usable_variant(key):
             continue

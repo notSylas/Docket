@@ -61,6 +61,21 @@ def test_fuse_puts_scoped_first_keeps_global():
     assert ids.index("s1") < ids.index("g1")
 
 
+def test_plausible_name_and_filename_entity():
+    assert kag.plausible_name("BLOOM ENERGY CORPORATION")
+    assert not kag.plausible_name("other things, agreed to")
+    assert not kag.plausible_name("Reed's Intellectual Property. Company")
+    assert not kag.plausible_name("NETGEAR Agreement Number: N115 Effective Date: March 1")
+    assert kag.filename_entity("ReedsInc_20191113_10-Q_EX-10.4_Development Agreement.pdf") == "Reeds Inc"
+    assert kag.filename_entity("2020_contract.pdf") is None
+    assert kag.filename_entity("Agreement.pdf") is None
+
+
+def test_all_caps_corporation_found_in_preamble():
+    ents = dict(kag.preamble_entities([], "MASTER AGREEMENT by and between DIAMOND STATE GENERATION PARTNERS, LLC and BLOOM ENERGY CORPORATION dated as of April 13, 2012"))
+    assert any(kag.core_name(d) == "bloom energy" for d in ents)
+
+
 # --- migration chain -----------------------------------------------------
 
 def test_single_alembic_head():

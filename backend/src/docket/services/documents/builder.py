@@ -97,7 +97,7 @@ def build_document(session: Session, version: EvidenceVersion, kag: bool = False
     if kag:
         from docket.services.documents import kag as kag_graph
 
-        kag_graph.write_graph(session, row.id, chunks, parties, first_text)
+        kag_graph.write_graph(session, row.id, chunks, parties, first_text, file_name)
     if doc_type in _CONTRACTISH or doc_type in ("other", "report"):
         cts = [ChunkText(c.id, c.text, c.ordinal, c.heading) for c in chunks]
         if doc_type in _CONTRACTISH:
