@@ -1,0 +1,10 @@
+Tiered indexing benchmark after merging rust-app (fake inference, python-docx parser stand-in; measures pipeline overhead, not model cost)
+Corpus: 300 generated docx files (gen_office_corpus.py, 285 unique + 15 exact duplicates), scratch DOCKET_DATA_DIR under /tmp.
+
+one-pass:  total to READY            14.42 s
+tiered:    first file searchable      3.43 s   (1% at 4.03 s, 10% at 4.39 s, 50% at 6.36 s, all 300 at 12.91 s)
+           tier 1 complete            12.34 s run
+           tier 2 complete / READY    25.0 s total (tier2 run 12.08 s, 0 failed, 0 dead)
+Question answered during indexing: after tier 1 only (tier 2 not started), keyword query "agreement" returned 8 hits in 1.9 ms with 0 embedding calls; final query after READY 2.3 ms, 8 hits.
+Cost: tiered total 25.0 s vs one-pass 14.42 s (~1.7x wall for the two passes on this fake-inference corpus); benefit is searchable at 3.4 s instead of 14.4 s.
+Versions at end: READY 300.
