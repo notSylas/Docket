@@ -241,6 +241,9 @@ def build_methods(context: Any, service_factory: Callable[[Any, Any], Any]) -> d
         phases = getattr(result, "latency_by_phase", None)
         if phases:
             timings["by_phase"] = {k: round(float(v), 3) for k, v in phases.items()}
+        from docket.services.query.original_notes import original_notes
+
+        notes = original_notes(context, [c.chunk_id for c in result.citations])
         return {
             "answer": result.answer,
             "abstained": bool(result.abstained),
@@ -250,6 +253,7 @@ def build_methods(context: Any, service_factory: Callable[[Any, Any], Any]) -> d
                     "source_display_name": c.source_display_name,
                     "chunk_id": c.chunk_id,
                     "excerpt": _excerpt(c.chunk_id),
+                    **({"note": notes[c.chunk_id]} if c.chunk_id in notes else {}),
                 }
                 for c in result.citations
             ],

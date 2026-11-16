@@ -1169,8 +1169,13 @@ def query(
     typer.echo(f"[{result.mode}] {result.answer}")
     if result.citations:
         typer.echo("\nCitations:")
+        from docket.services.query.original_notes import original_notes
+
+        notes = original_notes(context, [c.chunk_id for c in result.citations])
         for citation in result.citations:
             typer.echo(f"  {citation.citation_label}")
+            if citation.chunk_id in notes:
+                typer.echo(f"    Note: {notes[citation.chunk_id]}")
     if result.validation_warnings:
         typer.echo("\nWarnings:")
         for warning in result.validation_warnings:
