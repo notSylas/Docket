@@ -1067,8 +1067,14 @@ def reindex() -> None:
             tokenizer=get_token_counter().name,
         )
     except (InferenceError, ValueError) as exc:
-        typer.echo(f"Error: reindex failed, the existing index is unchanged: {exc}", err=True)
+        typer.echo(
+            f"Error: reindex failed, the existing index is unchanged: {exc}\n"
+            "Progress is saved; run `docket reindex` again to continue where it stopped.",
+            err=True,
+        )
         raise typer.Exit(code=1) from exc
+    if result.resumed_rows:
+        typer.echo(f"Resumed an interrupted reindex: {result.resumed_rows} rows were already embedded.")
     typer.echo(
         f"Reindexed chunks={result.chunks} pages={result.pages} "
         f"model={result.embed_model} dimension={result.embed_dimension}"
