@@ -1,0 +1,24 @@
+# Your questions. 10-20 is plenty. Keep this file private; only the aggregate JSON gets shared.
+#
+# Tips:
+#  - Name the company / counterparty in the question when a human would
+#    ("Under the agreement with Acme Ltd, ...") - the kit reports how often names are found.
+#  - expected_answer: a short sentence with the key facts (names, amounts, dates).
+#  - expected_file: the file name (or a distinctive part of it) the answer lives in.
+#  - answerable: yes if the documents contain the answer; no if they do not
+#    (the right behaviour is then to abstain). Include 2-4 "no" questions.
+questions:
+  - question: Under the Supply Agreement with Northwind Traders Ltd, which country's law governs the contract?
+    expected_answer: The laws of England and Wales govern the agreement.
+    expected_file: northwind_supply_agreement.pdf
+    answerable: yes
+
+  - question: What is the notice period for terminating the Acme Corp services contract without cause?
+    expected_answer: Either party may terminate on 60 days written notice.
+    expected_file: acme_services_contract.pdf
+    answerable: yes
+
+  - question: What is the annual licence fee in the Globex Inc software licence?
+    expected_answer: Not stated anywhere in the documents.
+    expected_file: ""
+    answerable: no
