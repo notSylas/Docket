@@ -187,7 +187,9 @@ class AppContext:
 
     @cached_property
     def evidence_manager(self) -> EvidenceManager:
-        return EvidenceManager(self.store, self.session_factory)
+        return EvidenceManager(
+            self.store, self.session_factory, reference_mode=self.settings.reference_mode
+        )
 
     @cached_property
     def parser(self) -> DoclingParser:

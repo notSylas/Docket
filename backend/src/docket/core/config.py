@@ -31,6 +31,13 @@ class Settings(BaseSettings):
     # on, or when this is set explicitly (DOCKET_STORE_PAGE_IMAGES=true).
     store_page_images: bool = False
 
+    # Reference mode (DOCKET_REFERENCE_MODE=true): do not copy every original
+    # into the evidence store. Record path, content hash, size and mtime and keep
+    # the extracted text/chunks. A moved, deleted or edited file keeps its indexed
+    # text but is reported as unavailable/changed, never shown as the indexed
+    # version. Off = every original is copied (the default, unchanged behaviour).
+    reference_mode: bool = False
+
     # Parse worker pool (heavy Docling parser only). 1 = sequential, in-process.
     # DOCKET_PARSE_WORKERS / DOCKET_PARSE_TIMEOUT_S / DOCKET_MAX_FILE_BYTES /
     # DOCKET_PARSE_MAX_PAGES (0 = no page cap).

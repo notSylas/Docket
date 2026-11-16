@@ -51,6 +51,7 @@ from docket.core.db.models import (
     SourceStatus,
     VersionStatus,
 )
+from docket.infra.evidence.originals import read_original_bytes
 from docket.infra.evidence.store import ContentAddressedStore, ObjectNotFoundError
 from docket.infra.parsing.xlsx_context import sheet_scope_lines
 from docket.infra.parsing.xlsx_wrapper import (
@@ -470,9 +471,20 @@ class WorkbookReader:
         try:
             data = self._store.get(pinned.content_hash)
         except ObjectNotFoundError as exc:
-            raise WorkbookReadError(
-                f"the stored copy of {pinned.source_name} is no longer available"
-            ) from exc
+            # Reference mode keeps no copy: use the live file, but only if it
+            # still has exactly the indexed bytes.
+            data = read_original_bytes(
+                self._store,
+                content_hash=pinned.content_hash,
+                file_path=pinned.file_path,
+                byte_size=None,
+                source_mtime=None,
+            )
+            if data is None:
+                raise WorkbookReadError(
+                    f"{pinned.source_name} is no longer available as it was indexed "
+                    "(it was moved, deleted or changed); re-index the folder to read it again"
+                ) from exc
         bundle = _load_bundle(data, pinned.source_name)
         self._bundles[key] = bundle
         while len(self._bundles) > _BUNDLE_CACHE_SIZE:

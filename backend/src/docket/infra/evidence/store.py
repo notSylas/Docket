@@ -153,6 +153,16 @@ class ContentAddressedStore:
     def exists(self, content_hash: str) -> bool:
         return self._object_path(content_hash).exists()
 
+    def is_reference(self, content_hash: str) -> bool:
+        """True when the content is held by reference (reference mode): no copy
+        in ``objects/`` and the manifest says the bytes live in the user's folder."""
+        if self.exists(content_hash):
+            return False
+        try:
+            return self.read_manifest(content_hash).get("storage") == "reference"
+        except (ObjectNotFoundError, ValueError):
+            return False
+
     def get(self, content_hash: str) -> bytes:
         object_path = self._object_path(content_hash)
         if not object_path.exists():

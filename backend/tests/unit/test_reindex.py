@@ -232,3 +232,116 @@ def test_reindex_renders_locator_context_same_as_ingestion(env: _Env) -> None:
     assert fts_text == expected
     assert fts_search(env.engine, "2025", 2) == ["chk_x"]
     assert read_manifest(env.manifest_path).index_text_version == 2
+
+
+# -- resumable reindex -----------------------------------------------------------
+
+_MANY = [_rec(f"chk_{i:02d}", f"document number {i} about topic {i}") for i in range(7)]
+
+
+class _Dies(FakeInferenceGateway):
+    """Embeds `ok_batches` batches, then raises (a kill / Ollama going away)."""
+
+    def __init__(self, ok_batches: int, exc: BaseException | None = None, **kw):
+        super().__init__(**kw)
+        self.ok_batches = ok_batches
+        self.exc = exc or InferenceUnavailableError("interrupted")
+
+    def embed_batch(self, texts):
+        if len(self.embed_batch_calls) >= self.ok_batches:
+            raise self.exc
+        return super().embed_batch(texts)
+
+
+def _scratch(env: _Env) -> Path:
+    return env.db_path.with_name("lancedb-reindex")
+
+
+@pytest.mark.parametrize("exc", [None, KeyboardInterrupt()])
+def test_interrupted_reindex_resumes_instead_of_restarting(env: _Env, exc) -> None:
+    env.build(_MANY)
+    old_manifest = read_manifest(env.manifest_path)
+    with pytest.raises((InferenceUnavailableError, KeyboardInterrupt)):
+        env.reindex(_Dies(2, exc, embed_dim=16), batch_size=2)
+    assert read_manifest(env.manifest_path) == old_manifest  # live index untouched
+    assert _scratch(env).exists()
+    assert sorted(env.vector._db.list_tables().tables) == ["chunks", "pages"]
+
+    gateway = FakeInferenceGateway(embed_dim=16)
+    result = env.reindex(gateway, batch_size=2)
+
+    embedded = [t for batch in gateway.embed_batch_calls for t in batch]
+    assert result.chunks == 7 and result.resumed_rows == 4
+    # only the 3 unfinished chunks (+ the page description) were embedded again
+    assert len([t for t in embedded if "document number" in t]) == 3
+    assert not _scratch(env).exists()
+    assert not _scratch(env).with_name("lancedb-reindex.json").exists()
+
+    # identical outcome to an uninterrupted run
+    fresh = FakeInferenceGateway(embed_dim=16)
+    rows = {r["chunk_id"]: r["vector"] for r in env.vector.table.to_arrow().to_pylist()}
+    assert sorted(rows) == sorted(r.chunk_id for r in _MANY)
+    assert env.vector.table.count_rows() == 7
+    assert read_manifest(env.manifest_path).embed_model == "m2"
+    assert vector_search(
+        env.vector.table, env.engine, fresh, "document number 3 about topic 3", 3, env.guard("m2")
+    )
+
+
+def test_resume_matches_uninterrupted_result_exactly(env: _Env, tmp_path: Path) -> None:
+    env.build(_MANY)
+    with pytest.raises(InferenceUnavailableError):
+        env.reindex(_Dies(3, embed_dim=16), batch_size=2)
+    env.reindex(FakeInferenceGateway(embed_dim=16), batch_size=2)
+    resumed = {r["chunk_id"]: r["vector"] for r in env.vector.table.to_arrow().to_pylist()}
+
+    (tmp_path / "other").mkdir()
+    other = _Env(env.engine, tmp_path / "other")
+    other.reindex(FakeInferenceGateway(embed_dim=16), batch_size=2)
+    straight = {r["chunk_id"]: r["vector"] for r in other.vector.table.to_arrow().to_pylist()}
+    assert resumed == straight
+
+
+def test_resume_discarded_when_model_changes(env: _Env) -> None:
+    env.build(_MANY)
+    with pytest.raises(InferenceUnavailableError):
+        env.reindex(_Dies(2, embed_dim=16), batch_size=2)
+    gateway = FakeInferenceGateway(embed_dim=24)
+    result = env.reindex(gateway, model="m3", batch_size=2)
+    assert result.resumed_rows == 0 and result.embed_dimension == 24
+    assert len([t for b in gateway.embed_batch_calls for t in b if "document number" in t]) == 7
+
+
+def test_resume_discarded_when_staged_rows_no_longer_match(env: _Env) -> None:
+    env.build(_MANY)
+    with pytest.raises(InferenceUnavailableError):
+        env.reindex(_Dies(2, embed_dim=16), batch_size=2)
+    with env.engine.begin() as conn:  # a staged chunk's text changes meanwhile
+        conn.execute(text("UPDATE chunks SET text = 'edited text' WHERE id = 'chk_01'"))
+    gateway = FakeInferenceGateway(embed_dim=16)
+    result = env.reindex(gateway, batch_size=2)
+    assert result.resumed_rows == 0
+    assert result.chunks == 7 and env.vector.table.count_rows() == 7
+
+
+def test_resume_survives_second_interruption_and_swap_phase_failure(env: _Env, monkeypatch) -> None:
+    env.build(_MANY)
+    with pytest.raises(InferenceUnavailableError):
+        env.reindex(_Dies(1, embed_dim=16), batch_size=2)
+    with pytest.raises(InferenceUnavailableError):
+        env.reindex(_Dies(1, embed_dim=16), batch_size=2)  # resumes 2 rows, embeds 2 more, dies
+    state = __import__("json").loads(_scratch(env).with_name("lancedb-reindex.json").read_text())
+    assert state["tables"]["chunks__reindex"]["rows"] == 4
+
+    def boom(*a, **k):
+        raise RuntimeError("fts write failed")
+
+    monkeypatch.setattr(reindex_module, "_rewrite_fts", boom)
+    gateway = FakeInferenceGateway(embed_dim=16)
+    with pytest.raises(RuntimeError):
+        env.reindex(gateway, batch_size=2)
+    monkeypatch.undo()
+    gateway2 = FakeInferenceGateway(embed_dim=16)
+    result = env.reindex(gateway2, batch_size=2)
+    assert result.resumed_rows == 8 and result.chunks == 7  # 7 chunks + 1 page, nothing left to embed
+    assert [t for b in gateway2.embed_batch_calls for t in b if "document number" in t] == []

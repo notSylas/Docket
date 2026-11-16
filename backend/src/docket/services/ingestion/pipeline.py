@@ -134,6 +134,7 @@ from docket.core.db.models import (
     SourceStatus,
     VersionStatus,
 )
+from docket.infra.evidence.originals import read_original_bytes
 from docket.infra.evidence.manager import EvidenceManager
 from docket.infra.index.manager import IndexManager
 from docket.infra.index.visual_index import LancePageIndexWriter
@@ -1236,20 +1237,35 @@ class IngestionPipeline:
             file_path = version.file_path
         family = recipe_family(file_path)
         store = self._evidence_manager.store
+        original: bytes | None = None
         if not store.exists(content_hash):
-            # Nothing has been changed yet: leave the version as it was.
-            return FileIngestResult(
-                path=candidate.path,
-                status="failed",
-                error=f"stored original is missing from the evidence store (content hash {content_hash[:12]})",
+            # Reference mode keeps no copy: re-chunk from the live file, but only
+            # while it still has exactly the indexed bytes.
+            with self._session_factory() as session:
+                row = session.get(EvidenceVersion, candidate.version_id)
+                size, mtime = row.byte_size, row.source_mtime
+            original = read_original_bytes(
+                store, content_hash=content_hash, file_path=file_path, byte_size=size, source_mtime=mtime
             )
+            if original is None:
+                # Nothing has been changed yet: leave the version as it was.
+                return FileIngestResult(
+                    path=candidate.path,
+                    status="failed",
+                    error=(
+                        "the original is no longer as it was indexed "
+                        f"(moved, deleted or changed; reference mode; content hash {content_hash[:12]})"
+                        if store.is_reference(content_hash)
+                        else f"stored original is missing from the evidence store (content hash {content_hash[:12]})"
+                    ),
+                )
         self._evidence_manager.mark_version_status(candidate.version_id, VersionStatus.PENDING)
         try:
             with tempfile.TemporaryDirectory(prefix="docket-rechunk-") as tmp:
                 # Keep the original basename: the xlsx context derives the
                 # fiscal-year label from the file name stem.
                 tmp_path = Path(tmp) / candidate.path.name
-                tmp_path.write_bytes(store.get(content_hash))
+                tmp_path.write_bytes(original if original is not None else store.get(content_hash))
                 parsed = self._parse_for_family(family, source_id, tmp_path)
             records = self._chunk_and_index_version(family, source_id, candidate.version_id, parsed)
         except Exception as exc:  # noqa: BLE001

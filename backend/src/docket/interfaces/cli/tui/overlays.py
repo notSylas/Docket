@@ -1339,6 +1339,8 @@ class EvidenceOverlay(Overlay):
         else:
             items.append(("Location", c.location or "Location not extracted for this passage", TEXT if c.location else "class:attention"))
             items.append(("Indexed", f"{c.indexed} · {c.version_label}", TEXT))
+            if c.original_note:
+                items.append(("Original", c.original_note, "class:attention"))
         claims = claims_for(a.text, self.cit + 1)
         for i, claim in enumerate(claims):
             items.append(("Supports" if i == 0 else "", f"\u201c{claim}\u201d", MUTED))

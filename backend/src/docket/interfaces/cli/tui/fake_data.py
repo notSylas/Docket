@@ -78,6 +78,10 @@ class FakeCitation:
     table_origin: str = ""
     cited: tuple[str, ...] = ()
     evidence_version_id: str = ""  # stable identity, distinct from the display ordinal
+    # Reference mode: "" or "stored"/"unchanged" mean the original matches the index;
+    # "changed"/"missing"/"unreadable" come with a plain-language `original_note`.
+    original_state: str = ""
+    original_note: str = ""
 
     @property
     def version_label(self) -> str:

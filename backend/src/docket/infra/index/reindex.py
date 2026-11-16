@@ -24,10 +24,24 @@ to their previous versions and the old manifest is untouched. A hard crash
 (kill -9) between swap steps is not rolled back automatically, but the
 manifest still names the old model, so queries refuse (rather than serve
 mixed spaces) until `docket reindex` is re-run.
+
+Resumable: the scratch tables live in a separate LanceDB directory next to the
+live one (`<lancedb>-reindex`), with a small checkpoint file beside it
+(`<lancedb>-reindex.json`). After each embedded batch the checkpoint records
+how many rows are staged and a digest of exactly what was embedded (model, row
+keys and index texts). An interrupted run (Ctrl-C, crash, Ollama down) leaves
+both in place; the next `docket reindex` re-verifies the staged prefix against
+the current rows and continues after it instead of re-embedding from zero. A
+changed model or any difference in the staged prefix discards the scratch and
+starts clean. They are removed after a successful swap.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
+import os
+import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -74,6 +88,7 @@ class ReindexResult:
     pages: int
     embed_model: str
     embed_dimension: int
+    resumed_rows: int = 0  # rows taken from an interrupted run's scratch tables
 
 
 def _open(db: Any, name: str):
@@ -81,6 +96,37 @@ def _open(db: Any, name: str):
         return db.open_table(name)
     except ValueError:  # lancedb has no dedicated "table not found" exception
         return None
+
+
+class _Checkpoint:
+    """Progress of the scratch tables, persisted atomically after every batch."""
+
+    def __init__(self, path: Path, embed_model: str) -> None:
+        self.path = path
+        self.embed_model = embed_model
+        self.tables: dict[str, dict] = {}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if data.get("embed_model") == embed_model and isinstance(data.get("tables"), dict):
+                self.tables = data["tables"]
+        except (OSError, ValueError, AttributeError):
+            pass
+
+    def record(self, table: str, rows: int, digest: str) -> None:
+        self.tables[table] = {"rows": rows, "digest": digest}
+        tmp = self.path.with_name(self.path.name + ".tmp")
+        tmp.write_text(json.dumps({"embed_model": self.embed_model, "tables": self.tables}), encoding="utf-8")
+        with open(tmp, "rb") as handle:
+            os.fsync(handle.fileno())
+        os.replace(tmp, self.path)
+
+    def clear(self) -> None:
+        self.path.unlink(missing_ok=True)
+
+
+def _row_digest(hasher: Any, key: tuple, index_text: str) -> None:
+    hasher.update(json.dumps([list(key), index_text], ensure_ascii=False).encode("utf-8"))
+    hasher.update(b"\n")
 
 
 def _build_staging(
@@ -91,17 +137,45 @@ def _build_staging(
     gateway: InferenceGateway,
     batch_size: int,
     sleep: Callable[[float], None],
-) -> int | None:
-    """Embed `texts` batch by batch into a fresh scratch table `name`
-    (rows[i] gets the vector of texts[i]). Returns the vector dimension, or
-    `None` if there was nothing to embed (no table is created)."""
+    *,
+    key_columns: tuple[str, ...] = ("chunk_id",),
+    checkpoint: _Checkpoint | None = None,
+) -> tuple[int | None, int]:
+    """Embed `texts` batch by batch into a scratch table `name` (rows[i] gets
+    the vector of texts[i]). Returns `(vector dimension or None if there was
+    nothing to embed, rows resumed from an earlier interrupted run)`.
+
+    With a `checkpoint`, a scratch table left by an interrupted run is reused
+    when its recorded prefix still matches `rows`/`texts` exactly; otherwise it
+    is dropped and the build starts from the first row."""
+    hasher = hashlib.sha256()
+    keys = [tuple(row[c] for c in key_columns) for row in rows]
     dimension: int | None = None
     staging = None
-    for start in range(0, len(rows), batch_size):
-        batch_rows = rows[start : start + batch_size]
+    start = 0
+    saved = checkpoint.tables.get(name) if checkpoint is not None else None
+    existing = _open(db, name)
+    if existing is not None:
+        usable = False
+        if saved and 0 < saved["rows"] <= len(rows):
+            n = saved["rows"]
+            prefix = hashlib.sha256()
+            for key, index_text in zip(keys[:n], texts[:n]):
+                _row_digest(prefix, key, index_text)
+            if prefix.hexdigest() == saved["digest"] and existing.count_rows() == n:
+                staged = existing.to_arrow().select(list(key_columns)).to_pylist()
+                usable = [tuple(r[c] for c in key_columns) for r in staged] == keys[:n]
+                if usable:
+                    staging, start = existing, n
+                    dimension = existing.schema.field("vector").type.list_size
+                    hasher = prefix
+        if not usable:
+            db.drop_table(name)
+    for start_at in range(start, len(rows), batch_size):
+        batch_rows = rows[start_at : start_at + batch_size]
         vectors = embed_texts(
             gateway,
-            texts[start : start + batch_size],
+            texts[start_at : start_at + batch_size],
             batch_size=batch_size,
             sleep=sleep,
         )
@@ -114,7 +188,12 @@ def _build_staging(
             staging = db.create_table(name, data=data, mode="overwrite")
         else:
             staging.add(data)
-    return dimension
+        end = start_at + len(batch_rows)
+        for key, index_text in zip(keys[start_at:end], texts[start_at:end]):
+            _row_digest(hasher, key, index_text)
+        if checkpoint is not None:
+            checkpoint.record(name, end, hasher.copy().hexdigest())
+    return dimension, start
 
 
 def reindex(
@@ -151,7 +230,13 @@ def _reindex_unlocked(
 
     sleep = sleep or time.sleep
     db = lancedb.connect(str(db_path))
+    # Scratch tables live in their own directory so the live database never lists
+    # them and an interrupted run can be resumed (see the module docstring).
+    scratch_dir = Path(db_path).with_name(Path(db_path).name + _STAGING_SUFFIX.replace("__", "-"))
+    checkpoint = _Checkpoint(scratch_dir.with_name(scratch_dir.name + ".json"), embed_model)
     chunks_staging, pages_staging = _CHUNKS + _STAGING_SUFFIX, _PAGES + _STAGING_SUFFIX
+    scratch = lancedb.connect(str(scratch_dir))
+    completed = False
 
     with engine.connect() as conn:
         chunk_rows = conn.execute(
@@ -184,9 +269,6 @@ def _reindex_unlocked(
 
     try:
         # Phase 1: build scratch tables. The live index is not touched.
-        for name in (chunks_staging, pages_staging):
-            if _open(db, name) is not None:
-                db.drop_table(name)
         chunk_dicts = [
             {
                 "chunk_id": r[0],
@@ -199,17 +281,20 @@ def _reindex_unlocked(
         # What is embedded and FTS-indexed carries the context prefix (same
         # function as ingestion); the stored `text` columns stay verbatim.
         index_texts = [index_text_for_chunk(r[4], r[5], r[6], r[3]) for r in chunk_rows]
-        dimension = _build_staging(
-            db, chunks_staging, chunk_dicts, index_texts, gateway, batch_size, sleep
+        dimension, resumed_chunks = _build_staging(
+            scratch, chunks_staging, chunk_dicts, index_texts, gateway, batch_size, sleep,
+            checkpoint=checkpoint,
         )
-        page_dimension = _build_staging(
-            db,
+        page_dimension, resumed_pages = _build_staging(
+            scratch,
             pages_staging,
             page_rows,
             [r["description"] for r in page_rows],
             gateway,
             batch_size,
             sleep,
+            key_columns=("evidence_version_id", "page_no"),
+            checkpoint=checkpoint,
         )
         if dimension is None:
             dimension = page_dimension
@@ -226,6 +311,7 @@ def _reindex_unlocked(
             vector_type = pa.list_(pa.float32(), dimension)
             _swap(
                 db,
+                scratch,
                 _CHUNKS,
                 chunks_staging,
                 pa.schema(
@@ -242,6 +328,7 @@ def _reindex_unlocked(
             )
             _swap(
                 db,
+                scratch,
                 _PAGES,
                 pages_staging,
                 pa.schema(
@@ -278,25 +365,28 @@ def _reindex_unlocked(
                 LanceIndexWriter(db_path).maintain(manifest_path=manifest_path)
             except Exception:  # noqa: BLE001
                 pass
+            completed = True
         except BaseException:
             for restore in reversed(undo):
                 restore()
             raise
     finally:
-        for name in (chunks_staging, pages_staging):
-            if _open(db, name) is not None:
-                db.drop_table(name)
+        if completed:
+            checkpoint.clear()
+            shutil.rmtree(scratch_dir, ignore_errors=True)
 
     return ReindexResult(
         chunks=len(chunk_dicts),
         pages=len(page_rows),
         embed_model=embed_model,
         embed_dimension=dimension,
+        resumed_rows=resumed_chunks + resumed_pages,
     )
 
 
 def _swap(
     db: Any,
+    scratch: Any,
     name: str,
     staging_name: str,
     empty_schema: pa.Schema,
@@ -308,7 +398,7 @@ def _swap(
     table when there are none), registering how to undo it. With `always`
     False and no scratch rows, the live table is left alone (it may not
     exist at all)."""
-    staging = _open(db, staging_name)
+    staging = _open(scratch, staging_name)
     if staging is None and not always:
         return
     live = _open(db, name)
