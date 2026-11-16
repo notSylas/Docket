@@ -1,6 +1,6 @@
 //! UI-independent logic: answer layout and state reduction. Unit-tested.
 
-use docket_proto::api::{AskResult, Citation, SourceInfo, StatusResponse, WorkerState};
+use docket_proto::api::{AskResult, Citation, Phase, SourceInfo, StatusResponse, WorkerState};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Segment<'a> {
@@ -92,6 +92,48 @@ impl Connection {
     }
 }
 
+/// The in-flight question: its phase and the answer text streamed so far.
+/// The text is NEVER trustworthy: citations are only checked after the last
+/// delta, so it is shown as a draft and dropped when the final answer (or an
+/// error) arrives.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Pending {
+    pub phase: Phase,
+    pub text: String,
+}
+
+impl Pending {
+    pub fn new() -> Self {
+        Self {
+            phase: Phase::Retrieving,
+            text: String::new(),
+        }
+    }
+
+    pub fn set_phase(&mut self, p: Phase) {
+        self.phase = p;
+    }
+
+    pub fn push_delta(&mut self, piece: &str) {
+        self.text.push_str(piece);
+    }
+
+    /// Text is a draft until the daemon says citations were validated.
+    pub fn is_draft(&self) -> bool {
+        !self.text.is_empty()
+    }
+
+    pub fn is_validating(&self) -> bool {
+        self.phase == Phase::Validating
+    }
+}
+
+impl Default for Pending {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub enum Message {
     User(String),
     Answer { result: AskResult, wall_s: f64 },
@@ -122,6 +164,28 @@ mod tests {
             chunk_id: "id".into(),
             excerpt: String::new(),
         }
+    }
+
+    #[test]
+    fn pending_accumulates_deltas_and_tracks_validation() {
+        let mut p = Pending::new();
+        assert!(!p.is_draft() && !p.is_validating());
+        p.set_phase(Phase::Answering);
+        p.push_delta("The rate ");
+        p.push_delta("is 2,650 [a#1].");
+        assert_eq!(p.text, "The rate is 2,650 [a#1].");
+        assert!(p.is_draft() && !p.is_validating());
+        p.set_phase(Phase::Validating);
+        assert!(p.is_validating());
+    }
+
+    #[test]
+    fn multibyte_deltas_concatenate_losslessly() {
+        let mut p = Pending::new();
+        for piece in ["EUR ", "2\u{202f}650", " \u{2014} ok"] {
+            p.push_delta(piece);
+        }
+        assert_eq!(p.text, "EUR 2\u{202f}650 \u{2014} ok");
     }
 
     #[test]

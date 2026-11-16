@@ -1,6 +1,6 @@
 use crate::backend::{Backend, Event};
-use crate::model::{self, Connection, Message, Segment};
-use docket_proto::api::{AskResult, Phase, SourceInfo, WorkerState};
+use crate::model::{self, Connection, Message, Pending, Segment};
+use docket_proto::api::{AskResult, SourceInfo, WorkerState};
 use eframe::egui::{self, Color32, RichText};
 use std::path::PathBuf;
 use std::time::Instant;
@@ -18,7 +18,7 @@ pub struct DocketApp {
     scope: Option<String>,
     input: String,
     messages: Vec<Message>,
-    asking: Option<(Phase, Instant)>,
+    asking: Option<(Pending, Instant)>,
     last_latency: Option<f64>,
     /// (message index, position in that answer's citation numbering)
     open_cite: Option<(usize, usize)>,
@@ -109,7 +109,12 @@ impl DocketApp {
                 Event::Sources(Err(e)) => self.sources_note = e,
                 Event::Phase(p) => {
                     if let Some((cur, _)) = &mut self.asking {
-                        *cur = p;
+                        cur.set_phase(p);
+                    }
+                }
+                Event::Delta(t) => {
+                    if let Some((cur, _)) = &mut self.asking {
+                        cur.push_delta(&t);
                     }
                 }
                 Event::Answer(r, wall) => {
@@ -139,7 +144,7 @@ impl DocketApp {
         }
         self.input.clear();
         self.messages.push(Message::User(q.clone()));
-        self.asking = Some((Phase::Retrieving, Instant::now()));
+        self.asking = Some((Pending::new(), Instant::now()));
         self.open_cite = None;
         self.backend.ask(q, self.scope.clone());
     }
@@ -386,10 +391,23 @@ impl DocketApp {
                     ui.add_space(SPACE / 2.0);
                 }
                 self.messages = msgs;
-                if let Some((phase, since)) = &self.asking {
+                if let Some((pending, since)) = &self.asking {
+                    if pending.is_draft() {
+                        // Streamed text is a draft: dim, plain (no citation
+                        // chips) and labelled until the daemon has validated it.
+                        egui::Frame::group(ui.style()).show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.label(RichText::new(pending.text.trim_start()).weak());
+                        });
+                    }
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label(format!("{} {:.0} s", phase.label(), since.elapsed().as_secs_f32()));
+                        let label = if pending.is_validating() {
+                            "Validating citations... (draft above is not yet verified)".to_string()
+                        } else {
+                            pending.phase.label().to_string()
+                        };
+                        ui.label(format!("{label} {:.0} s", since.elapsed().as_secs_f32()));
                     });
                     ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
                 }

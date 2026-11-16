@@ -13,7 +13,7 @@ import hashlib
 import logging
 import re
 import time
-from typing import Callable, Protocol, Sequence, runtime_checkable
+from typing import Callable, Iterable, Iterator, Protocol, Sequence, runtime_checkable
 
 import ollama as _ollama
 
@@ -29,6 +29,68 @@ _LEADING_THINK_RE = re.compile(r"\A\s*<think>.*?</think>\s*", re.DOTALL)
 def strip_think_block(text: str) -> str:
     """`text` without a leading `<think>...</think>` block (if any)."""
     return _LEADING_THINK_RE.sub("", text, count=1)
+
+
+class ThinkStreamFilter:
+    """Incremental `strip_think_block`: feed text pieces, get the visible text.
+
+    Only a *leading* `<think>...</think>` block is removed (same rule as
+    `strip_think_block`). Text is held back only while it could still turn out
+    to be the start of such a block; once it cannot be, everything flows
+    through unchanged. `flush()` releases whatever is still held at the end.
+    """
+
+    _OPEN = "<think>"
+    _CLOSE = "</think>"
+
+    def __init__(self) -> None:
+        self._buf = ""
+        self._state = "start"  # start -> (thinking ->) passthrough
+
+    def feed(self, piece: str) -> str:
+        if self._state == "passthrough":
+            return piece
+        if self._state == "trim":
+            piece = piece.lstrip()
+            if piece:
+                self._state = "passthrough"
+            return piece
+        self._buf += piece
+        if self._state == "start":
+            stripped = self._buf.lstrip()
+            if not stripped:
+                return ""
+            if stripped.startswith(self._OPEN):
+                self._state = "thinking"
+                self._buf = stripped[len(self._OPEN):]
+            elif self._OPEN.startswith(stripped):
+                return ""  # could still become "<think>"
+            else:
+                self._state = "passthrough"
+                out, self._buf = self._buf, ""
+                return out
+        if self._state == "thinking":
+            end = self._buf.find(self._CLOSE)
+            if end < 0:
+                return ""
+            rest = self._buf[end + len(self._CLOSE):]
+            self._buf = ""
+            self._state = "trim"
+            piece = rest
+        if self._state == "trim":
+            piece = piece.lstrip() if piece else ""
+            if piece:
+                self._state = "passthrough"
+            return piece
+        return ""
+
+    def flush(self) -> str:
+        """Held text at end of stream. An unterminated think block is dropped,
+        a held partial like "<thi" that never completed is released."""
+        out = self._buf if self._state == "start" else ""
+        self._buf = ""
+        self._state = "passthrough"
+        return out
 
 
 class InferenceError(Exception):
@@ -80,6 +142,20 @@ class InferenceGateway(Protocol):
         -- the returned description is never citable evidence and must never
         be shown to a user or flow into `validate_citations`/
         `EvidenceResolver`."""
+        ...
+
+
+@runtime_checkable
+class StreamingInferenceGateway(Protocol):
+    """Optional capability: incremental generation. Callers must check with
+    `isinstance(gateway, StreamingInferenceGateway)` and fall back to
+    `generate` when absent. Not part of `InferenceGateway` so existing
+    implementations stay valid."""
+
+    def generate_stream(self, *, system: str, prompt: str, **opts) -> Iterator[str]:
+        """Yields visible text pieces as they are generated (reasoning blocks
+        removed). Raises an `InferenceError` -- possibly after some pieces
+        were already yielded -- if generation fails."""
         ...
 
 
@@ -169,6 +245,11 @@ def _translate_error(exc: Exception, model: str) -> InferenceError:
     )
 
 
+def _chain(*iterables: Iterable) -> Iterator:
+    for it in iterables:
+        yield from it
+
+
 class OllamaGateway:
     """`InferenceGateway` backed by a local Ollama server."""
 
@@ -218,6 +299,47 @@ class OllamaGateway:
     def generate(self, *, system: str, prompt: str, **opts) -> str:
         response = self._generate_response(system=system, prompt=prompt, **opts)
         return strip_think_block(response["response"])
+
+    def generate_stream(self, *, system: str, prompt: str, **opts) -> Iterator[str]:
+        """Streaming twin of `generate`: same options and `think` handling,
+        yields text pieces. Errors (also mid-stream) become `InferenceError`."""
+        opts = dict(opts)
+        model = opts.pop("model", None) or self.gen_model
+        options = dict(opts.get("options") or {})
+        options.setdefault("num_ctx", settings.num_ctx)
+        options.setdefault("num_predict", settings.num_predict)
+        opts["options"] = options
+        if opts.get("think") is not None and model in self._think_unsupported:
+            opts.pop("think")
+        think_filter = ThinkStreamFilter()
+
+        def open_stream(call_opts: dict):
+            it = iter(_ollama.generate(model=model, system=system, prompt=prompt, stream=True, **call_opts))
+            # The request is sent lazily; pull the first chunk here so a
+            # rejected option surfaces before anything is yielded.
+            first = next(it, None)
+            return first, it
+
+        try:
+            try:
+                first, it = open_stream(opts)
+            except _ollama.ResponseError as exc:
+                if opts.get("think") is None or "think" not in str(getattr(exc, "error", exc)).lower():
+                    raise
+                logger.warning("model %r rejected think=%r (%s); retrying without it", model, opts["think"], exc)
+                self._think_unsupported.add(model)
+                opts.pop("think")
+                first, it = open_stream(opts)
+            chunks: Iterable = ([] if first is None else [first])
+            for chunk in _chain(chunks, it):
+                piece = think_filter.feed(chunk["response"] or "")
+                if piece:
+                    yield piece
+            tail = think_filter.flush()
+            if tail:
+                yield tail
+        except Exception as exc:
+            raise _translate_error(exc, model) from exc
 
     def embed(self, text: str) -> list[float]:
         try:
@@ -274,10 +396,17 @@ class FakeInferenceGateway:
         canned_response: str | None = None,
         embed_dim: int = 32,
         canned_description: str | None = None,
+        stream_pieces: Sequence[str] | None = None,
+        stream_error: Exception | None = None,
     ):
         self.canned_response = canned_response
         self.embed_dim = embed_dim
         self.canned_description = canned_description
+        # Streaming double: `stream_pieces` (default: the canned response in
+        # 4-char pieces) are yielded in order; `stream_error`, if set, is
+        # raised after them (mid-stream failure).
+        self.stream_pieces = list(stream_pieces) if stream_pieces is not None else None
+        self.stream_error = stream_error
         self.generate_calls: list[dict] = []
         self.embed_calls: list[str] = []
         self.embed_batch_calls: list[list[str]] = []
@@ -288,6 +417,16 @@ class FakeInferenceGateway:
         if self.canned_response is not None:
             return self.canned_response
         return f"[fake response to: {prompt}]"
+
+    def generate_stream(self, *, system: str, prompt: str, **opts) -> Iterator[str]:
+        self.generate_calls.append({"system": system, "prompt": prompt, "stream": True, **opts})
+        pieces = self.stream_pieces
+        if pieces is None:
+            text = self.canned_response if self.canned_response is not None else f"[fake response to: {prompt}]"
+            pieces = [text[i : i + 4] for i in range(0, len(text), 4)]
+        yield from pieces
+        if self.stream_error is not None:
+            raise self.stream_error
 
     def embed(self, text: str) -> list[float]:
         self.embed_calls.append(text)

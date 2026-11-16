@@ -43,7 +43,12 @@ from docket.services.agent.run_context import (
 )
 from docket.core.config import Settings
 from docket.core.config import settings as default_settings
-from docket.infra.inference.gateway import InferenceGateway
+from docket.infra.inference.gateway import (
+    InferenceError,
+    InferenceGateway,
+    StreamingInferenceGateway,
+    strip_think_block,
+)
 from docket.services.query.classifier import HeuristicQueryClassifier, QueryClassifier, QueryMode
 from docket.services.query.trust import AbstentionReason
 from docket.services.query.conversation import ConversationTurn, format_history_block, trim_history
@@ -366,6 +371,7 @@ class QueryService:
         scope: QueryScope | None = None,
         *,
         on_progress: Callable[[str], None] | None = None,
+        on_delta: Callable[[str], None] | None = None,
     ) -> QueryResult:
         """Answer `question`, routing to FAST or AGENT.
 
@@ -391,6 +397,15 @@ class QueryService:
         `on_progress` optionally receives phase names before work starts. Its
         failures are ignored. Timings include exclusive phases and overhead
         in seconds, with skipped phases at zero.
+
+        `on_delta` optionally receives the answer text as the model generates
+        it (FAST path, when the gateway can stream; otherwise it is simply
+        never called). The streamed text is UNVALIDATED: citations are checked
+        only after generation ends, so the returned `QueryResult.answer` is the
+        only text a caller may present as final -- it can differ from the
+        concatenated deltas (abstention on invalid citations, repair, latex
+        normalization). Its failures are ignored; a generation failure
+        mid-stream raises exactly as the non-streaming call would.
         """
         with phase("scope_resolve"):
             if mode is None:
@@ -410,7 +425,7 @@ class QueryService:
         result = (
             self._ask_agent(question, trimmed, run, **kwargs)
             if mode == QueryMode.AGENT
-            else self._ask_fast(question, trimmed, **kwargs)
+            else self._ask_fast(question, trimmed, on_delta=on_delta, **kwargs)
         )
         # Deterministic belt-and-suspenders for the system prompt's "no
         # LaTeX" instruction (see `docket.services.query.latex`'s docstring for why):
@@ -516,6 +531,7 @@ class QueryService:
         question: str,
         history: list[ConversationTurn] | None = None,
         boundary: ResolvedScope | None = None,
+        on_delta: Callable[[str], None] | None = None,
     ) -> QueryResult:
         # Follow-up rewrite: never on the first turn. The agent path computes
         # the same rewrite once per run (see `_ask_agent`).
@@ -657,7 +673,7 @@ class QueryService:
             )
 
         with phase("generation"):
-            answer = self._gateway.generate(system=system, prompt=prompt, **self._answer_opts())
+            answer = self._generate_answer(system, prompt, on_delta)
 
         result = self._finalize_answer(
             question=question, answer=answer, resolved=resolved,
@@ -880,6 +896,34 @@ class QueryService:
         if candidate == question.strip():
             return None
         return candidate
+
+    def _generate_answer(
+        self, system: str, prompt: str, on_delta: Callable[[str], None] | None
+    ) -> str:
+        """First answer generation. Streams to `on_delta` when asked to and the
+        gateway supports it; otherwise identical to a plain `generate`. A stream
+        that fails before its first piece falls back to a plain call; one that
+        fails after text was shown re-raises (the caller discards the partial)."""
+        if on_delta is None or not isinstance(self._gateway, StreamingInferenceGateway):
+            return self._gateway.generate(system=system, prompt=prompt, **self._answer_opts())
+        pieces: list[str] = []
+        try:
+            for piece in self._gateway.generate_stream(
+                system=system, prompt=prompt, **self._answer_opts()
+            ):
+                if not piece:
+                    continue
+                pieces.append(piece)
+                try:
+                    on_delta(piece)
+                except Exception:  # noqa: BLE001 - display callbacks never alter the answer
+                    pass
+        except InferenceError:
+            if pieces:
+                raise
+            logger.warning("answer stream failed before any text; retrying without streaming")
+            return self._gateway.generate(system=system, prompt=prompt, **self._answer_opts())
+        return strip_think_block("".join(pieces))
 
     def _answer_opts(self) -> dict[str, Any]:
         """Sampling for the answering path (fast path and citation repair)."""

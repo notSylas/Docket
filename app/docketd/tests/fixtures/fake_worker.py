@@ -73,6 +73,10 @@ for line in sys.stdin:
         else:
             for p in ("retrieving", "retrieving", "reading", "answering"):
                 progress(i, p)
+            if params.get("stream") is True:
+                for t in ("The rate ", "is 2,650 ", "[rates.txt#1]."):
+                    send({"jsonrpc": "2.0", "method": "delta", "params": {"text": t, "id": i}})
+                progress(i, "validating")
             send({"jsonrpc": "2.0", "id": i, "result": RESULT})
     else:
         send({"jsonrpc": "2.0", "id": i, "error": {"code": -32601, "message": "method not found"}})
