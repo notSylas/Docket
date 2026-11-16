@@ -710,6 +710,41 @@ def sources_list() -> None:
         )
 
 
+@sources_app.command("skipped")
+def sources_skipped(
+    source_ref: str = typer.Argument(None, help="Source name, list number or id (default: all sources)."),
+) -> None:
+    """List files the last ingest did not index, with the reason for each.
+
+    Counts by reason, then one line per file (path and reason only; no
+    document contents)."""
+    from docket.services.ingestion.skips import latest_report, reason_text
+
+    context = build_context()
+    if source_ref:
+        targets = [_resolve_ref(context, source_ref)]
+    else:
+        targets = list(ordered_sources(context.source_manager.list_sources()))
+    if not targets:
+        typer.echo("No sources registered.")
+        return
+    for source in targets:
+        report = latest_report(context.session_factory, source.id, Path(source.path))
+        typer.echo(f"{source.path}")
+        if report is None:
+            typer.echo("  No skipped-files report yet. Run `docket ingest` first.")
+            continue
+        total = sum(report.counts.values())
+        if total == 0:
+            typer.echo("  Every file was indexed.")
+            continue
+        typer.echo(f"  {total} not indexed:")
+        for code, n in sorted(report.counts.items(), key=lambda kv: (-kv[1], kv[0])):
+            typer.echo(f"    {n:>6}  {reason_text(code)}")
+        for item in report.files:
+            typer.echo(f"  {item.path}  [{item.reason}]")
+
+
 @sources_app.command("prune")
 def sources_prune(
     source_ref: str = typer.Argument(..., help="Source name, list number or id to prune."),

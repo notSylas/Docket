@@ -799,6 +799,7 @@ class IngestionPipeline:
             extensions=DISCOVERABLE_EXTENSIONS,
             enabled=bool(getattr(self._settings, "ingest_ignore_enabled", True)),
             extra_rules=rules_json,
+            track_skips=True,
         )
 
     def _require_converter(self, path: Path) -> None:
@@ -1634,6 +1635,10 @@ class IngestionPipeline:
             files = list(dict.fromkeys(discovery.files))
             job_files = JobFiles(self._session_factory)
             job_files.prepare(job_id, files)
+            discovered_skips = [(p, UNSUPPORTED_TYPE) for p in discovery.unsupported] + [
+                (p, INVALID_FILE) for p in discovery.invalid
+            ]
+            job_files.record_skipped(job_id, discovered_skips)
             total = len(files)
             for index, path in enumerate(files, start=1):
                 self._prefetch(source_id, files, index - 1)
@@ -1694,15 +1699,22 @@ class IngestionPipeline:
 
         root_path = Path(source.path)
         skipped_files = [
+            SkippedFile(relative_path(p, root_path), code) for p, code in discovered_skips
+        ] + [
             SkippedFile(relative_path(r.path, root_path), r.skip_reason)
             for r in file_results
             if r.skip_reason and r.status in ("skipped", "failed")
         ]
         skipped_by_reason = count_by_reason(skipped_files)
+        if discovery.unsupported_other:
+            skipped_by_reason[UNSUPPORTED_OTHER] = discovery.unsupported_other
+        if discovery.files_skipped:
+            skipped_by_reason[IGNORED] = discovery.files_skipped
         stats = {
             "files_processed": files_processed,
             "files_failed": files_failed,
             "chunks_written": sum(r.chunks_written for r in file_results),
+            "skipped_counts": skipped_by_reason,
         }
 
         self._finalize_job(job_id, job_status, error, stats)
