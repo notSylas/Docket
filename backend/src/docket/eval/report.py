@@ -275,8 +275,8 @@ def build_report(
 
     unanswerable = [(q, r, s) for q, r, s in pairs if not q.answerable and not r.error]
     answerable = [(q, r, s) for q, r, s in pairs if q.answerable and not r.error]
-    abstained_all = [(q, r, s) for q, r, s in pairs if s.abstained and not r.error]
-    correct_abstain = sum(s.abstained for _, _, s in unanswerable)
+    abstained_all = [(q, r, s) for q, r, s in pairs if (s.abstained or s.cited_absence) and not r.error]
+    correct_abstain = sum(s.abstained or s.cited_absence for _, _, s in unanswerable)
 
     failures: dict[str, int] = dict.fromkeys(FAILURE_CATEGORIES, 0)
     failures_by_type: dict[str, dict[str, int]] = {}

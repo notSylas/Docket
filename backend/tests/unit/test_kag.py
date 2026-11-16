@@ -283,3 +283,27 @@ def test_service_kag_no_entity_falls_back_to_global_only(lib, monkeypatch):
     r = svc.ask("Which agreements restrict assignment?", mode=QueryMode.FAST)
     assert len(calls) == 1 and "scope_version_ids" not in calls[0]
     assert r.doc_layer["kag"]["mode"] == "none"
+
+
+def test_absent_note_names_real_citation_and_forbids_abstention(lib):
+    e, _ = lib
+    p = kag.plan(e, "How often may a party audit the books under the agreement with Bloom Energy Corporation?")
+
+    class RC:
+        def __init__(self, v, l):
+            self.evidence_version_id, self.citation_label = v, l
+
+    resolved = [RC("ev_z", "[Z #1]"), RC("ev_b", "[B #2]"), RC("ev_b", "[B #3]")]
+    tag = kag.pick_cite_label(p, resolved)
+    assert tag == "[B #2]"  # first excerpt of the planned document, never another document's
+    note = kag.absent_note(p, tag)
+    assert "contains no audit rights provision" in note and "[B #2]" in note and "do NOT reply with the abstention" in note
+    assert "[Z #1]" not in note
+
+
+def test_absent_note_without_shown_excerpt_does_not_invent_a_citation(lib):
+    e, _ = lib
+    p = kag.plan(e, "How often may a party audit the books under the agreement with Bloom Energy Corporation?")
+    assert kag.pick_cite_label(p, []) is None
+    note = kag.absent_note(p, None)
+    assert "abstention" not in note and "citation tag" not in note

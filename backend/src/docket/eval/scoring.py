@@ -117,6 +117,48 @@ def contains_refusal(answer: str) -> bool:
     return normalize_text(ABSTENTION_PHRASE) in normalize_text(answer)
 
 
+_ABSENCE_RE = re.compile(
+    r"\b(?:contains?|has|have|includes?|specif(?:y|ies)|addresses|provides?|states?|mentions?)\s+no\b"
+    r"|\bdoes\s+not\s+(?:contain|include|specify|address|provide|mention|state|have|set\s+out)\b"
+    r"|\bno\s+(?:such\s+)?[\w\s-]{0,40}?(?:clause|provision|information|requirement|term)\b"
+    r"|\bnot\s+(?:found|present)\b"
+)
+_HEDGE_RE = re.compile(r"\b(?:however|but|although|except|unless|typically|generally|usually)\b")
+
+
+def _doc_basename(path: str) -> str:
+    return path.replace("\\", "/").rsplit("/", 1)[-1]
+
+
+def _strip_doc_names(text: str) -> str:
+    """Drop file-name-like tokens (they carry digits that are not answer values)."""
+    return " ".join(t for t in text.split() if "_" not in t and not re.search(r"\.\w{2,4}$", t))
+
+
+def is_cited_absence(question: Question, record: RunRecord) -> bool:
+    """A cited "the named document contains no such provision" answer to an unanswerable
+    question about a named document. Deterministic: the answer must (1) not be the abstention
+    sentence, (2) state absence plainly, (3) carry a valid citation of a retrieved excerpt of the
+    named document, and (4) state no value (no digits, no hedged continuation)."""
+    if question.answerable or question.type.value in ("revoked", "out_of_corpus") or not question.source_documents:
+        return False
+    if record_abstained(record) or contains_refusal(record.answer):
+        return False
+    cited_ids = [c.chunk_id for c in record.citations]
+    retrieved_ids = [c.chunk_id for c in record.retrieved]
+    if not check_citations(cited_ids, retrieved_ids, record.validation_warnings).ok:
+        return False
+    wanted = {normalize_text(_doc_basename(d)) for d in question.source_documents}
+    if not any(normalize_text(c.source_display_name) in wanted for c in record.citations):
+        return False
+    text = normalize_text(_strip_doc_names(strip_citations(record.answer)))
+    if not text or not _ABSENCE_RE.search(text) or _HEDGE_RE.search(text):
+        return False
+    if any(ch.isdigit() for ch in text) or "$" in text or "%" in text:
+        return False  # a value was stated: fabricated for an unanswerable question
+    return not check_must_not_contain(record.answer, question.must_not_contain)
+
+
 # -- citations -------------------------------------------------------------
 
 
@@ -233,6 +275,7 @@ class RunScore:
     verdict: Verdict
     reasons: list[str] = field(default_factory=list)
     abstained: bool = False
+    cited_absence: bool = False  # passed via a cited "no such provision" answer, not the abstention sentence
     missing_facts: list[str] = field(default_factory=list)
     forbidden_found: list[str] = field(default_factory=list)
     enumeration_found: int = 0
@@ -255,7 +298,8 @@ def score_run(question: Question, record: RunRecord) -> RunScore:
 
     Answerable: all required facts present, no forbidden fact, every
     enumeration item, >=1 citation and every cited chunk in the retrieved set,
-    and a cited chunk that carries a gold span. Unanswerable: exactly abstains.
+    and a cited chunk that carries a gold span. Unanswerable: exactly abstains, or
+    states a cited absence of the provision from the named document (no value).
     Cases regex cannot settle come back as NEEDS_JUDGE.
     """
     chunk_texts = [c.text for c in record.retrieved]
@@ -286,6 +330,9 @@ def score_run(question: Question, record: RunRecord) -> RunScore:
     if not question.answerable:
         if score.abstained:
             score.verdict = Verdict.PASS
+        elif is_cited_absence(question, record):
+            score.verdict = Verdict.PASS
+            score.cited_absence = True
         else:
             score.reasons.append("answered an unanswerable question instead of abstaining")
         return score

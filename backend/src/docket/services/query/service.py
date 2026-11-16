@@ -662,7 +662,7 @@ class QueryService:
                     )
 
         if kag_plan is not None and kag_plan.clause_absent:
-            system += kag_graph.absent_note(kag_plan)
+            system += kag_graph.absent_note(kag_plan, kag_graph.pick_cite_label(kag_plan, resolved))
 
         # Flagged deterministic compute stage: default off, and then nothing
         # below differs from the previous behaviour.

@@ -293,3 +293,51 @@ def test_revoked_leak_flag(make_record):
 def test_run_error_fails(make_record):
     score = score_run(_q(), make_record(error="InferenceUnavailableError: down"))
     assert score.verdict is Verdict.FAIL and "run error" in score.reasons[0]
+
+
+# -- cited absence for unanswerable questions about a named document -----------
+
+
+def _absent_q():
+    return Question(
+        id="n", type="single_fact", question="What insurance must be kept under the Dev Agreement?",
+        answerable=False, source_documents=["contracts/f"],
+    )
+
+
+def test_cited_absence_passes(make_record):
+    rec = make_record(answer="The f contains no insurance provision. [f #c0]", chunks=["Some text"], cited=[0])
+    score = score_run(_absent_q(), rec)
+    assert score.verdict is Verdict.PASS and score.cited_absence and not score.abstained
+
+
+def test_absence_without_citation_fails(make_record):
+    rec = make_record(answer="The f contains no insurance provision.", chunks=["Some text"])
+    assert score_run(_absent_q(), rec).verdict is Verdict.FAIL
+
+
+def test_absence_citing_other_document_fails(make_record):
+    q = Question(id="n", type="single_fact", question="Q?", answerable=False, source_documents=["contracts/other"])
+    rec = make_record(answer="The other contains no insurance provision. [f #c0]", chunks=["x"], cited=[0])
+    assert score_run(q, rec).verdict is Verdict.FAIL
+
+
+def test_absence_with_fabricated_value_fails(make_record):
+    for answer in (
+        "The f contains no insurance provision, but typically coverage is kept. [f #c0]",
+        "The f contains no insurance provision; the minimum is $1,000,000. [f #c0]",
+        "The f contains no insurance provision beyond 30 days notice. [f #c0]",
+    ):
+        rec = make_record(answer=answer, chunks=["x"], cited=[0])
+        assert score_run(_absent_q(), rec).verdict is Verdict.FAIL
+
+
+def test_plain_value_answer_still_fails_and_abstention_still_passes(make_record):
+    assert score_run(_absent_q(), make_record(answer="At least 5 million dollars [f #c0]", chunks=["x"], cited=[0])).verdict is Verdict.FAIL
+    assert score_run(_absent_q(), make_record(answer=ABSTENTION_PHRASE)).verdict is Verdict.PASS
+
+
+def test_wrongful_abstention_still_counts_and_absence_not_accepted_on_answerable(make_record):
+    rec = make_record(answer="The f contains no vacation provision. [f #c0]", chunks=[CHUNK], cited=[0])
+    assert score_run(_q(source_documents=["f"]), rec).verdict is Verdict.FAIL
+    assert score_run(_q(), make_record(answer=ABSTENTION_PHRASE)).abstained
