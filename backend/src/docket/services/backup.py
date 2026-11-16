@@ -78,6 +78,15 @@ def _index_raw(root: Path):
         raise BackupError("The index manifest is missing or damaged.") from exc
 
 
+def _is_reference(root: Path, digest: str) -> bool:
+    """True when the evidence manifest says this content is held by reference."""
+    manifest = root / "evidence_store" / "manifests" / digest[:2] / f"{digest}.json"
+    try:
+        return json.loads(manifest.read_text(encoding="utf-8")).get("storage") == "reference"
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
 def check_library(root: Path, *, expected_index=None, expected_revision=None) -> str:
     """Check original references and vector metadata locally, without models."""
     try:
@@ -95,6 +104,8 @@ def check_library(root: Path, *, expected_index=None, expected_revision=None) ->
                 if not isinstance(digest, str) or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
                     raise BackupError("A stored original has an invalid content hash.")
                 path = root / "evidence_store" / "objects" / digest[:2] / digest
+                if not path.exists() and _is_reference(root, digest):
+                    continue  # reference mode: the original stays in the user's folder
                 if not path.is_file() or path.is_symlink() or _hash(path) != digest:
                     raise BackupError(f"A READY document's original is missing or damaged: {digest[:12]}.")
             ready_chunks = db.execute(

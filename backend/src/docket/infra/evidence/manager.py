@@ -18,7 +18,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from docket.core.db.models import EvidenceVersion, VersionStatus
 from docket.infra.evidence.references import add_blob_reference
-from docket.infra.evidence.store import ContentAddressedStore
+from docket.infra.evidence.originals import OriginalStatus, check_original, read_original_bytes
+from docket.infra.evidence.store import ContentAddressedStore, ObjectNotFoundError
 
 
 def _utcnow() -> datetime:
@@ -28,9 +29,19 @@ def _utcnow() -> datetime:
 class EvidenceManager:
     """Ingests files into the evidence store and tracks their versions."""
 
-    def __init__(self, store: ContentAddressedStore, session_factory: sessionmaker) -> None:
+    def __init__(
+        self,
+        store: ContentAddressedStore,
+        session_factory: sessionmaker,
+        *,
+        reference_mode: bool = False,
+    ) -> None:
         self.store = store
         self.session_factory = session_factory
+        # Reference mode (opt-in): do not copy the original into the store; keep
+        # path + content hash + size + mtime and rely on the live file. Indexed
+        # text/chunks are unaffected. See infra.evidence.originals.
+        self.reference_mode = reference_mode
 
     def _current_version(
         self, session: Session, source_id: str, file_path: str
@@ -75,6 +86,15 @@ class EvidenceManager:
         if snapshot is None:
             # Stream the hash: large files are never held in memory.
             content_hash, byte_size = self.store.hash_file(path)
+            if self.reference_mode:
+                try:
+                    after = path.stat()
+                except OSError:
+                    after = None
+                if after is None or after.st_size != byte_size or (
+                    source_mtime is not None and after.st_mtime != source_mtime
+                ):
+                    raise OSError(f"{path} changed while it was being ingested")
         else:
             content_hash = hashlib.sha256(snapshot).hexdigest()
             byte_size = len(snapshot)
@@ -113,7 +133,10 @@ class EvidenceManager:
                 session.add(current)
 
             # Store bytes (globally deduped; no-op if content already exists).
-            if snapshot is None:
+            by_reference = self.reference_mode and snapshot is None
+            if by_reference:
+                pass  # bytes stay in the user's folder
+            elif snapshot is None:
                 stored_hash = self.store.put_file(path)
                 if stored_hash != content_hash:
                     raise OSError(f"{path} changed while it was being ingested")
@@ -126,6 +149,8 @@ class EvidenceManager:
                 "mime_type": mime_type,
                 "original_filename": path.name,
             }
+            if by_reference and not self.store.exists(content_hash):
+                manifest["storage"] = "reference"
             self.store.write_manifest(content_hash, manifest)
 
             evidence_version = EvidenceVersion(
@@ -220,4 +245,24 @@ class EvidenceManager:
             session.commit()
 
     def get_evidence_bytes(self, evidence_version: EvidenceVersion) -> bytes:
-        return self.store.get(evidence_version.content_hash)
+        if self.store.exists(evidence_version.content_hash):
+            return self.store.get(evidence_version.content_hash)
+        data = read_original_bytes(
+            self.store,
+            content_hash=evidence_version.content_hash,
+            file_path=evidence_version.file_path,
+            byte_size=evidence_version.byte_size,
+            source_mtime=evidence_version.source_mtime,
+        )
+        if data is None:
+            raise ObjectNotFoundError(evidence_version.content_hash)
+        return data
+
+    def original_status(self, evidence_version: EvidenceVersion) -> OriginalStatus:
+        return check_original(
+            self.store,
+            content_hash=evidence_version.content_hash,
+            file_path=evidence_version.file_path,
+            byte_size=evidence_version.byte_size,
+            source_mtime=evidence_version.source_mtime,
+        )

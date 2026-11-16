@@ -593,6 +593,8 @@ class RealBackend:
         return None  # the pipeline already recorded the outcome
 
     def open_original_note(self, citation: CitationView) -> str:
+        if citation.original_note:
+            return citation.original_note
         return "Opening the original file is not available yet."
 
     # -- indexing ------------------------------------------------------------
@@ -1132,6 +1134,7 @@ class RealBackend:
         meta: dict[str, tuple[str | None, datetime, str, str, str]] = {}
         history: dict[tuple[str, str | None], list[str]] = {}
         names: dict[str, str] = {}
+        originals: dict[str, Any] = {}
         version_ids = sorted({e.evidence_version_id for e in resolved.values()})
         if version_ids:
             with ctx.session_factory() as session:
@@ -1142,6 +1145,13 @@ class RealBackend:
                 ).all()
                 for vid, file_path, observed, chash, root, sid in rows:
                     meta[vid] = (file_path, observed, chash, root, sid)
+                for version in session.execute(
+                    select(EvidenceVersion).where(EvidenceVersion.id.in_(version_ids))
+                ).scalars():
+                    try:
+                        originals[version.id] = ctx.evidence_manager.original_status(version)
+                    except Exception:  # noqa: BLE001 -- a display nicety must not break answers
+                        pass
                 pairs = {(m[4], m[0]) for m in meta.values()}
                 for sid, fpath in pairs:
                     ids_in_order = session.execute(
@@ -1192,6 +1202,10 @@ class RealBackend:
                     chunk_id=c.chunk_id,
                     source=source_name,
                     evidence_version_id=ev.evidence_version_id,
+                    original_state=originals[ev.evidence_version_id].state.value
+                    if ev.evidence_version_id in originals else "",
+                    original_note=originals[ev.evidence_version_id].note
+                    if ev.evidence_version_id in originals else "",
                 )
             )
         return out
