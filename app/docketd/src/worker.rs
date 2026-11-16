@@ -374,7 +374,7 @@ async fn read_response(
                 };
             }
             Ok(Incoming::Notification { method, params }) => {
-                if method == "progress" {
+                if method == "progress" || method == "delta" {
                     if let Some(tx) = &progress {
                         let _ = tx.send(params);
                     }

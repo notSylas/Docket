@@ -176,6 +176,10 @@ fn parse_ask(body: &Bytes) -> Result<AskRequest, &'static str> {
     Ok(req)
 }
 
+fn delta_of(params: &Value) -> Option<&str> {
+    params.get("text")?.as_str()
+}
+
 fn phase_of(params: &Value) -> Option<Phase> {
     Phase::parse(params.get("phase")?.as_str()?)
 }
@@ -223,6 +227,11 @@ async fn ask(
         .is_some_and(|v| v.contains("text/event-stream"));
 
     if !wants_sse {
+        // Plain JSON has nowhere to put deltas: never ask the worker to stream.
+        let req = AskRequest {
+            stream: false,
+            ..req
+        };
         let out = run_ask(&st, &req, None).await;
         drop(permit);
         return match out {
@@ -254,9 +263,21 @@ async fn ask(
         send_phase(&etx, Phase::Retrieving).await;
         let (ptx, mut prx) = mpsc::unbounded_channel::<Value>();
         let fwd_tx = etx.clone();
+        let want_deltas = req.stream;
         let fwd = tokio::spawn(async move {
             let mut last = Phase::Retrieving;
             while let Some(p) = prx.recv().await {
+                if want_deltas {
+                    if let Some(text) = delta_of(&p) {
+                        if let Ok(ev) = Event::default()
+                            .event("delta")
+                            .json_data(serde_json::json!({ "text": text }))
+                        {
+                            let _ = fwd_tx.send(Ok(ev)).await;
+                        }
+                        continue;
+                    }
+                }
                 if let Some(ph) = phase_of(&p) {
                     if ph != last && ph != Phase::Done {
                         last = ph;

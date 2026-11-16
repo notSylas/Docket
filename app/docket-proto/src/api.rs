@@ -10,6 +10,9 @@ pub enum Phase {
     Retrieving,
     Reading,
     Answering,
+    /// Streaming only: the answer text is complete and its citations are being
+    /// checked against the evidence. The streamed text is not yet trustworthy.
+    Validating,
     Done,
 }
 
@@ -19,6 +22,7 @@ impl Phase {
             "retrieving" => Some(Self::Retrieving),
             "reading" => Some(Self::Reading),
             "answering" => Some(Self::Answering),
+            "validating" => Some(Self::Validating),
             "done" => Some(Self::Done),
             _ => None,
         }
@@ -29,6 +33,7 @@ impl Phase {
             Self::Retrieving => "Searching...",
             Self::Reading => "Reading evidence...",
             Self::Answering => "Writing answer...",
+            Self::Validating => "Validating citations...",
             Self::Done => "Done",
         }
     }
@@ -49,6 +54,10 @@ pub struct AskRequest {
     pub question: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<Scope>,
+    /// Ask for `delta` events (the answer as it is generated, unvalidated)
+    /// on the SSE stream. Absent or false: behaviour is unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stream: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -144,10 +153,94 @@ pub struct ApiError {
     pub error: ErrorBody,
 }
 
+/// One decoded server-sent event of `POST /v1/ask`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AskEvent {
+    Phase(Phase),
+    /// A piece of the answer text. Unvalidated until `Result` arrives.
+    Delta(String),
+    /// Final, authoritative answer; replaces any streamed text.
+    Result(Box<AskResult>),
+    Error(String),
+}
+
+/// Decode an SSE event by name and data. `None` for unknown events and for
+/// malformed data, so a newer daemon never breaks an older client.
+pub fn parse_ask_event(event: &str, data: &str) -> Option<AskEvent> {
+    match event {
+        "phase" => {
+            let v: serde_json::Value = serde_json::from_str(data).ok()?;
+            Phase::parse(v.get("phase")?.as_str()?).map(AskEvent::Phase)
+        }
+        "delta" => {
+            let v: serde_json::Value = serde_json::from_str(data).ok()?;
+            Some(AskEvent::Delta(v.get("text")?.as_str()?.to_string()))
+        }
+        "result" => serde_json::from_str(data)
+            .ok()
+            .map(|r| AskEvent::Result(Box::new(r))),
+        "error" => Some(AskEvent::Error(
+            serde_json::from_str::<ApiError>(data)
+                .map(|e| e.error.message)
+                .unwrap_or_else(|_| "the question could not be answered".into()),
+        )),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn parses_ask_events() {
+        assert_eq!(
+            parse_ask_event("phase", r#"{"phase":"validating"}"#),
+            Some(AskEvent::Phase(Phase::Validating))
+        );
+        assert_eq!(
+            parse_ask_event("delta", r#"{"text":"2,6"}"#),
+            Some(AskEvent::Delta("2,6".into()))
+        );
+        assert!(matches!(
+            parse_ask_event("result", r#"{"answer":"a","abstained":false}"#),
+            Some(AskEvent::Result(_))
+        ));
+        assert_eq!(
+            parse_ask_event(
+                "error",
+                r#"{"error":{"code":"x","message":"boom","request_id":"r"}}"#
+            ),
+            Some(AskEvent::Error("boom".into()))
+        );
+        assert_eq!(
+            parse_ask_event("error", "garbage"),
+            Some(AskEvent::Error("the question could not be answered".into()))
+        );
+        // Unknown event names and malformed payloads are skipped, not fatal.
+        assert_eq!(parse_ask_event("future", "{}"), None);
+        assert_eq!(parse_ask_event("delta", r#"{"nope":1}"#), None);
+        assert_eq!(parse_ask_event("phase", r#"{"phase":"???"}"#), None);
+        assert_eq!(parse_ask_event("result", "{"), None);
+    }
+
+    #[test]
+    fn stream_flag_is_omitted_unless_set() {
+        let mut a = AskRequest {
+            question: "q".into(),
+            scope: None,
+            stream: false,
+        };
+        assert_eq!(serde_json::to_value(&a).unwrap(), json!({"question":"q"}));
+        a.stream = true;
+        assert_eq!(
+            serde_json::to_value(&a).unwrap(),
+            json!({"question":"q","stream":true})
+        );
+        let old: AskRequest = serde_json::from_value(json!({"question":"q"})).unwrap();
+        assert!(!old.stream);
+    }
 
     #[test]
     fn ask_result_round_trip() {
@@ -184,6 +277,7 @@ mod tests {
                 source_id: Some("s".into()),
                 folder: None,
             }),
+            stream: false,
         };
         assert_eq!(
             serde_json::to_value(&a).unwrap(),

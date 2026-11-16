@@ -138,3 +138,39 @@ def test_real_worker_stdout_is_only_protocol(tmp_path):
     lines = proc.stdout.splitlines()
     assert [json.loads(x)["id"] for x in lines] == [1, 2], proc.stderr
     assert json.loads(lines[1])["result"] == {"sources": []}
+
+
+class StreamingService(FakeService):
+    def ask(self, question, **kwargs):
+        self.calls.append((question, kwargs))
+        cb = kwargs["on_progress"]
+        cb("search")
+        cb("generation")
+        for piece in ("It is ", "2,650 ", "[a.txt#1]."):
+            kwargs["on_delta"](piece)
+        cb("citation_validation")
+        return SimpleNamespace(
+            answer="It is 2,650 [a.txt#1].", abstained=False, latency_by_phase={},
+            citations=[SimpleNamespace(citation_label="[a.txt#1]", chunk_id="c1", source_display_name="a.txt")],
+        )
+
+
+def test_ask_stream_emits_deltas_then_validating_then_result():
+    msgs, svc = run([req(3, "query.ask", {"question": "rate?", "stream": True})],
+                    StreamingService(), keep_progress=True)
+    kinds = [(m.get("method"), m.get("params", {}).get("phase") or m.get("params", {}).get("text")) for m in msgs[:-1]]
+    assert kinds == [
+        ("progress", "retrieving"), ("progress", "answering"),
+        ("delta", "It is "), ("delta", "2,650 "), ("delta", "[a.txt#1]."),
+        ("progress", "validating"),
+    ]
+    assert all(m["params"]["id"] == 3 for m in msgs[:-1])
+    assert msgs[-1]["id"] == 3 and msgs[-1]["result"]["answer"] == "It is 2,650 [a.txt#1]."
+
+
+def test_ask_without_stream_flag_gets_no_delta_callback_and_no_validating_phase():
+    svc = FakeService()
+    msgs, _ = run([req(1, "query.ask", {"question": "q"})], svc, keep_progress=True)
+    assert "on_delta" not in svc.calls[0][1]
+    assert [m["params"]["phase"] for m in msgs if m.get("method") == "progress"] == [
+        "retrieving", "reading", "answering"]

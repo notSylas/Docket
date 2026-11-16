@@ -252,6 +252,66 @@ async fn sse_stream_emits_ordered_phases_then_result_with_request_id() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn sse_stream_true_forwards_deltas_between_phases_and_result() {
+    let mut d = Daemon::start(&[]).await;
+    let p = d
+        .post(
+            r#"{"question":"rate?","stream":true}"#,
+            Some("text/event-stream"),
+        )
+        .await;
+    assert_eq!(p.status, 200);
+    let names: Vec<_> = p.events.iter().map(|e| e.event.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "phase", "phase", "phase", "delta", "delta", "delta", "phase", "phase", "result"
+        ]
+    );
+    let text: String = p
+        .events
+        .iter()
+        .filter(|e| e.event == "delta")
+        .map(|e| serde_json::from_str::<serde_json::Value>(&e.data).unwrap()["text"]
+            .as_str()
+            .unwrap()
+            .to_string())
+        .collect();
+    assert_eq!(text, "The rate is 2,650 [rates.txt#1].");
+    let phases: Vec<String> = p
+        .events
+        .iter()
+        .filter(|e| e.event == "phase")
+        .map(|e| serde_json::from_str::<serde_json::Value>(&e.data).unwrap()["phase"]
+            .as_str()
+            .unwrap()
+            .to_string())
+        .collect();
+    assert_eq!(
+        phases,
+        ["retrieving", "reading", "answering", "validating", "done"]
+    );
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stream_flag_is_ignored_for_plain_json_and_absent_on_old_clients() {
+    let mut d = Daemon::start(&[]).await;
+    let (c, body) = d
+        .post(r#"{"question":"rate?","stream":true}"#, None)
+        .await
+        .into_status_body();
+    assert_eq!(c, 200);
+    assert!(body.contains("2,650"));
+    // SSE without `stream` keeps the old shape: no delta events.
+    let p = d
+        .post(r#"{"question":"rate?"}"#, Some("text/event-stream"))
+        .await;
+    assert!(p.events.iter().all(|e| e.event != "delta"));
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn stdout_noise_and_malformed_lines_are_ignored() {
     let mut d = Daemon::start(&[]).await;
     let (code, body) = d.ask("noise").await;

@@ -408,3 +408,56 @@ def test_think_rejection_is_tracked_per_model(mocker) -> None:
     gateway.generate(system="s", prompt="p", think=True)
     assert mock_generate.call_args_list[2].kwargs["model"] == "big"
     assert mock_generate.call_args_list[2].kwargs["think"] is True
+
+
+# --- streaming helpers ------------------------------------------------------
+
+
+def _filtered(pieces):
+    from docket.infra.inference.gateway import ThinkStreamFilter
+
+    f = ThinkStreamFilter()
+    return "".join([f.feed(p) for p in pieces] + [f.flush()])
+
+
+def test_think_stream_filter_matches_strip_think_block_for_any_split():
+    from docket.infra.inference.gateway import strip_think_block
+
+    texts = [
+        "<think>plan the answer</think>\n\nThe rate is 5.",
+        "  <think>x</think>answer <think>kept</think>",
+        "plain answer",
+        "<thing> not a think block",
+        "<thi",
+        "",
+    ]
+    for text in texts:
+        expect = strip_think_block(text)
+        for step in (1, 2, 3, 7, 100):
+            pieces = [text[i : i + step] for i in range(0, len(text), step)]
+            assert _filtered(pieces) == expect, (text, step)
+
+
+def test_think_stream_filter_drops_unterminated_think():
+    assert _filtered(["<think>never ", "closed"]) == ""
+
+
+def test_ollama_generate_stream_yields_pieces_and_translates_midstream_error(monkeypatch):
+    import ollama
+
+    from docket.infra.inference import gateway as gw
+
+    def fake_generate(**kwargs):
+        assert kwargs["stream"] is True
+        yield {"response": "<think>hm</think>He"}
+        yield {"response": "llo"}
+        raise ConnectionError("dropped")
+
+    monkeypatch.setattr(gw._ollama, "generate", fake_generate)
+    got: list[str] = []
+    with pytest.raises(gw.InferenceUnavailableError):
+        for piece in gw.OllamaGateway(gen_model="m").generate_stream(system="s", prompt="p"):
+            got.append(piece)
+    assert "".join(got) == "Hello"
+    assert isinstance(gw.OllamaGateway(gen_model="m"), gw.StreamingInferenceGateway)
+    assert isinstance(gw.FakeInferenceGateway(), gw.StreamingInferenceGateway)

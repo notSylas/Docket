@@ -11,6 +11,13 @@ Methods: ``ping``, ``status``, ``sources.list``, ``query.ask``.
 ``query.ask`` emits ``progress`` notifications (no ``id``) with a ``phase`` of
 ``retrieving``, ``reading`` or ``answering`` before the final response.
 
+Streaming (opt-in, ``params.stream: true``): additionally emits ``delta``
+notifications ``{"text": "..."}`` carrying the answer as it is generated, and a
+``progress`` phase ``validating`` once generation ended and citations are being
+checked. Delta text is UNVALIDATED; the final response's ``answer`` and
+``citations`` are authoritative and replace it (an answer whose citations fail
+validation arrives as the abstention). Without ``stream`` nothing changes.
+
 The worker is read-only: it reuses ``SourceManager``/``QueryService`` exactly as
 the CLI and TUI do, performs no ingestion and takes no writer lock. Requests
 are handled one at a time; the daemon allows a single in-flight query.
@@ -212,15 +219,20 @@ def build_methods(context: Any, service_factory: Callable[[Any, Any], Any]) -> d
         if table is None:
             raise RpcError(SERVER_ERROR, "nothing is indexed yet", "NoContentIndexed")
         seen: list[str] = ["retrieving"]
+        stream = params.get("stream") is True
 
         def on_progress(phase: str) -> None:
             name = _PHASES.get(phase, "retrieving")
+            if stream and phase == "citation_validation":
+                name = "validating"
             if name != seen[-1]:
                 seen.append(name)
                 notify("progress", {"phase": name})
 
         service = service_factory(context, table)
         kwargs: dict[str, Any] = {"on_progress": on_progress}
+        if stream:
+            kwargs["on_delta"] = lambda text: notify("delta", {"text": text})
         if scope is not None:
             kwargs["scope"] = scope
         result = service.ask(question, **kwargs)

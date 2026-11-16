@@ -1,7 +1,8 @@
 //! Talks to `docketd` from background threads so the UI never blocks.
 
 use docket_proto::api::{
-    ApiError, AskRequest, AskResult, Phase, Scope, SourceInfo, SourcesResponse, StatusResponse,
+    parse_ask_event, AskEvent, AskRequest, AskResult, ApiError, Phase, Scope, SourceInfo,
+    SourcesResponse, StatusResponse,
 };
 use docket_proto::client::{self, sse_events};
 use std::path::{Path, PathBuf};
@@ -16,6 +17,8 @@ pub enum Event {
     Status(Result<StatusResponse, String>),
     Sources(Result<Vec<SourceInfo>, String>),
     Phase(Phase),
+    /// A piece of the streamed answer: shown as unverified until `Answer`.
+    Delta(String),
     Answer(Box<AskResult>, f64),
     AskFailed(String),
     DaemonStarted(Result<(), String>),
@@ -171,6 +174,7 @@ impl Backend {
                     source_id: Some(id),
                     folder: None,
                 }),
+                stream: true,
             };
             let body = serde_json::to_string(&req).unwrap_or_default();
             let resp = match client::post_json(
@@ -205,34 +209,23 @@ impl Backend {
                     );
                     return;
                 };
-                match ev.event.as_str() {
-                    "phase" => {
-                        let p = serde_json::from_str::<serde_json::Value>(&ev.data)
-                            .ok()
-                            .and_then(|v| Phase::parse(v.get("phase")?.as_str()?));
-                        if let Some(p) = p {
-                            send(&tx, &ctx, Event::Phase(p));
-                        }
+                match parse_ask_event(&ev.event, &ev.data) {
+                    Some(AskEvent::Phase(p)) => {
+                        send(&tx, &ctx, Event::Phase(p));
                     }
-                    "result" => match serde_json::from_str::<AskResult>(&ev.data) {
-                        Ok(r) => {
-                            send(
-                                &tx,
-                                &ctx,
-                                Event::Answer(Box::new(r), t0.elapsed().as_secs_f64()),
-                            );
-                            return;
-                        }
-                        Err(_) => break,
-                    },
-                    "error" => {
-                        let msg = serde_json::from_str::<ApiError>(&ev.data)
-                            .map(|e| e.error.message)
-                            .unwrap_or_else(|_| "the question could not be answered".into());
+                    Some(AskEvent::Delta(t)) => {
+                        send(&tx, &ctx, Event::Delta(t));
+                    }
+                    Some(AskEvent::Result(r)) => {
+                        send(&tx, &ctx, Event::Answer(r, t0.elapsed().as_secs_f64()));
+                        return;
+                    }
+                    Some(AskEvent::Error(msg)) => {
                         send(&tx, &ctx, Event::AskFailed(msg));
                         return;
                     }
-                    _ => {}
+                    None if ev.event == "result" => break,
+                    None => {}
                 }
             }
             send(

@@ -1430,3 +1430,142 @@ def test_rewrite_recorded_when_nothing_is_retrieved(
     assert captured["extra_queries"] == ["Who wrote RRF?"]
     assert captured["query"] == _FOLLOWUP
     assert result.abstained and result.standalone_query == "Who wrote RRF?"
+
+
+# ---------------------------------------------------------------------------
+# Streaming (`on_delta`): text streams first, citations are validated at the end
+# ---------------------------------------------------------------------------
+
+
+def _stream_setup(migrated_sqlite_engine, tmp_path, built, **fake_kwargs):
+    gateway = FakeInferenceGateway(**fake_kwargs)
+    table = _index_chunk(migrated_sqlite_engine, tmp_path, gateway, built)
+    return gateway, _service(migrated_sqlite_engine, table, gateway, built)
+
+
+def test_stream_deltas_arrive_before_validation_and_match_final_answer(
+    migrated_sqlite_engine: Engine, tmp_path: Path, built: dict
+) -> None:
+    label = f"[report.pdf #{built['chunk_id'][:12]}]"
+    text = f"RRF fuses ranked lists {label}."
+    gateway, service = _stream_setup(
+        migrated_sqlite_engine, tmp_path, built, canned_response=text
+    )
+    events: list[tuple[str, str]] = []
+    result = service.ask(
+        CHUNK_TEXT,
+        on_progress=lambda p: events.append(("phase", p)),
+        on_delta=lambda t: events.append(("delta", t)),
+    )
+    deltas = [v for k, v in events if k == "delta"]
+    assert len(deltas) > 1 and "".join(deltas) == text
+    last_delta = max(i for i, (k, _) in enumerate(events) if k == "delta")
+    validation = events.index(("phase", "citation_validation"))
+    assert validation > last_delta, "validation must start only after the stream ended"
+    assert result.abstained is False and result.answer == text
+    assert [c.citation_label for c in result.citations] == [label]
+    assert len(gateway.generate_calls) == 1 and gateway.generate_calls[0]["stream"] is True
+
+
+def test_stream_invalid_citation_at_end_is_replaced_by_abstention(
+    migrated_sqlite_engine: Engine, tmp_path: Path, built: dict
+) -> None:
+    bad = "RRF combines ranked lists [madeup.pdf #ffffffffffff]."
+    gateway, service = _stream_setup(
+        migrated_sqlite_engine, tmp_path, built, canned_response=bad
+    )
+    streamed: list[str] = []
+    result = service.ask(CHUNK_TEXT, on_delta=streamed.append)
+    # The unvalidated text did stream ...
+    assert "".join(streamed) == bad
+    # ... but the final answer never carries the invalid citation.
+    assert result.abstained is True and result.answer == ABSTENTION_PHRASE
+    assert result.citations == []
+    assert any("unknown citation" in w for w in result.validation_warnings)
+    # One streamed attempt, then the (non-streamed) repair attempt.
+    assert [c.get("stream", False) for c in gateway.generate_calls] == [True, False]
+
+
+def test_stream_uncited_answer_is_replaced_by_abstention(
+    migrated_sqlite_engine: Engine, tmp_path: Path, built: dict
+) -> None:
+    _, service = _stream_setup(
+        migrated_sqlite_engine, tmp_path, built, canned_response="No citation here."
+    )
+    result = service.ask(CHUNK_TEXT, on_delta=lambda t: None)
+    assert result.abstained is True and result.answer == ABSTENTION_PHRASE
+
+
+def test_stream_failure_mid_stream_raises_like_non_streaming(
+    migrated_sqlite_engine: Engine, tmp_path: Path, built: dict
+) -> None:
+    from docket.infra.inference.gateway import InferenceUnavailableError
+
+    gateway, service = _stream_setup(
+        migrated_sqlite_engine, tmp_path, built,
+        stream_pieces=["RRF fuses ", "ranked "],
+        stream_error=InferenceUnavailableError("connection dropped"),
+    )
+    streamed: list[str] = []
+    with pytest.raises(InferenceUnavailableError):
+        service.ask(CHUNK_TEXT, on_delta=streamed.append)
+    assert "".join(streamed) == "RRF fuses ranked "
+    assert len(gateway.generate_calls) == 1  # no silent retry after text was shown
+
+
+def test_stream_failure_before_first_piece_falls_back_to_plain_generate(
+    migrated_sqlite_engine: Engine, tmp_path: Path, built: dict
+) -> None:
+    from docket.infra.inference.gateway import InferenceUnavailableError
+
+    label = f"[report.pdf #{built['chunk_id'][:12]}]"
+    gateway, service = _stream_setup(
+        migrated_sqlite_engine, tmp_path, built,
+        canned_response=f"RRF fuses ranked lists {label}.",
+        stream_pieces=[],
+        stream_error=InferenceUnavailableError("nope"),
+    )
+    streamed: list[str] = []
+    result = service.ask(CHUNK_TEXT, on_delta=streamed.append)
+    assert streamed == [] and result.abstained is False
+    assert [c.get("stream", False) for c in gateway.generate_calls] == [True, False]
+
+
+def test_stream_callback_failure_does_not_change_answer(
+    migrated_sqlite_engine: Engine, tmp_path: Path, built: dict
+) -> None:
+    label = f"[report.pdf #{built['chunk_id'][:12]}]"
+    _, service = _stream_setup(
+        migrated_sqlite_engine, tmp_path, built, canned_response=f"RRF fuses lists {label}."
+    )
+
+    def boom(_t: str) -> None:
+        raise RuntimeError("ui gone")
+
+    assert service.ask(CHUNK_TEXT, on_delta=boom).abstained is False
+
+
+def test_without_on_delta_generation_is_not_streamed(
+    migrated_sqlite_engine: Engine, tmp_path: Path, built: dict
+) -> None:
+    label = f"[report.pdf #{built['chunk_id'][:12]}]"
+    gateway, service = _stream_setup(
+        migrated_sqlite_engine, tmp_path, built, canned_response=f"RRF fuses lists {label}."
+    )
+    service.ask(CHUNK_TEXT)
+    assert all("stream" not in c for c in gateway.generate_calls)
+
+
+def test_gateway_without_streaming_ignores_on_delta(
+    migrated_sqlite_engine: Engine, tmp_path: Path, built: dict
+) -> None:
+    class PlainGateway(FakeInferenceGateway):
+        generate_stream = None  # type: ignore[assignment]
+
+    label = f"[report.pdf #{built['chunk_id'][:12]}]"
+    gateway = PlainGateway(canned_response=f"RRF fuses lists {label}.")
+    table = _index_chunk(migrated_sqlite_engine, tmp_path, gateway, built)
+    service = _service(migrated_sqlite_engine, table, gateway, built)
+    streamed: list[str] = []
+    result = service.ask(CHUNK_TEXT, on_delta=streamed.append)
+    assert streamed == [] and result.abstained is False
