@@ -64,6 +64,13 @@ class Settings(BaseSettings):
     # node_modules, Office lock files, `.docketignore`). Escape hatch:
     # DOCKET_INGEST_IGNORE_ENABLED=false walks everything, as before.
     ingest_ignore_enabled: bool = True
+    # Legacy Office files (.doc/.xls/.ppt/.rtf) are converted with headless
+    # LibreOffice (DOCKET_LEGACY_OFFICE_ENABLED=false turns it off,
+    # DOCKET_SOFFICE_PATH overrides auto-detection). Without LibreOffice the
+    # files are reported as skipped, never failed.
+    legacy_office_enabled: bool = True
+    soffice_path: str | None = None
+    legacy_convert_timeout_s: float = 120.0
     # Snapshot size is a hard limit; count overflow is explicit partial intake.
     mail_max_bytes: int = 64 * 1024 * 1024
     mail_max_messages: int = 1000

@@ -217,6 +217,16 @@ def ignore_notices(result: object, prune_service: object, source_id: str) -> lis
         for line in (skipped_summary(skipped), invalid_summary(invalid))
         if line is not None
     ]
+    counts = {
+        code: n
+        for code, n in (getattr(result, "skipped_by_reason", None) or {}).items()
+        if code not in ("ignored", "invalid_file")  # covered by the lines above
+    }
+    from docket.services.ingestion.skips import summary_line
+
+    line = summary_line(counts)
+    if line is not None:
+        notices.append(line + ". List them with: docket sources skipped")
     notices.extend(f"{getattr(item, 'path', 'Mailbox')}: {item.notice}"
                    for item in getattr(result, "file_results", ()) if getattr(item, "notice", None))
     try:

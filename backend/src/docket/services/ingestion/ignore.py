@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
 from docket.infra.parsing.filecheck import InvalidFileError, check_file_signature
+from docket.services.ingestion.skips import MAX_RECORDED_PER_RUN, NAMED_UNSUPPORTED_EXTENSIONS
 
 DOCKETIGNORE_NAME = ".docketignore"
 
@@ -210,6 +211,12 @@ class DiscoveryReport:
     # Files whose bytes contradict their extension (e.g. a text file named
     # x.pdf): not real documents, never handed to a parser.
     invalid_skipped: int = 0
+    # Skipped-files report (only filled when `track_skips=True`): files of a
+    # named unsupported type, files whose bytes contradict their extension,
+    # and a count of other unread (not listed) extensions.
+    unsupported: list[Path] = field(default_factory=list)
+    invalid: list[Path] = field(default_factory=list)
+    unsupported_other: int = 0
     # Set when a `max_entries` / `time_budget_s` bound stopped the walk early
     # (bounded scans only; ingestion never passes a budget).
     incomplete: bool = False
@@ -230,6 +237,7 @@ def discover(
     time_budget_s: float | None = None,
     count_ignored: bool = True,
     start_after: tuple[str, ...] | None = None,
+    track_skips: bool = False,
 ) -> DiscoveryReport:
     """Walk `root`, pruning ignored directories. With `enabled=False` nothing
     is ignored (escape hatch: DOCKET_INGEST_IGNORE_ENABLED=false).
@@ -281,7 +289,18 @@ def discover(
             continue  # covered by an earlier pass (its subdirectories are still walked)
         stopped = False
         for f in sorted(filenames):
-            if Path(f).suffix.lower() not in extensions:
+            suffix = Path(f).suffix.lower()
+            if suffix not in extensions:
+                if track_skips and suffix and not (
+                    enabled and rules.entry_ignored(rel_prefix + f, f, False)
+                ):
+                    if suffix in NAMED_UNSUPPORTED_EXTENSIONS:
+                        if len(report.unsupported) < MAX_RECORDED_PER_RUN:
+                            report.unsupported.append(here / f)
+                        else:
+                            report.unsupported_other += 1
+                    else:
+                        report.unsupported_other += 1
                 continue
             if deadline is not None and time.monotonic() > deadline:
                 report.incomplete = True
@@ -297,6 +316,8 @@ def discover(
                     check_file_signature(p)
                 except InvalidFileError:
                     report.invalid_skipped += 1
+                    if track_skips and len(report.invalid) < MAX_RECORDED_PER_RUN:
+                        report.invalid.append(p)
                     continue
                 except OSError:
                     pass  # unreadable: the parser reports it per file

@@ -63,9 +63,9 @@ def recipe_family(file_path: str | None) -> str:
         return FAMILY_MAIL
     if suffix in TEXT_EXTENSIONS:
         return FAMILY_TEXT
-    if suffix == ".xlsx":
+    if suffix in {".xlsx", ".xls"}:
         return FAMILY_XLSX
-    if suffix == ".pptx":
+    if suffix in {".pptx", ".ppt"}:
         return FAMILY_PPTX
     return FAMILY_DOCLING
 
