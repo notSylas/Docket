@@ -112,6 +112,7 @@ CP8 brief to be documented in code, not just in a report):
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import tempfile
@@ -140,6 +141,23 @@ from docket.infra.index.manager import IndexManager
 from docket.infra.index.visual_index import LancePageIndexWriter
 from docket.infra.inference.gateway import InferenceGateway
 from docket.services.ingestion.chunk_writer import ChunkWriter
+from docket.services.ingestion.skips import (
+    CONVERTER_MISSING,
+    IGNORED,
+    UNSUPPORTED_OTHER,
+    INVALID_FILE,
+    UNSUPPORTED_TYPE,
+    SkippedFile,
+    classify_exception,
+    code_for_text,
+    count_by_reason,
+    relative_path,
+)
+from docket.infra.parsing.legacy_office import (
+    LEGACY_EXTENSIONS,
+    ConverterUnavailable,
+    LegacyConverter,
+)
 from docket.infra.parsing.filecheck import InvalidFileError, check_file_signature
 from docket.services.ingestion.ignore import DiscoveryReport, IgnoreRules
 from docket.services.ingestion.job_results import JobFiles
@@ -189,7 +207,9 @@ XLSX_EXTENSION = ".xlsx"
 # `docket.infra.parsing.pptx_wrapper`/`pptx_chunker`).
 PPTX_EXTENSION = ".pptx"
 
-SUPPORTED_EXTENSIONS = DOCLING_EXTENSIONS | {XLSX_EXTENSION, PPTX_EXTENSION} | TEXT_EXTENSIONS | MAIL_EXTENSIONS
+SUPPORTED_EXTENSIONS = (
+    DOCLING_EXTENSIONS | {XLSX_EXTENSION, PPTX_EXTENSION} | TEXT_EXTENSIONS | MAIL_EXTENSIONS | LEGACY_EXTENSIONS
+)
 
 # Recognized Excel-family extensions this pipeline explicitly refuses rather
 # than silently never discovering (doc 02 section 3: "Unsupported ... inputs
@@ -199,11 +219,12 @@ SUPPORTED_EXTENSIONS = DOCLING_EXTENSIONS | {XLSX_EXTENSION, PPTX_EXTENSION} | T
 # `.xlsx` but untested for this checkpoint (doc 02 section 3: "Exact
 # extensions ... must be tested before advertising them") -- both get a
 # named, explicit per-file failure instead of an untested silent attempt.
-UNSUPPORTED_EXCEL_EXTENSIONS = {".xls", ".xlsm"}
+UNSUPPORTED_EXCEL_EXTENSIONS = {".xlsm"}
 
-# `.ppt` (legacy binary PowerPoint) cannot be read by python-pptx at all --
-# same explicit-rejection treatment as `.xls`/`.xlsm` above.
-UNSUPPORTED_POWERPOINT_EXTENSIONS = {".ppt"}
+# Legacy binary `.xls`/`.ppt` are no longer refused: with LibreOffice they are
+# converted (see `docket.infra.parsing.legacy_office`); without it they are
+# reported as skipped.
+UNSUPPORTED_POWERPOINT_EXTENSIONS: set[str] = set()
 
 UNSUPPORTED_EXTENSIONS = UNSUPPORTED_EXCEL_EXTENSIONS | UNSUPPORTED_POWERPOINT_EXTENSIONS
 
@@ -230,18 +251,10 @@ class UnsupportedFormatError(Exception):
 
     def __init__(self, path: Path):
         self.path = path
-        suffix = path.suffix.lower()
-        if suffix in UNSUPPORTED_POWERPOINT_EXTENSIONS:
-            detail = (
-                "only .pptx is implemented in this checkpoint (legacy .ppt is "
-                "not supported -- python-pptx cannot read the binary "
-                "PowerPoint format at all)"
-            )
+        if path.suffix.lower() in UNSUPPORTED_POWERPOINT_EXTENSIONS:
+            detail = "only .pptx is implemented"
         else:
-            detail = (
-                "only .xlsx is implemented in this checkpoint (legacy .xls "
-                "and macro-enabled .xlsm are not supported)"
-            )
+            detail = "only .xlsx is implemented (macro-enabled .xlsm is not supported)"
         super().__init__(f"unsupported file format {path.suffix!r} for {path}: {detail}")
 
 
@@ -264,6 +277,21 @@ class SourceNotActiveError(Exception):
         )
 
 
+def _skip_code_for_path(path: Path, rules: IgnoreRules, root: Path) -> str:
+    if path.suffix.lower() not in DISCOVERABLE_EXTENSIONS:
+        return UNSUPPORTED_TYPE
+    return IGNORED
+
+
+def _result_for_exception(path: Path, exc: BaseException) -> "FileIngestResult":
+    """A per-file exception as a result: a missing converter is an explicit
+    "skipped" (nothing was attempted), everything else "failed"; both carry
+    the skipped-files report code when it can be classified."""
+    code = classify_exception(exc)
+    status = "skipped" if code == CONVERTER_MISSING else "failed"
+    return FileIngestResult(path=path, status=status, error=str(exc), skip_reason=code)
+
+
 @dataclass
 class FileIngestResult:
     path: Path
@@ -275,6 +303,9 @@ class FileIngestResult:
     error: str | None = None
     chunks_written: int = 0
     notice: str | None = None
+    # Skipped-files report code (see `services/ingestion/skips.py`) when this
+    # file was not indexed for a classifiable reason.
+    skip_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -324,6 +355,10 @@ class IngestionJobResult:
     # Files skipped at discovery because their bytes do not match their
     # extension ("not a real document").
     invalid_skipped: int = 0
+    # Skipped-files report: every file not indexed, by reason code (counts
+    # only -- no contents), and the per-file listing (paths + codes).
+    skipped_by_reason: dict[str, int] = field(default_factory=dict)
+    skipped_files: list[SkippedFile] = field(default_factory=list)
 
 
 class IngestionPipeline:
@@ -353,7 +388,13 @@ class IngestionPipeline:
         mail_parser: MailParser | None = None,
         mail_recipe: ChunkRecipe | None = None,
         parse_pool=None,
+        legacy_converter: LegacyConverter | None = None,
     ) -> None:
+        self._legacy = legacy_converter if legacy_converter is not None else LegacyConverter(
+            getattr(settings, "soffice_path", None),
+            timeout_s=getattr(settings, "legacy_convert_timeout_s", 120.0),
+            enabled=getattr(settings, "legacy_office_enabled", True),
+        )
         # Optional `ParsePool`: Docling-family files are parsed ahead of the
         # writer in worker processes; everything else (and every write) stays
         # on this thread, in discovery order.
@@ -527,7 +568,21 @@ class IngestionPipeline:
             self._parse_pool.discard(source_id, path)
         return len(records)
 
+    def _parse_converted(self, parse, source_id: str, path: Path):
+        """Legacy Office file: convert to a temp modern copy, parse that, and
+        point the result back at the ORIGINAL (the copy is never evidence)."""
+        with self._legacy.converted(path) as converted:
+            parsed = parse(source_id, converted)
+        return dataclasses.replace(parsed, source_path=path)
+
+    def _parse_file(self, parse, source_id: str, path: Path):
+        if path.suffix.lower() in LEGACY_EXTENSIONS:
+            return self._parse_converted(parse, source_id, path)
+        return parse(source_id, path)
+
     def _parse_docling(self, source_id: str, path: Path):
+        if path.suffix.lower() in LEGACY_EXTENSIONS:
+            return self._parse_converted(self._parser.parse, source_id, path)
         if self._parse_pool is not None:
             parsed = self._parse_pool.take(source_id, path)
             if parsed is not None:
@@ -598,10 +653,10 @@ class IngestionPipeline:
         if family == FAMILY_TEXT:
             return self._text_parser.parse(source_id, path)
         if family == FAMILY_XLSX:
-            return self._xlsx_parser.parse(source_id, path)
+            return self._parse_file(self._xlsx_parser.parse, source_id, path)
         if family == FAMILY_PPTX:
-            return self._pptx_parser.parse(source_id, path)
-        return self._parser.parse(source_id, path)
+            return self._parse_file(self._pptx_parser.parse, source_id, path)
+        return self._parse_file(self._parser.parse, source_id, path)
 
     def _chunk_family(self, family: str, evidence_version_id: str, parsed, recipe: ChunkRecipe):
         """Chunk `parsed` with the family's chunker and record the decoding
@@ -746,9 +801,16 @@ class IngestionPipeline:
             extra_rules=rules_json,
         )
 
+    def _require_converter(self, path: Path) -> None:
+        """Legacy Office file without a usable LibreOffice: refuse BEFORE any
+        evidence is created (it is reported as skipped, not failed)."""
+        if path.suffix.lower() in LEGACY_EXTENSIONS and not self._legacy.available():
+            raise ConverterUnavailable(self._legacy.unavailable_reason())
+
     def _ingest_one_file(self, source_id: str, path: Path) -> FileIngestResult:
         suffix = path.suffix.lower()
         self._check_file_size(path)
+        self._require_converter(path)
 
         if suffix in MAIL_EXTENSIONS:
             return self._ingest_one_mail_file(source_id, path)
@@ -761,10 +823,10 @@ class IngestionPipeline:
             # the batch.
             raise UnsupportedFormatError(path)
 
-        if suffix == XLSX_EXTENSION:
+        if suffix in (XLSX_EXTENSION, ".xls"):
             return self._ingest_one_xlsx_file(source_id, path)
 
-        if suffix == PPTX_EXTENSION:
+        if suffix in (PPTX_EXTENSION, ".ppt"):
             return self._ingest_one_pptx_file(source_id, path)
 
         before_id = self._chunk_writer.current_version_id(source_id, str(path))
@@ -913,7 +975,7 @@ class IngestionPipeline:
             return FileIngestResult(path=path, status="unchanged")
 
         try:
-            workbook = self._xlsx_parser.parse(source_id, path)
+            workbook = self._parse_file(self._xlsx_parser.parse, source_id, path)
             records = self._chunk_and_index_version(
                 FAMILY_XLSX, source_id, evidence_version.id, workbook
             )
@@ -952,7 +1014,7 @@ class IngestionPipeline:
             return FileIngestResult(path=path, status="unchanged")
 
         try:
-            presentation = self._pptx_parser.parse(source_id, path)
+            presentation = self._parse_file(self._pptx_parser.parse, source_id, path)
             records = self._chunk_and_index_version(
                 FAMILY_PPTX, source_id, evidence_version.id, presentation
             )
@@ -1074,18 +1136,22 @@ class IngestionPipeline:
         if path.suffix.lower() not in DISCOVERABLE_EXTENSIONS or rules.path_ignored(
             path.resolve().relative_to(root.resolve())
         ):
-            return FileIngestResult(path=path, status="skipped")
+            return FileIngestResult(path=path, status="skipped", skip_reason=_skip_code_for_path(path, rules, root))
         try:
             check_file_signature(path)
         except InvalidFileError:
-            return FileIngestResult(path=path, status="skipped")
+            return FileIngestResult(path=path, status="skipped", skip_reason=INVALID_FILE)
         except OSError:
             pass
-        return self._ingest_tier1_file(source_id, path)
+        try:
+            return self._ingest_tier1_file(source_id, path)
+        except ConverterUnavailable as exc:
+            return _result_for_exception(path, exc)
 
     def _ingest_tier1_file(self, source_id: str, path: Path) -> FileIngestResult:
         suffix = path.suffix.lower()
         self._check_file_size(path)
+        self._require_converter(path)
         if suffix in UNSUPPORTED_EXTENSIONS:
             raise UnsupportedFormatError(path)
         family = recipe_family(str(path))
@@ -1126,7 +1192,7 @@ class IngestionPipeline:
                 parsed = (
                     self._mail_parser.parse(source_id, path, snapshot=snapshot)
                     if family == FAMILY_MAIL
-                    else parser.parse(source_id, path)
+                    else self._parse_file(parser.parse, source_id, path)
                 )
             units, chunks = self._chunk_family(family, version.id, parsed, recipe)
             self._chunk_writer.ensure_recipe_row(recipe)
@@ -1359,14 +1425,17 @@ class IngestionPipeline:
                 return FileIngestResult(path=path, status="skipped")
             raise FileNotFoundError(f"file not found: {path.name}")
         if path.suffix.lower() not in DISCOVERABLE_EXTENSIONS or rules.path_ignored(rel):
-            return FileIngestResult(path=path, status="skipped")
+            return FileIngestResult(path=path, status="skipped", skip_reason=_skip_code_for_path(path, rules, root))
         try:
             check_file_signature(path)
         except InvalidFileError:
-            return FileIngestResult(path=path, status="skipped")
+            return FileIngestResult(path=path, status="skipped", skip_reason=INVALID_FILE)
         except OSError:
             pass  # unreadable: reported per file by the ingest below
-        return self._ingest_one_file(source_id, path)
+        try:
+            return self._ingest_one_file(source_id, path)
+        except ConverterUnavailable as exc:
+            return _result_for_exception(path, exc)
 
     @writer_operation("refreshing library files")
     def _run_ingestion_for_paths_impl(
@@ -1461,7 +1530,7 @@ class IngestionPipeline:
                 try:
                     result = self._ingest_path(source_id, path, root, rules, missing=missing)
                 except Exception as exc:  # noqa: BLE001 -- one bad file must not abort the batch
-                    result = FileIngestResult(path=path, status="failed", error=str(exc))
+                    result = _result_for_exception(path, exc)
                 file_results.append(result)
                 job_files.update(job_id, path, result)
                 emit(ProgressEvent("done", index, total, path, result))
@@ -1573,7 +1642,7 @@ class IngestionPipeline:
                 try:
                     result = self._ingest_one_file(source_id, path)
                 except Exception as exc:  # noqa: BLE001 -- one bad file must not abort the batch
-                    result = FileIngestResult(path=path, status="failed", error=str(exc))
+                    result = _result_for_exception(path, exc)
                 file_results.append(result)
                 job_files.update(job_id, path, result)
                 emit(ProgressEvent("done", index, total, path, result))
@@ -1623,6 +1692,13 @@ class IngestionPipeline:
         else:
             job_status = IngestionJobStatus.PARTIAL
 
+        root_path = Path(source.path)
+        skipped_files = [
+            SkippedFile(relative_path(r.path, root_path), r.skip_reason)
+            for r in file_results
+            if r.skip_reason and r.status in ("skipped", "failed")
+        ]
+        skipped_by_reason = count_by_reason(skipped_files)
         stats = {
             "files_processed": files_processed,
             "files_failed": files_failed,
@@ -1645,4 +1721,6 @@ class IngestionPipeline:
             dirs_skipped=discovery.dirs_skipped,
             files_skipped=discovery.files_skipped,
             invalid_skipped=discovery.invalid_skipped,
+            skipped_by_reason=skipped_by_reason,
+            skipped_files=skipped_files,
         )

@@ -95,16 +95,17 @@ def test_xlsm_file_fails_with_explicit_unsupported_format_error(env: SimpleNames
         assert versions == []
 
 
-def test_xls_file_fails_with_explicit_unsupported_format_error(env: SimpleNamespace) -> None:
+def test_xls_file_is_skipped_with_reason_when_no_converter(env: SimpleNamespace) -> None:
     path = env.folder / "legacy.xls"
     path.write_bytes(b"not a real legacy xls file")
 
     result = env.pipeline.run_ingestion_for_source(env.source.id)
 
-    assert result.files_failed == 1
+    assert result.files_failed == 0
     [file_result] = result.file_results
-    assert file_result.status == "failed"
-    assert "unsupported" in file_result.error.lower()
+    assert file_result.status == "skipped"
+    assert file_result.skip_reason == "converter_missing"
+    assert result.skipped_by_reason == {"converter_missing": 1}
 
 
 def test_docx_and_xlsx_in_same_source_both_ingest_through_same_pipeline(

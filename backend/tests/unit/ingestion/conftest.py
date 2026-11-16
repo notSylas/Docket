@@ -35,6 +35,7 @@ from docket.infra.index.fts_index import FtsIndexWriter
 from docket.infra.index.manager import IndexManager
 from docket.infra.index.vector_index import LanceIndexWriter
 from docket.infra.inference.gateway import FakeInferenceGateway
+from docket.infra.parsing.legacy_office import LegacyConverter
 from docket.services.ingestion.pipeline import IngestionPipeline
 from docket.infra.parsing.docling_wrapper import DoclingParser
 from docket.infra.parsing.recipes import DEFAULT_SPLITTER, ChunkRecipe
@@ -154,6 +155,8 @@ def env(
         parser=parser,
         index_manager=index_manager,
         chunk_recipe=chunk_recipe,
+        # Never depend on (or launch) a real LibreOffice in the default fixture.
+        legacy_converter=LegacyConverter(enabled=False),
     )
 
     source_manager = SourceManager(session_factory)

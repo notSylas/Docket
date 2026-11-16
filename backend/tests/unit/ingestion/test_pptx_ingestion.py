@@ -120,20 +120,18 @@ def test_slide_with_no_extractable_content_ingests_without_crashing(
         assert units == []
 
 
-def test_ppt_file_fails_with_explicit_unsupported_format_error(env: SimpleNamespace) -> None:
+def test_ppt_file_is_skipped_with_reason_when_no_converter(env: SimpleNamespace) -> None:
     path = env.folder / "legacy.ppt"
     path.write_bytes(b"not a real legacy ppt file")
 
     result = env.pipeline.run_ingestion_for_source(env.source.id)
 
-    assert result.files_processed == 1
-    assert result.files_failed == 1
+    assert result.files_failed == 0
     [file_result] = result.file_results
-    assert file_result.status == "failed"
-    assert "unsupported" in file_result.error.lower()
-    assert "ppt" in file_result.error.lower()
+    assert file_result.status == "skipped"
+    assert file_result.skip_reason == "converter_missing"
 
-    # No EvidenceVersion row at all for a format refused before ingest_file.
+    # No EvidenceVersion row at all: refused before any evidence is created.
     with env.session_factory() as session:
         versions = session.execute(select(EvidenceVersion)).scalars().all()
         assert versions == []
