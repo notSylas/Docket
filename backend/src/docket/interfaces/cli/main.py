@@ -444,13 +444,18 @@ def library_clean(
 
 
 @app.command("backup")
-def backup_command(destination: Path | None = typer.Argument(None, help="New backup directory or .zip archive.")) -> None:
+def backup_command(
+    destination: Path | None = typer.Argument(None, help="New backup directory or .zip archive."),
+    incremental_from: Path | None = typer.Option(
+        None, "--incremental-from",
+        help="A previous directory backup on the same disk; unchanged originals are linked, not copied again."),
+) -> None:
     """Save a verified snapshot of this local library."""
     from docket.core.config import Settings
     from docket.services.backup import BackupError, backup
 
     try:
-        saved = backup(Settings().data_dir, destination)
+        saved = backup(Settings().data_dir, destination, reuse_from=incremental_from)
     except BackupError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from None

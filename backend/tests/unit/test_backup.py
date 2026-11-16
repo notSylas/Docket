@@ -121,7 +121,7 @@ def test_interrupted_backup_never_publishes_partial(library, tmp_path, monkeypat
     target = tmp_path / "interrupted"
     def interrupt(*args, **kwargs):
         raise KeyboardInterrupt()
-    monkeypatch.setattr(snapshots.shutil, "copyfile", interrupt)
+    monkeypatch.setattr(snapshots, "_copy_hashed", interrupt)
     with pytest.raises(KeyboardInterrupt):
         snapshots.backup(library.settings.data_dir, target)
     assert not target.exists()
@@ -278,12 +278,12 @@ def test_killed_backup_process_leaves_no_published_snapshot(library, tmp_path):
 import sys
 from pathlib import Path
 from docket.services import backup as snapshots
-original = snapshots.shutil.copyfile
+original = snapshots._copy_hashed
 def pause(*args, **kwargs):
     print('copying', flush=True)
     sys.stdin.readline()
     return original(*args, **kwargs)
-snapshots.shutil.copyfile = pause
+snapshots._copy_hashed = pause
 snapshots.backup(Path(sys.argv[1]), Path(sys.argv[2]))
 """
     process = subprocess.Popen([sys.executable, "-c", script, str(root), str(target)],
@@ -304,3 +304,154 @@ snapshots.backup(Path(sys.argv[1]), Path(sys.argv[2]))
         if process.poll() is None:
             process.kill()
             process.communicate(timeout=5)
+
+
+# -- lighter backup: lock scope, single read pass, incremental reuse ------------
+
+
+def _other_thread_can_lock(root) -> str:
+    """Same-thread acquisition is re-entrant, so probe from a different thread."""
+    import threading
+    out = []
+
+    def attempt():
+        try:
+            with WriterLock(root, timeout=0.2).hold("concurrent writer"):
+                out.append("acquired")
+        except WriterLockBusyError:
+            out.append("busy")
+
+    t = threading.Thread(target=attempt)
+    t.start()
+    t.join()
+    return out[0]
+
+
+def test_backup_does_not_hold_writer_lock_while_copying_evidence(library, tmp_path, monkeypatch):
+    root = library.settings.data_dir
+    attempts = []
+    real = snapshots._copy_hashed
+
+    def probe(source, target):
+        if "objects" in target.parts:
+            attempts.append(_other_thread_can_lock(root))
+        return real(source, target)
+
+    monkeypatch.setattr(snapshots, "_copy_hashed", probe)
+    snapshots.backup(root, tmp_path / "snap")
+    assert attempts and set(attempts) == {"acquired"}
+
+
+def test_backup_holds_writer_lock_while_capturing_database(library, tmp_path, monkeypatch):
+    root = library.settings.data_dir
+    seen = []
+    real = snapshots._copy_database
+
+    def probe(source, copied):
+        seen.append(_other_thread_can_lock(root))
+        return real(source, copied)
+
+    monkeypatch.setattr(snapshots, "_copy_database", probe)
+    snapshots.backup(root, tmp_path / "snap")
+    assert seen == ["busy"]
+
+
+def test_backup_reads_each_stored_original_once(library, tmp_path, monkeypatch):
+    root = library.settings.data_dir
+    reads = []
+    real_hash, real_copy = snapshots._hash, snapshots._copy_hashed
+    monkeypatch.setattr(snapshots, "_hash", lambda p: (reads.append(p.name), real_hash(p))[1])
+    monkeypatch.setattr(snapshots, "_copy_hashed", lambda s, t: (reads.append(s.name), real_copy(s, t))[1])
+    snapshots.backup(root, tmp_path / "snap")
+    with library.session_factory() as session:
+        digest = session.execute(select(EvidenceVersion.content_hash)).scalar_one()
+    assert reads.count(digest) == 1
+
+
+def test_restore_reads_each_stored_original_once(library, tmp_path, monkeypatch):
+    destination = snapshots.backup(library.settings.data_dir, tmp_path / "snap")
+    with library.session_factory() as session:
+        digest = session.execute(select(EvidenceVersion.content_hash)).scalar_one()
+    real = snapshots._hash
+    reads = []
+    monkeypatch.setattr(snapshots, "_hash", lambda p: (reads.append(p.name), real(p))[1])
+    snapshots.restore(tmp_path / "restored", destination)
+    assert digest not in reads  # proven by the manifest pass in _read_snapshot
+
+
+def test_incremental_backup_links_unchanged_originals_and_round_trips(library, tmp_path, monkeypatch):
+    root = library.settings.data_dir
+    first = snapshots.backup(root, tmp_path / "first")
+    with library.session_factory() as session:
+        digest = session.execute(select(EvidenceVersion.content_hash)).scalar_one()
+    rel = Path("evidence_store") / "objects" / digest[:2] / digest
+
+    copies = []
+    real = snapshots._copy_hashed
+    monkeypatch.setattr(snapshots, "_copy_hashed", lambda s, t: (copies.append(s.name), real(s, t))[1])
+    second = snapshots.backup(root, tmp_path / "second", reuse_from=first)
+    assert digest not in copies
+    assert (second / rel).stat().st_ino == (first / rel).stat().st_ino
+
+    manifest = json.loads((second / "backup.json").read_text())
+    assert manifest["files"][rel.as_posix()]["sha256"] == digest
+    target = tmp_path / "restored"
+    snapshots.restore(target, second)
+    assert (target / rel).read_bytes() == library.store.get(digest)
+
+
+def test_incremental_backup_ignores_damaged_or_missing_previous(library, tmp_path):
+    root = library.settings.data_dir
+    first = snapshots.backup(root, tmp_path / "first")
+    (first / "backup.json").write_text("{not json")
+    second = snapshots.backup(root, tmp_path / "second", reuse_from=first)
+    snapshots.restore(tmp_path / "restored", second)
+    third = snapshots.backup(root, tmp_path / "third", reuse_from=tmp_path / "does-not-exist")
+    assert (third / "backup.json").is_file()
+
+
+def test_incremental_backup_does_not_trust_previous_object_with_wrong_size(library, tmp_path):
+    root = library.settings.data_dir
+    first = snapshots.backup(root, tmp_path / "first")
+    with library.session_factory() as session:
+        digest = session.execute(select(EvidenceVersion.content_hash)).scalar_one()
+    rel = Path("evidence_store") / "objects" / digest[:2] / digest
+    (first / rel).write_bytes(b"truncated")
+    second = snapshots.backup(root, tmp_path / "second", reuse_from=first)
+    assert (second / rel).read_bytes() == library.store.get(digest)
+    assert (second / rel).stat().st_ino != (first / rel).stat().st_ino
+
+
+def test_backup_detects_damaged_stored_original(library, tmp_path):
+    root = library.settings.data_dir
+    with library.session_factory() as session:
+        digest = session.execute(select(EvidenceVersion.content_hash)).scalar_one()
+    (root / "evidence_store" / "objects" / digest[:2] / digest).write_bytes(b"bit rot")
+    with pytest.raises(snapshots.BackupError):
+        snapshots.backup(root, tmp_path / "snap")
+    assert not (tmp_path / "snap").exists()
+
+
+def test_backup_survives_object_trashed_after_snapshot(library, tmp_path, monkeypatch):
+    root = library.settings.data_dir
+    with library.session_factory() as session:
+        digest = session.execute(select(EvidenceVersion.content_hash)).scalar_one()
+    real = snapshots._copy_hashed
+    moved = []
+
+    def trash_first(source, target):
+        if not moved and "objects" in source.parts:
+            moved.append(library.store.move_to_trash(digest))
+        return real(source, target)
+
+    monkeypatch.setattr(snapshots, "_copy_hashed", trash_first)
+    out = snapshots.backup(root, tmp_path / "snap")
+    assert moved and (out / "evidence_store" / "objects" / digest[:2] / digest).is_file()
+
+
+def test_zip_round_trip_with_stored_originals(library, tmp_path):
+    destination = snapshots.backup(library.settings.data_dir, tmp_path / "snap.zip")
+    with zipfile.ZipFile(destination) as z:
+        infos = [i for i in z.infolist() if "/objects/" in i.filename]
+        assert infos and all(i.compress_type == zipfile.ZIP_STORED for i in infos)
+    snapshots.restore(tmp_path / "restored", destination)
