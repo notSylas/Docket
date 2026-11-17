@@ -29,6 +29,10 @@ from docket.prompts.judge import JUDGE_SYSTEM, fact_prompt, support_prompt
 
 DEFAULT_JUDGE_MODEL = "qwen3:30b"
 DEFAULT_CROSS_CHECK_MODEL = "gemma3:12b"
+# Documented independent judge: a different model family from the qwen3 answering model, so
+# `--model gemma3:12b` is the supported way to judge without self-judging. Keep qwen3:14b
+# available (with --allow-self-judge) only for comparison with earlier results.
+INDEPENDENT_JUDGE_MODEL = "gemma3:12b"
 MAX_ATTEMPTS = 3
 MAX_JUDGE_PROMPT_CHARS = 24000
 
@@ -160,6 +164,25 @@ class JudgedRun(BaseModel):
 
 def is_self_judged(answer_model: str | None, judge_models: list[str]) -> bool:
     return bool(answer_model) and answer_model in judge_models
+
+
+class SelfJudgeError(GoldSetError):
+    """Raised when a judge model is also the answering model and self-judging was not allowed."""
+
+
+def require_independent_judge(
+    answer_models: list[str] | set[str], judge_models: list[str], *, allow_self_judge: bool = False
+) -> list[str]:
+    """Answer models that are also judges. Raises SelfJudgeError unless `allow_self_judge`;
+    model-to-model agreement is never human validation, so the default is to refuse."""
+    clash = sorted(a for a in answer_models if is_self_judged(a, judge_models))
+    if clash and not allow_self_judge:
+        raise SelfJudgeError(
+            f"self-judging refused: {', '.join(clash)} is both the answering model and a judge "
+            f"(judges: {', '.join(judge_models)}). Use an independent judge such as "
+            f"--model {INDEPENDENT_JUDGE_MODEL}, or pass --allow-self-judge to compare against older results"
+        )
+    return clash
 
 
 def _combine(supported: list[bool | None]) -> JudgeVerdict:

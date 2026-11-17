@@ -107,7 +107,14 @@ def judge_cmd(
     gold: Path = typer.Option(..., "--gold"),
     runs: Path = typer.Option(..., "--runs", help="JSONL from `docket eval run`."),
     out: Path | None = typer.Option(None, "--out", help="Judged JSONL (default: <runs>.judged.jsonl)."),
-    model: str = typer.Option(None, "--model", help="Judge model (default qwen3:30b)."),
+    model: str = typer.Option(
+        None, "--model",
+        help="Judge model (default qwen3:30b). Use gemma3:12b as the independent judge for qwen3 answers.",
+    ),
+    allow_self_judge: bool = typer.Option(
+        False, "--allow-self-judge",
+        help="Permit a judge that is also the answering model (comparison only; refused by default).",
+    ),
     cross_check: bool = typer.Option(False, "--cross-check", help="Also judge with a second model and record disagreements."),
     cross_model: str = typer.Option(None, "--cross-model", help="Cross-check model (default gemma3:12b)."),
 ) -> None:
@@ -133,7 +140,7 @@ def judge_cmd(
         cross = ClaimJudge(_make_gateway(cross_name), cross_name)
     out_path = out or runs.with_name(runs.stem + ".judged.jsonl")
     from docket.eval.hygiene import verify_gold_binding
-    from docket.eval.judge import is_self_judged
+    from docket.eval.judge import SelfJudgeError, require_independent_judge
 
     try:
         verify_gold_binding(gold_set, records)
@@ -142,8 +149,12 @@ def judge_cmd(
     answer_models = {str(r.configuration["gen_model"]) for r in records if r.configuration.get("gen_model")}
     judge_names = [primary_name] + ([cross_name] if cross is not None else [])
     typer.echo(f"Judge identity: {', '.join(judge_names)} (answering model: {', '.join(sorted(answer_models)) or 'not recorded'})")
-    if any(is_self_judged(a, judge_names) for a in answer_models):
-        typer.echo("WARNING: self-judged -- a judge model is also the answering model.", err=True)
+    try:
+        clash = require_independent_judge(answer_models, judge_names, allow_self_judge=allow_self_judge)
+    except SelfJudgeError as exc:
+        raise _fail(str(exc)) from exc
+    if clash:
+        typer.echo("WARNING: self-judged (--allow-self-judge) -- a judge model is also the answering model.", err=True)
 
     def progress(name: str, done: int, total: int) -> None:
         typer.echo(f"[{name}] claim {done}/{total}")
@@ -156,7 +167,7 @@ def judge_cmd(
     disagreements = sum(r.disagreement for r in judged)
     typer.echo(
         f"Wrote {len(judged)} verdicts to {out_path} "
-        f"({by_source['judge']} judged, {doubts} doubt, {disagreements} cross-check disagreements)"
+        f"({by_source['judge']} judged, {doubts} doubt, {disagreements} cross-check disagreements: model-to-model agreement, not human validation)"
     )
 
 
