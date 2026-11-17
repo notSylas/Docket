@@ -365,6 +365,47 @@ def calibrate_score_cmd(
     typer.echo(format_calibration(result))
 
 
+@calibrate_app.command("sheet-export")
+def calibrate_sheet_export_cmd(
+    results_dir: Path = typer.Option(..., "--results-dir", help="Folder of saved runs (*.jsonl) and judged files (*.j14.jsonl)."),
+    out_dir: Path = typer.Option(None, "--out-dir", help="Default: <results-dir>/labels (created 0700, files 0600)."),
+    gold_dir: Path = typer.Option(None, "--gold-dir", help="Folder of gold*.yaml (default backend/eval-public)."),
+    n: int = typer.Option(80, "--n", min=2, help="Total items including seeded ones."),
+    seeded: int = typer.Option(12, "--seeded", min=0, help="Seeded mutated answers (wrong number/entity, unsupported sentence)."),
+    seed: int = typer.Option(0, "--seed"),
+) -> None:
+    """Export a blind, stratified human-label sheet (CSV+JSONL), instructions and a separate key."""
+    from docket.eval.calibration_sheet import discover_sources, export_label_sheet
+
+    gold_dir = gold_dir or Path(__file__).resolve().parents[3] / "eval-public"
+    try:
+        sources = discover_sources(results_dir, gold_dir)
+        summary = export_label_sheet(sources, out_dir or results_dir / "labels", n=n, seeded=seeded, seed=seed)
+    except GoldSetError as exc:
+        raise _fail(str(exc)) from exc
+    typer.echo(f"Exported {summary['items']} items ({summary['real']} real, {summary['seeded']} seeded) from {summary['sources']} sources")
+    typer.echo(f"Strata: {summary['strata']}")
+    for name, path in summary["paths"].items():
+        typer.echo(f"  {name}: {path}")
+    typer.echo("Give labelers ONLY the sheet and the instructions; keep labels_key.jsonl private.")
+
+
+@calibrate_app.command("sheet-score")
+def calibrate_sheet_score_cmd(
+    labels: Path = typer.Option(..., "--labels", help="The returned CSV/JSONL sheet."),
+    key: Path = typer.Option(..., "--key", help="labels_key.jsonl written at export."),
+    n_boot: int = typer.Option(5000, "--n-boot", min=100),
+) -> None:
+    """Kappa (bootstrap CI), agreement and confusion matrix of each judge vs the human labels."""
+    from docket.eval.calibration_sheet import format_sheet_score, load_key, load_returned_labels, score_label_sheet
+
+    try:
+        result = score_label_sheet(load_returned_labels(labels), load_key(key), n_boot=n_boot)
+    except GoldSetError as exc:
+        raise _fail(str(exc)) from exc
+    typer.echo(format_sheet_score(result))
+
+
 @eval_app.command("freeze")
 def freeze_cmd(
     corpus: Path = typer.Option(..., "--corpus"),

@@ -204,3 +204,13 @@ def format_calibration(result: CalibrationResult) -> str:
         lines.append("Disagreements:")
         lines.extend(f"  {d}" for d in result.disagreements)
     return "\n".join(lines)
+
+
+# Blind multi-source human label sheet (stratified, seeded mutations, CSV/JSONL + key + scoring).
+from docket.eval.calibration_sheet import (  # noqa: E402,F401
+    export_label_sheet,
+    format_sheet_score,
+    load_key,
+    load_returned_labels,
+    score_label_sheet,
+)
