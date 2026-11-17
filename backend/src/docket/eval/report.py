@@ -16,7 +16,8 @@ from typing import Any, TYPE_CHECKING
 from docket.eval.judge import JudgedRun, judged_index, verdict_of
 from docket.eval.schema import GoldSet, GoldSetError, Question, RunRecord, fingerprint, validate_run_keys
 from docket.eval.scoring import RunScore, Verdict, score_run
-from docket.eval.stats import pass_all, pass_majority, wilson_interval
+from docket.eval.manifest import manifest_lines
+from docket.eval.stats import CI_METHOD, cluster_bootstrap_ci, pass_all, pass_majority, wilson_interval
 
 if TYPE_CHECKING:
     from docket.eval.benchmark import FrozenBenchmark
@@ -91,6 +92,18 @@ class Report:
     judge_disagreements: int = 0  # ...where the cross-check judge disagreed
     latency_p50_s: float | None = None  # end-to-end, over runs without error
     latency_p90_s: float | None = None
+    # Trust header (all optional-with-default so old callers keep working).
+    runs: int = 0  # scored runs (questions x repeats actually present)
+    ci_method: str = CI_METHOD
+    overall_ci: tuple[float, float] | None = None  # cluster bootstrap of the strict question-level rate
+    judge_models: list[str] = field(default_factory=list)
+    answer_models: list[str] = field(default_factory=list)
+    self_judged: bool = False
+    judge_identity: str = ""
+    configurations: list[dict] = field(default_factory=list)  # distinct recorded run configurations
+    manifest: dict | None = None
+    gold_fingerprint: str = ""
+    gold_binding: str = ""  # verified | N runs unbound | MISMATCH ...
 
 
 def classify_failure(question: Question, record: RunRecord, score: RunScore) -> str | None:
@@ -294,7 +307,35 @@ def build_report(
 
     latencies = [r.latency_s for _, r, _ in pairs if not r.error and r.latency_s > 0]
 
+    strict_runs = {qid: [s.verdict is Verdict.PASS for s in runs] for qid, runs in scores.items()}
+    judge_models = sorted({m for j in (judged or []) for m in j.judge_models})
+    answer_models = sorted({str(r.configuration["gen_model"]) for _, r, _ in pairs if r.configuration.get("gen_model")})
+    self_judged = bool(set(judge_models) & set(answer_models)) or any(j.self_judged for j in (judged or []))
+    judge_identity = (
+        ", ".join(judge_models) if judge_models
+        else "none (deterministic checks only)" if judged is None
+        else "not recorded in judged file"
+    )
+    seen_configs: dict[str, dict] = {}
+    for _, r, _ in pairs:
+        if r.configuration:
+            seen_configs.setdefault(fingerprint(r.configuration), r.configuration)
+    manifests = [r.manifest for _, r, _ in pairs if r.manifest]
+    unbound = sum(r.gold_fingerprint is None for _, r, _ in pairs)
+    mismatched = sum(r.gold_fingerprint not in (None, gold_digest) for _, r, _ in pairs)
+    gold_binding = (
+        f"MISMATCH ({mismatched} runs recorded against a different gold set)" if mismatched
+        else f"verified ({unbound} of {len(pairs)} runs carry no fingerprint)" if unbound
+        else "verified"
+    )
+
     return Report(
+        runs=len(pairs),
+        overall_ci=cluster_bootstrap_ci(strict_runs) if strict_runs else None,
+        judge_models=judge_models, answer_models=answer_models, self_judged=self_judged,
+        judge_identity=judge_identity, configurations=list(seen_configs.values()),
+        manifest=manifests[0] if manifests else None,
+        gold_fingerprint=gold_digest, gold_binding=gold_binding,
         repeats=max((len(v) for v in scores.values()), default=0),
         overall=_slice(scored_questions, scores),
         by_type=by_type,
@@ -361,9 +402,35 @@ def _accuracy_lines(report: Report) -> list[str]:
     return lines
 
 
+def _header_lines(report: Report) -> list[str]:
+    o = report.overall
+    lines = [
+        f"n = {o.questions} questions, {report.runs} runs (repeats per question: {report.repeats})",
+        f"CI method: {report.ci_method}"
+        + (f"; overall strict {report.overall_ci[0]:.1%}-{report.overall_ci[1]:.1%}" if report.overall_ci else "")
+        + "; per-row brackets are Wilson 95%",
+        f"Judge: {report.judge_identity or 'not recorded'}   answering model: "
+        + (", ".join(report.answer_models) or "not recorded"),
+    ]
+    if report.self_judged:
+        lines.append("WARNING: self-judged -- the answering model also acted as a judge; treat accuracy as optimistic")
+    if len(report.configurations) > 1:
+        lines.append(f"WARNING: {len(report.configurations)} different run configurations are mixed in this report")
+    if report.configurations:
+        cfg = report.configurations[0]
+        keys = ("gen_model", "embed_model", "top_k", "requested_mode", "num_ctx", "answer_temperature")
+        lines.append("Evaluation configuration: " + ", ".join(f"{k}={cfg[k]}" for k in keys if k in cfg))
+    else:
+        lines.append("Evaluation configuration: not recorded")
+    lines.append(f"Gold fingerprint: {report.gold_fingerprint[:12]}  binding: {report.gold_binding}")
+    lines.extend(manifest_lines(report.manifest))
+    return lines
+
+
 def format_report(report: Report) -> str:
     o = report.overall
     lines = [
+        *_header_lines(report),
         f"Questions: {o.questions}   repeats: {report.repeats}   (pass = majority of repeats)",
         *_accuracy_lines(report),
         f"Pass-all repeats     {o.pass_all.fmt()}",
