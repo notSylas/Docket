@@ -266,9 +266,12 @@ def build_methods(context: Any, service_factory: Callable[[Any, Any], Any]) -> d
         from docket.services.query.original_notes import original_notes
 
         notes = original_notes(context, [c.chunk_id for c in result.citations])
+        from docket.services.status import ask_metadata
+
         return {
             "answer": result.answer,
             "abstained": bool(result.abstained),
+            **ask_metadata(result),
             "citations": [
                 {
                     "label": c.citation_label,

@@ -1,6 +1,6 @@
 //! Local HTTP/JSON API types (`/v1/...`) and the worker result shapes.
 
-use crate::status::{Readiness, SourceCounts, StatusHealth};
+use crate::status::{IndexCoverage, Readiness, SourceCounts, StatusHealth};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -86,6 +86,20 @@ pub struct AskResult {
     pub citations: Vec<Citation>,
     #[serde(default)]
     pub timings: Timings,
+    /// Why the engine abstained, exactly as it recorded it (closed set, e.g.
+    /// `NO_EVIDENCE`). Absent when the engine recorded none (a UI shows
+    /// "not recorded"); never inferred here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub abstention_reason: Option<String>,
+    /// How much of the searched library was fully indexed (numbers only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index_coverage: Option<IndexCoverage>,
+    /// Files in the query scope when it was resolved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_file_count: Option<u64>,
+    /// Closed-code form of the engine's validation warnings.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warning_codes: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -355,10 +369,23 @@ mod tests {
         let ask = r#"{"answer":"a","abstained":true,"citations":[],"timings":{"total_s":0.5}}"#;
         let a: AskResult = serde_json::from_str(ask).unwrap();
         assert_eq!(serde_json::to_string(&a).unwrap(), ask);
+        assert!(a.abstention_reason.is_none() && a.warning_codes.is_empty());
     }
 
     #[test]
     fn new_ask_and_source_fields_round_trip() {
+        let a: AskResult = serde_json::from_value(json!({
+            "answer":"x","abstained":true,"abstention_reason":"NO_EVIDENCE","scope_file_count":4,
+            "index_coverage":{"indexed":3,"total":5,"keyword_only":2,"used_provisional":true},
+            "warning_codes":["no_citations"]
+        }))
+        .unwrap();
+        assert_eq!(a.abstention_reason.as_deref(), Some("NO_EVIDENCE"));
+        assert_eq!(a.index_coverage.as_ref().unwrap().total, 5);
+        assert_eq!(
+            serde_json::from_str::<AskResult>(&serde_json::to_string(&a).unwrap()).unwrap(),
+            a
+        );
         let r: SourcesResponse = serde_json::from_value(json!({"sources":[{
             "id":"s","display_name":"d","path":"/p","status":"active","files":1,"readiness":"partial",
             "anomalies":["empty_ready"],"counts":{"versions":{"known":true,"total":2,"ready":1,"empty_ready":1,"reconciles":true}}

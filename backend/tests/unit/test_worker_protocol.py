@@ -212,3 +212,21 @@ def test_sources_list_adds_readiness_and_counts(tmp_path):
     (s,) = msgs[0]["result"]["sources"]
     assert s["files"] == 3 and s["readiness"] == "unavailable"
     assert s["counts"]["versions"] == {"known": False, "reason": "db_missing"}
+
+
+def test_ask_passes_metadata_only_when_the_engine_set_it():
+    class Svc(FakeService):
+        def ask(self, q, **kw):
+            r = super().ask(q, **kw)
+            r.abstention_reason = "NO_EVIDENCE"
+            r.scope_file_count = 2
+            r.validation_warnings = ["answer is empty", "anything with /secret/path.txt"]
+            r.scope_label = "folder /secret"
+            return r
+
+    msgs, _ = run([req(1, "query.ask", {"question": "q"})], service=Svc(abstain=True))
+    r = msgs[0]["result"]
+    assert r["abstention_reason"] == "NO_EVIDENCE" and r["scope_file_count"] == 2 and r["warning_codes"] == ["empty_answer"]
+    assert "secret" not in json.dumps(r) and "index_coverage" not in r
+    plain, _ = run([req(2, "query.ask", {"question": "q"})])
+    assert not ({"abstention_reason", "warning_codes", "scope_file_count", "index_coverage"} & set(plain[0]["result"]))

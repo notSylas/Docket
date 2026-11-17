@@ -1,5 +1,5 @@
 """R2a status service: accounting units, readiness, read-only probes, privacy,
-closed code sets. CPU only: no Ollama, no model, no network
+closed code sets and ask metadata. CPU only: no Ollama, no model, no network
 beyond a loopback fake HTTP server."""
 
 from __future__ import annotations
@@ -404,3 +404,26 @@ def test_planted_paths_secrets_and_text_never_reach_output(lib):
 def test_failure_classifier_is_closed(text, code):
     got = st.classify_failure(text)
     assert got == code and got in st.FAILURE_CODES
+
+
+# -- ask metadata ------------------------------------------------------------
+
+def test_ask_metadata_maps_and_drops():
+    result = SimpleNamespace(
+        abstention_reason="NO_EVIDENCE", scope_file_count=4,
+        index_coverage={"indexed": 3, "total": 5, "keyword_only": 2, "indexing": True, "used_provisional": True},
+        validation_warnings=["answer contains no citations", f"free text with {SECRET}", "answer references an unknown citation: [x]",
+                             "3 of 5 files fully indexed; the other 2 are keyword-only so far.",
+                             "answer contains no citations"])
+    meta = st.ask_metadata(result)
+    assert meta == {"abstention_reason": "NO_EVIDENCE", "scope_file_count": 4,
+                    "index_coverage": {"indexed": 3, "total": 5, "keyword_only": 2, "used_provisional": True},
+                    "warning_codes": ["no_citations", "unknown_citation", "keyword_only_evidence"]}
+    assert SECRET not in json.dumps(meta)
+
+
+def test_ask_metadata_absent_when_engine_did_not_set_it():
+    assert st.ask_metadata(SimpleNamespace(abstention_reason=None, validation_warnings=[], index_coverage=None,
+                                           scope_file_count=None)) == {}
+    assert st.ask_metadata(SimpleNamespace()) == {}
+    assert st.ask_metadata(SimpleNamespace(abstention_reason="made_up")) == {}

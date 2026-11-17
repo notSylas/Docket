@@ -1641,6 +1641,39 @@ async fn user_cancel_is_a_relaunch_but_not_a_crash() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn answer_metadata_passes_through_and_old_documents_stay_identical() {
+    let mut d = start_health(&[], |_| {}).await;
+    let (code, body) = d.ask("meta").await;
+    assert_eq!(code, 200, "{body}");
+    let r: AskResult = serde_json::from_str(&body).unwrap();
+    assert!(r.abstained);
+    assert_eq!(r.abstention_reason.as_deref(), Some("NO_EVIDENCE"));
+    assert_eq!(r.scope_file_count, Some(4));
+    assert_eq!(r.index_coverage.unwrap().keyword_only, 2);
+    assert_eq!(r.warning_codes, vec!["no_citations".to_string()]);
+    assert_no_leak("/v1/ask", &body);
+    assert!(!body.contains("scope_label"));
+    // A plain answer keeps exactly the old keys.
+    let (_, body) = d.ask("rate?").await;
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let mut keys: Vec<_> = v.as_object().unwrap().keys().cloned().collect();
+    keys.sort();
+    assert_eq!(keys, ["abstained", "answer", "citations", "timings"]);
+    // The same fields travel in task events.
+    let id = d.new_task("meta", false).await;
+    d.wait_task(&id, "done", |t| t.state == TaskState::Succeeded)
+        .await;
+    let evs = d.events(&id).await;
+    let text = serde_json::to_string(&evs.iter().map(|e| &e.body).collect::<Vec<_>>()).unwrap();
+    assert!(
+        text.contains("NO_EVIDENCE") && text.contains("warning_codes"),
+        "{text}"
+    );
+    assert_no_leak("task events", &text);
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn hostile_worker_text_never_reaches_status_sources_or_events() {
     let mut d = start_health(&["--scenario", "hostile"], |_| {}).await;
     let s = d.healthy().await;

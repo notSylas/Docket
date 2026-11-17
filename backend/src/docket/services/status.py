@@ -70,6 +70,18 @@ FAILURE_CODES = frozenset({
 JOB_STATUSES = frozenset({"PENDING", "RUNNING", "SUCCEEDED", "FAILED", "PARTIAL"})
 OUTCOMES = ("ingested", "unchanged", "skipped", "failed", "pending", "running", "interrupted", "cancelled", "deleted")
 ANOMALIES = ("empty_ready", "interrupted_job", "dead_letters", "failed_versions", "keyword_only_idle", "job_partial")
+WARNING_CODES = {
+    "cited evidence is no longer available": "evidence_unavailable",
+    "retrieved evidence is no longer available": "evidence_unavailable",
+    "answer contains no citations": "no_citations",
+    "answer is empty": "empty_answer",
+    "the named file is outside the selected scope": "named_file_outside_scope",
+}
+ABSTENTION_REASONS = frozenset({
+    "NO_EVIDENCE", "INSUFFICIENT_SUPPORT", "SOURCE_UNAVAILABLE", "PERMISSION_CHANGED", "UNRESOLVED_CONFLICT",
+    "INVALID_DERIVATION", "VERIFIER_UNAVAILABLE", "CONTEXT_BUDGET_EXCEEDED",
+})
+
 _KEYWORD_SERVABLE = ("READY", "TEXT_READY")
 
 
@@ -522,3 +534,44 @@ def build_health(settings: Any, started_monotonic: float, protocol: int, feature
         "models": guarded(lambda: models_section(str(settings.gen_model), str(settings.embed_model), fetch=fetch)),
         "indexing": guarded(lambda: indexing_section(Path(settings.sqlite_path), Path(settings.data_dir))),
     }
+
+
+# ---- query metadata -------------------------------------------------------
+
+def ask_metadata(result: Any) -> dict:
+    """Optional ``query.ask`` fields from an engine result: only what the engine
+    set, mapped into closed codes / plain numbers. Free-text warnings and scope
+    labels are never forwarded."""
+    meta: dict[str, Any] = {}
+    reason = getattr(result, "abstention_reason", None)
+    reason = getattr(reason, "value", reason)
+    if isinstance(reason, str) and reason in ABSTENTION_REASONS:
+        meta["abstention_reason"] = reason
+    cov = getattr(result, "index_coverage", None)
+    if isinstance(cov, dict):
+        try:
+            meta["index_coverage"] = {
+                "indexed": int(cov["indexed"]), "total": int(cov["total"]),
+                "keyword_only": int(cov.get("keyword_only", 0)), "used_provisional": bool(cov.get("used_provisional", False)),
+            }
+        except (KeyError, TypeError, ValueError):
+            pass
+    count = getattr(result, "scope_file_count", None)
+    if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
+        meta["scope_file_count"] = count
+    codes: list[str] = []
+    for w in getattr(result, "validation_warnings", None) or []:
+        text = str(w)
+        code = WARNING_CODES.get(text)
+        if code is None:
+            if text.startswith("answer references an unknown citation"):
+                code = "unknown_citation"
+            elif text.startswith("no retrievable chunks in the named file"):
+                code = "named_file_empty"
+            elif " files fully indexed; the other " in text and text.endswith("are keyword-only so far."):
+                code = "keyword_only_evidence"
+        if code and code not in codes:
+            codes.append(code)
+    if codes:
+        meta["warning_codes"] = codes
+    return meta
