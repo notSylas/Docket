@@ -1,5 +1,6 @@
 //! Local HTTP/JSON API types (`/v1/...`) and the worker result shapes.
 
+use crate::status::{IndexCoverage, Readiness, SourceCounts, StatusHealth};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -77,7 +78,7 @@ pub struct Timings {
     pub by_phase: BTreeMap<String, f64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AskResult {
     pub answer: String,
     pub abstained: bool,
@@ -85,6 +86,20 @@ pub struct AskResult {
     pub citations: Vec<Citation>,
     #[serde(default)]
     pub timings: Timings,
+    /// Why the engine abstained, exactly as it recorded it (closed set, e.g.
+    /// `NO_EVIDENCE`). Absent when the engine recorded none (a UI shows
+    /// "not recorded"); never inferred here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub abstention_reason: Option<String>,
+    /// How much of the searched library was fully indexed (numbers only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index_coverage: Option<IndexCoverage>,
+    /// Files in the query scope when it was resolved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_file_count: Option<u64>,
+    /// Closed-code form of the engine's validation warnings.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warning_codes: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,8 +108,18 @@ pub struct SourceInfo {
     pub display_name: String,
     pub path: String,
     pub status: String,
+    /// Files usable now: READY or keyword-only versions that have chunks.
     #[serde(default)]
     pub files: u32,
+    /// Readiness (needs the `status.v2` capability); absent from old workers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub readiness: Option<Readiness>,
+    /// Closed-set anomaly flags, e.g. `empty_ready`, `interrupted_job`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub anomalies: Vec<String>,
+    /// Counts by accounting unit; see `docket_proto::status`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counts: Option<SourceCounts>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -142,6 +167,9 @@ pub struct StatusResponse {
     /// empty, so older clients see exactly the old document.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub capabilities: Vec<String>,
+    /// Health sections with freshness (only with the `status.v2` capability).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health: Option<Box<StatusHealth>>,
 }
 
 impl StatusResponse {
@@ -267,6 +295,7 @@ mod tests {
                 total_s: 1.5,
                 by_phase: BTreeMap::from([("generation".to_string(), 1.2)]),
             },
+            ..Default::default()
         };
         let s = serde_json::to_string(&r).unwrap();
         assert_eq!(serde_json::from_str::<AskResult>(&s).unwrap(), r);
@@ -314,6 +343,7 @@ mod tests {
             },
             busy: false,
             capabilities: vec![],
+            health: None,
         };
         let v = serde_json::to_string(&s).unwrap();
         assert!(v.contains(r#""state":"up""#));
@@ -327,5 +357,55 @@ mod tests {
         assert!(v.contains(r#""capabilities":["tasks.v1"]"#));
         assert!(with.has_capability("tasks.v1") && !with.has_capability("x"));
         assert_eq!(serde_json::from_str::<StatusResponse>(&v).unwrap(), with);
+    }
+    #[test]
+    fn old_documents_are_byte_identical_when_new_fields_are_absent() {
+        let status = r#"{"service":"ok","version":"0.1.0","worker":{"state":"up","restarts":0,"model":"m","chunks":1},"busy":false}"#;
+        let s: StatusResponse = serde_json::from_str(status).unwrap();
+        assert_eq!(serde_json::to_string(&s).unwrap(), status);
+        let src = r#"{"sources":[{"id":"s","display_name":"d","path":"/p","status":"active","files":3}]}"#;
+        let r: SourcesResponse = serde_json::from_str(src).unwrap();
+        assert_eq!(serde_json::to_string(&r).unwrap(), src);
+        let ask = r#"{"answer":"a","abstained":true,"citations":[],"timings":{"total_s":0.5}}"#;
+        let a: AskResult = serde_json::from_str(ask).unwrap();
+        assert_eq!(serde_json::to_string(&a).unwrap(), ask);
+        assert!(a.abstention_reason.is_none() && a.warning_codes.is_empty());
+    }
+
+    #[test]
+    fn new_ask_and_source_fields_round_trip() {
+        let a: AskResult = serde_json::from_value(json!({
+            "answer":"x","abstained":true,"abstention_reason":"NO_EVIDENCE","scope_file_count":4,
+            "index_coverage":{"indexed":3,"total":5,"keyword_only":2,"used_provisional":true},
+            "warning_codes":["no_citations"]
+        }))
+        .unwrap();
+        assert_eq!(a.abstention_reason.as_deref(), Some("NO_EVIDENCE"));
+        assert_eq!(a.index_coverage.as_ref().unwrap().total, 5);
+        assert_eq!(
+            serde_json::from_str::<AskResult>(&serde_json::to_string(&a).unwrap()).unwrap(),
+            a
+        );
+        let r: SourcesResponse = serde_json::from_value(json!({"sources":[{
+            "id":"s","display_name":"d","path":"/p","status":"active","files":1,"readiness":"partial",
+            "anomalies":["empty_ready"],"counts":{"versions":{"known":true,"total":2,"ready":1,"empty_ready":1,"reconciles":true}}
+        }]})).unwrap();
+        let s = &r.sources[0];
+        assert_eq!(s.readiness, Some(Readiness::Partial));
+        assert_eq!(
+            s.counts
+                .as_ref()
+                .unwrap()
+                .versions
+                .as_ref()
+                .unwrap()
+                .empty_ready,
+            Some(1)
+        );
+        let odd: SourceInfo = serde_json::from_value(
+            json!({"id":"s","display_name":"d","path":"p","status":"a","readiness":"???"}),
+        )
+        .unwrap();
+        assert_eq!(odd.readiness, Some(Readiness::Unknown));
     }
 }

@@ -51,6 +51,10 @@ fn base_config(dir: &Path, cmd: Vec<String>) -> Config {
         task_tail: 1024,
         retained_tasks: 16,
         max_queued: 1,
+        // Off by default so existing tests see no extra worker traffic.
+        health_interval: Duration::ZERO,
+        health_stale: Duration::from_millis(600),
+        health_timeout: Duration::from_secs(2),
     }
 }
 
@@ -1315,5 +1319,387 @@ async fn task_routes_enforce_the_same_input_limits() {
     // Error bodies never echo the question.
     let (_, b) = d.create_task("   ", false, None).await;
     assert!(!b.contains("aaaa"));
+    d.stop().await;
+}
+
+// ---------------------------------------------------------------------------
+// R2a: status, health freshness, source readiness, answer metadata
+// ---------------------------------------------------------------------------
+
+const HOSTILE_BITS: [&str; 3] = ["SECRET-9917", "/home/alice", "payroll"];
+
+fn assert_no_leak(what: &str, body: &str) {
+    for bit in HOSTILE_BITS {
+        assert!(!body.contains(bit), "{what} leaked {bit:?}: {body}");
+    }
+}
+
+fn health_cfg(c: &mut Config) {
+    c.health_interval = Duration::from_millis(100);
+    c.health_stale = Duration::from_millis(600);
+    c.health_timeout = Duration::from_secs(2);
+}
+
+impl Daemon {
+    fn healthlog_path(&self) -> PathBuf {
+        self.dir.path().join("healthlog")
+    }
+
+    fn health_calls(&self) -> usize {
+        std::fs::read_to_string(self.healthlog_path())
+            .map(|s| s.lines().count())
+            .unwrap_or(0)
+    }
+
+    async fn wait_status(
+        &self,
+        what: &str,
+        pred: impl Fn(&StatusResponse) -> bool,
+    ) -> StatusResponse {
+        let t0 = Instant::now();
+        loop {
+            let s = self.status().await;
+            if pred(&s) {
+                return s;
+            }
+            assert!(t0.elapsed() < T, "status never reached: {what}");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    async fn healthy(&self) -> StatusResponse {
+        self.wait_status("models section present", |s| {
+            s.health
+                .as_ref()
+                .is_some_and(|h| h.sections.models.is_some())
+        })
+        .await
+    }
+}
+
+/// Start with the health-capable fake worker; `extra` adds scenario flags.
+async fn start_health(extra: &[&str], tweak: impl FnOnce(&mut Config)) -> Daemon {
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("healthlog").display().to_string();
+    let mut args: Vec<&str> = vec!["--health", "--healthlog", &log];
+    args.extend_from_slice(extra);
+    let mut cfg = base_config(dir.path(), fake_cmd(dir.path(), &args));
+    health_cfg(&mut cfg);
+    tweak(&mut cfg);
+    Daemon::start_cfg(dir, cfg).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn old_worker_gets_no_status_v2_no_health_calls_and_the_old_status_document() {
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("healthlog").display().to_string();
+    let mut cfg = base_config(dir.path(), fake_cmd(dir.path(), &["--healthlog", &log]));
+    health_cfg(&mut cfg);
+    let mut d = Daemon::start_cfg(dir, cfg).await;
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    let (_, body) = d.get("/v1/status").await;
+    assert!(
+        !body.contains("status.v2") && !body.contains("health"),
+        "{body}"
+    );
+    assert!(body.contains("tasks.v1"));
+    assert_eq!(d.health_calls(), 0, "an old worker is never sent `health`");
+    let (_, src) = d.get("/v1/sources").await;
+    assert!(
+        !src.contains("readiness") && !src.contains("counts"),
+        "{src}"
+    );
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn capable_worker_advertises_status_v2_and_serves_fresh_sections() {
+    let mut d = start_health(&[], |_| {}).await;
+    let s = d.healthy().await;
+    assert!(s.has_capability("status.v2") && s.has_capability("tasks.v1"));
+    let h = s.health.unwrap();
+    let models = h.sections.models.unwrap();
+    assert_eq!(models.data.answer.name, "fake-model");
+    assert_eq!(models.data.answer.resident, docket_proto::status::Tri::Yes);
+    assert_eq!(models.data.embed.resident, docket_proto::status::Tri::No);
+    assert_eq!(models.stale, Some(false));
+    assert!(models.checked_at_ms.is_some() && models.age_ms.is_some());
+    let p = h.sections.process.unwrap();
+    assert!(p.data.features.iter().any(|f| f == "health.v1"));
+    assert_eq!(h.worker_process.state, WorkerState::Up);
+    assert_eq!(
+        h.worker_process.responsiveness,
+        docket_proto::status::Responsiveness::Responsive
+    );
+    assert_eq!(h.worker_process.crashes, 0);
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn scenarios_are_reported_with_states_codes_and_source_readiness() {
+    use docket_proto::status::{Readiness, SectionState, Tri};
+    for (scenario, ready, check) in [
+        ("db_unavailable", Readiness::Ready, 0),
+        ("model_missing", Readiness::Ready, 1),
+        ("indexing", Readiness::Indexing, 2),
+        ("partial", Readiness::Partial, 3),
+        ("empty_ready", Readiness::Partial, 3),
+    ] {
+        let mut d = start_health(&["--scenario", scenario], |_| {}).await;
+        let h = d.healthy().await.health.unwrap();
+        match check {
+            0 => {
+                let db = h.sections.database.unwrap();
+                assert_eq!(db.state, SectionState::Unavailable);
+                assert_eq!(db.code, "db_unreadable");
+                assert_eq!(db.data.readable, Tri::No);
+            }
+            1 => {
+                let m = h.sections.models.unwrap();
+                assert_eq!(
+                    (m.state, m.code.as_str()),
+                    (SectionState::Degraded, "model_missing")
+                );
+                assert_eq!(m.data.answer.installed, Tri::No);
+                assert_eq!(m.data.embed.resident, Tri::Unknown);
+            }
+            2 => {
+                let i = h.sections.indexing.unwrap();
+                let v = i.data.versions.unwrap();
+                assert_eq!((v.ready, v.pending, v.reconciles), (Some(1), Some(2), true));
+            }
+            _ => {
+                let v = h.sections.indexing.unwrap().data.versions.unwrap();
+                assert_eq!((v.ready, v.empty_ready), (Some(2), Some(1)));
+            }
+        }
+        let (_, body) = d.get("/v1/sources").await;
+        let s: SourcesResponse = serde_json::from_str(&body).unwrap();
+        assert_eq!(s.sources[0].readiness, Some(ready), "{scenario}");
+        assert_eq!(s.sources[0].files, 3, "old `files` is untouched");
+        let c = s.sources[0].counts.as_ref().unwrap();
+        // Tiered/path-only history: unknown, never zero.
+        let job = c.job.as_ref().unwrap();
+        assert!(!job.known && job.skipped_by_code.is_empty() && job.files.is_none());
+        assert_eq!(c.history.as_ref().unwrap().superseded, Some(2));
+        d.stop().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn status_never_blocks_during_a_slow_question_and_refresh_pauses_then_resumes() {
+    let mut d = start_health(&[], |_| {}).await;
+    let _ = d.healthy().await;
+    let before = d.health_calls();
+    assert!(before >= 1);
+    let sock = d.sock.clone();
+    let asker = tokio::task::spawn_blocking(move || {
+        let body = serde_json::json!({"question": "slow"}).to_string();
+        let r = client::post_json(&sock, "/v1/ask", &body, None, T).unwrap();
+        r.status
+    });
+    d.wait_status("busy", |s| s.busy).await;
+    let calls_at_start = d.health_calls();
+    let t0 = Instant::now();
+    let mut worst = Duration::ZERO;
+    while t0.elapsed() < Duration::from_millis(900) {
+        let t = Instant::now();
+        let s = d.status().await;
+        worst = worst.max(t.elapsed());
+        let h = s.health.unwrap();
+        assert!(s.busy);
+        assert_eq!(
+            h.worker_process.responsiveness,
+            docket_proto::status::Responsiveness::Busy,
+            "busy, not stale-unresponsive"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(
+        worst < Duration::from_millis(250),
+        "status blocked: {worst:?}"
+    );
+    assert_eq!(
+        d.health_calls(),
+        calls_at_start,
+        "no health call while a question runs"
+    );
+    assert_eq!(asker.await.unwrap(), 200);
+    let s = d
+        .wait_status("refresh resumed", |s| {
+            !s.busy
+                && s.health
+                    .as_ref()
+                    .is_some_and(|h| h.refresh_skipped_busy > 0)
+        })
+        .await;
+    assert!(s.health.unwrap().refresh_skipped_busy > 0);
+    let t0 = Instant::now();
+    while d.health_calls() <= calls_at_start {
+        assert!(t0.elapsed() < T, "refresh never resumed");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_worker_that_stops_answering_health_leaves_stale_sections_with_age() {
+    let mut d = start_health(&["--health-never-after", "2"], |c| {
+        c.health_timeout = Duration::from_millis(400);
+        c.backoff_base = Duration::from_millis(100);
+        c.backoff_max = Duration::from_millis(200);
+    })
+    .await;
+    let _ = d.healthy().await;
+    let s = d
+        .wait_status("stale after health went silent", |s| {
+            s.health.as_ref().is_some_and(|h| {
+                h.refresh_error_code.is_some()
+                    && h.sections
+                        .models
+                        .as_ref()
+                        .is_some_and(|m| m.stale == Some(true))
+            })
+        })
+        .await;
+    let h = s.health.unwrap();
+    let m = h.sections.models.unwrap();
+    assert!(m.age_ms.unwrap() > 0, "age is reported, section not erased");
+    assert_eq!(h.refresh_error_code.as_deref(), Some("worker_timeout"));
+    assert!(h.worker_process.crashes >= 1);
+    assert_eq!(
+        h.worker_process.last_error_code.as_deref(),
+        Some("worker_timeout")
+    );
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn worker_crash_marks_process_down_counts_restarts_and_stales_the_rest() {
+    let mut d = start_health(&[], |c| {
+        c.backoff_base = Duration::from_millis(1500);
+        c.backoff_max = Duration::from_millis(1500);
+    })
+    .await;
+    let _ = d.healthy().await;
+    let (code, _) = d.ask("crash").await;
+    assert_eq!(code, 502);
+    let s = d
+        .wait_status("down", |s| s.worker.state == WorkerState::Down)
+        .await;
+    let h = s.health.unwrap();
+    assert_eq!(h.worker_process.state, WorkerState::Down);
+    assert_eq!(
+        h.worker_process.last_error_code.as_deref(),
+        Some("worker_crashed")
+    );
+    assert_eq!(h.worker_process.crashes, 1);
+    assert_eq!(h.worker_process.restarts, 0);
+    assert_eq!(
+        h.worker_process.responsiveness,
+        docket_proto::status::Responsiveness::Unresponsive
+    );
+    let m = h.sections.models.unwrap();
+    assert_eq!(m.stale, Some(true), "worker gone: previous data is stale");
+    assert!(m.age_ms.is_some());
+    // It comes back; restarts counts the relaunch, crashes stays 1.
+    let s = d
+        .wait_status("restarted", |s| {
+            s.worker.state == WorkerState::Up && s.worker.restarts == 1
+        })
+        .await;
+    assert_eq!(s.health.unwrap().worker_process.crashes, 1);
+    let h = d
+        .wait_status("fresh again", |s| {
+            s.health
+                .as_ref()
+                .and_then(|h| h.sections.models.as_ref())
+                .is_some_and(|m| m.stale == Some(false))
+        })
+        .await
+        .health
+        .unwrap();
+    assert_eq!(h.worker_process.state, WorkerState::Up);
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn user_cancel_is_a_relaunch_but_not_a_crash() {
+    let mut d = start_health(&[], |_| {}).await;
+    let _ = d.healthy().await;
+    let id = d.new_task("stream_stall", true).await;
+    d.wait_task(&id, "running", |t| t.state == TaskState::Running)
+        .await;
+    let _ = d.cancel_task(&id).await;
+    let s = d
+        .wait_status("relaunched", |s| {
+            s.worker.restarts == 1 && s.worker.state == WorkerState::Up
+        })
+        .await;
+    assert_eq!(s.health.unwrap().worker_process.crashes, 0);
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn answer_metadata_passes_through_and_old_documents_stay_identical() {
+    let mut d = start_health(&[], |_| {}).await;
+    let (code, body) = d.ask("meta").await;
+    assert_eq!(code, 200, "{body}");
+    let r: AskResult = serde_json::from_str(&body).unwrap();
+    assert!(r.abstained);
+    assert_eq!(r.abstention_reason.as_deref(), Some("NO_EVIDENCE"));
+    assert_eq!(r.scope_file_count, Some(4));
+    assert_eq!(r.index_coverage.unwrap().keyword_only, 2);
+    assert_eq!(r.warning_codes, vec!["no_citations".to_string()]);
+    assert_no_leak("/v1/ask", &body);
+    assert!(!body.contains("scope_label"));
+    // A plain answer keeps exactly the old keys.
+    let (_, body) = d.ask("rate?").await;
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let mut keys: Vec<_> = v.as_object().unwrap().keys().cloned().collect();
+    keys.sort();
+    assert_eq!(keys, ["abstained", "answer", "citations", "timings"]);
+    // The same fields travel in task events.
+    let id = d.new_task("meta", false).await;
+    d.wait_task(&id, "done", |t| t.state == TaskState::Succeeded)
+        .await;
+    let evs = d.events(&id).await;
+    let text = serde_json::to_string(&evs.iter().map(|e| &e.body).collect::<Vec<_>>()).unwrap();
+    assert!(
+        text.contains("NO_EVIDENCE") && text.contains("warning_codes"),
+        "{text}"
+    );
+    assert_no_leak("task events", &text);
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn hostile_worker_text_never_reaches_status_sources_or_events() {
+    let mut d = start_health(&["--scenario", "hostile"], |_| {}).await;
+    let s = d.healthy().await;
+    let (_, status) = d.get("/v1/status").await;
+    assert_no_leak("/v1/status", &status);
+    let (_, sources) = d.get("/v1/sources").await;
+    assert_no_leak("/v1/sources", &sources);
+    let src: SourcesResponse = serde_json::from_str(&sources).unwrap();
+    let c = src.sources[0].counts.as_ref().unwrap();
+    let job = c.job.as_ref().unwrap();
+    assert_eq!(job.failed_by_code.get("unknown"), Some(&2));
+    assert_eq!(job.failed_by_code.get("timeout"), Some(&1));
+    assert_eq!(src.sources[0].anomalies, vec!["unknown", "job_partial"]);
+    // Out-of-set code became "unknown"; unknown fields were dropped.
+    let h = s.health.unwrap();
+    assert_eq!(h.sections.models.unwrap().code, "unknown");
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tasks_off_still_serves_status_v2_alone() {
+    let mut d = start_health(&[], |c| c.tasks_enabled = false).await;
+    let s = d.healthy().await;
+    assert_eq!(s.capabilities, vec!["status.v2".to_string()]);
+    assert_eq!(d.get("/v1/tasks").await.0, 404);
+    let (code, _) = d.ask("rate?").await;
+    assert_eq!(code, 200);
     d.stop().await;
 }

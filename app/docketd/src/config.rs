@@ -36,6 +36,14 @@ pub struct Config {
     pub retained_tasks: usize,
     /// Tasks allowed to wait behind the running one (`POST /v1/tasks` only).
     pub max_queued: usize,
+    /// How often the daemon asks an idle worker for `health`. Zero disables
+    /// the refresh (and the `status.v2` capability).
+    pub health_interval: Duration,
+    /// A health section older than this is reported `stale`.
+    pub health_stale: Duration,
+    /// Limit for one `health` call. A worker that misses it is replaced like
+    /// any hung worker, so keep it generous but well under a question's.
+    pub health_timeout: Duration,
 }
 
 fn env_ms(name: &str, default: u64) -> Duration {
@@ -61,7 +69,9 @@ impl Config {
     /// `DOCKET_CALL_TIMEOUT_MS`, `DOCKET_STARTUP_TIMEOUT_MS`,
     /// `DOCKET_PING_INTERVAL_MS`, `DOCKET_BACKOFF_BASE_MS`, `DOCKET_BACKOFF_MAX_MS`,
     /// `DOCKET_CANCEL_GRACE_MS`, and for tasks `DOCKET_TASKS` (`off` hides the
-    /// task routes), `DOCKET_TASK_TAIL`, `DOCKET_RETAINED_TASKS`, `DOCKET_MAX_QUEUED_TASKS`.
+    /// task routes), `DOCKET_TASK_TAIL`, `DOCKET_RETAINED_TASKS`, `DOCKET_MAX_QUEUED_TASKS`, and for
+    /// status `DOCKET_HEALTH_INTERVAL_MS` (15000; 0 = off), `DOCKET_HEALTH_STALE_MS`
+    /// (3x the interval) and `DOCKET_HEALTH_TIMEOUT_MS` (5000).
     pub fn from_env() -> Result<Self, String> {
         let (socket, socket_is_default) = match std::env::var_os("DOCKET_SOCKET") {
             Some(p) => (PathBuf::from(p), false),
@@ -72,6 +82,7 @@ impl Config {
         if worker_cmd.is_empty() {
             return Err("DOCKET_WORKER_CMD is empty".into());
         }
+        let health_interval = env_ms("DOCKET_HEALTH_INTERVAL_MS", 15_000);
         Ok(Self {
             socket,
             socket_is_default,
@@ -91,6 +102,12 @@ impl Config {
             task_tail: env_usize("DOCKET_TASK_TAIL", 4096),
             retained_tasks: env_usize("DOCKET_RETAINED_TASKS", 16),
             max_queued: env_usize("DOCKET_MAX_QUEUED_TASKS", 1),
+            health_interval,
+            health_stale: env_ms(
+                "DOCKET_HEALTH_STALE_MS",
+                (health_interval.as_millis() as u64).saturating_mul(3),
+            ),
+            health_timeout: env_ms("DOCKET_HEALTH_TIMEOUT_MS", 5_000),
         })
     }
 }

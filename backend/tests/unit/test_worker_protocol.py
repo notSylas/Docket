@@ -174,3 +174,59 @@ def test_ask_without_stream_flag_gets_no_delta_callback_and_no_validating_phase(
     assert "on_delta" not in svc.calls[0][1]
     assert [m["params"]["phase"] for m in msgs if m.get("method") == "progress"] == [
         "retrieving", "reading", "answering"]
+
+
+# -- R2a: additive status protocol --------------------------------------------
+
+def test_ping_advertises_features_without_changing_protocol():
+    msgs, _ = run([req(1, "ping")])
+    r = msgs[0]["result"]
+    assert r["protocol"] == 1 and r["pong"] is True
+    assert {"health.v1", "sources.counts.v1", "ask.meta.v1"} <= set(r["features"])
+
+
+def test_health_method_returns_sections_and_never_leaks(tmp_path, monkeypatch):
+    from docket.services import status as st
+
+    monkeypatch.setattr(st, "models_section", lambda *a, **k: st._section("unavailable", "ollama_unreachable"))
+    ctx = make_context()
+    ctx.settings = SimpleNamespace(gen_model="g", embed_model="e", sqlite_path=tmp_path / "x.sqlite3", data_dir=tmp_path)
+    msgs, _ = run([req(1, "health")], ctx=ctx)
+    h = msgs[0]["result"]
+    assert h["v"] == 1
+    assert h["database"]["code"] == "db_missing" and h["models"]["code"] == "ollama_unreachable"
+    assert h["indexing"]["state"] == "unavailable" and h["process"]["state"] == "ok"
+    assert str(tmp_path) not in json.dumps(h)
+
+
+def test_sources_list_stays_old_shape_without_a_database_path():
+    msgs, _ = run([req(1, "sources.list")])
+    (s,) = msgs[0]["result"]["sources"]
+    assert set(s) == {"id", "display_name", "path", "status", "files"}
+
+
+def test_sources_list_adds_readiness_and_counts(tmp_path):
+    ctx = make_context()
+    ctx.settings = SimpleNamespace(gen_model="g", embed_model="e", sqlite_path=tmp_path / "none.sqlite3", data_dir=tmp_path)
+    msgs, _ = run([req(1, "sources.list")], ctx=ctx)
+    (s,) = msgs[0]["result"]["sources"]
+    assert s["files"] == 3 and s["readiness"] == "unavailable"
+    assert s["counts"]["versions"] == {"known": False, "reason": "db_missing"}
+
+
+def test_ask_passes_metadata_only_when_the_engine_set_it():
+    class Svc(FakeService):
+        def ask(self, q, **kw):
+            r = super().ask(q, **kw)
+            r.abstention_reason = "NO_EVIDENCE"
+            r.scope_file_count = 2
+            r.validation_warnings = ["answer is empty", "anything with /secret/path.txt"]
+            r.scope_label = "folder /secret"
+            return r
+
+    msgs, _ = run([req(1, "query.ask", {"question": "q"})], service=Svc(abstain=True))
+    r = msgs[0]["result"]
+    assert r["abstention_reason"] == "NO_EVIDENCE" and r["scope_file_count"] == 2 and r["warning_codes"] == ["empty_answer"]
+    assert "secret" not in json.dumps(r) and "index_coverage" not in r
+    plain, _ = run([req(2, "query.ask", {"question": "q"})])
+    assert not ({"abstention_reason", "warning_codes", "scope_file_count", "index_coverage"} & set(plain[0]["result"]))

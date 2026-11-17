@@ -1,6 +1,7 @@
 //! The local HTTP API. Served only on the Unix socket.
 
 use crate::config::Config;
+use crate::health::{self, HealthCache};
 use crate::tasks::{CancelOutcome, Pull, Registry, SubmitError, Tasks};
 use crate::worker::{CallError, CallOpts, WorkerHandle};
 use axum::body::Bytes;
@@ -40,6 +41,8 @@ pub struct AppState {
     call_timeout: Duration,
     counter: Arc<AtomicU64>,
     boot: u64,
+    cfg: Arc<Config>,
+    health: HealthCache,
 }
 
 impl AppState {
@@ -58,7 +61,24 @@ impl AppState {
             call_timeout: cfg.call_timeout,
             counter: Arc::new(AtomicU64::new(1)),
             boot,
+            cfg: Arc::new(cfg.clone()),
+            health: HealthCache::default(),
         }
+    }
+
+    /// Start the background health refresh (see `health`).
+    pub fn spawn_health(
+        &self,
+        cfg: &Config,
+        shutdown: tokio::sync::watch::Receiver<bool>,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(crate::health::refresh_loop(
+            cfg.clone(),
+            self.worker.clone(),
+            self.ask_slot.clone(),
+            self.health.clone(),
+            shutdown,
+        ))
     }
 
     pub fn registry(&self) -> Arc<Registry> {
@@ -159,16 +179,32 @@ fn call_error(e: CallError, rid: &str) -> (StatusCode, ErrorBody) {
 }
 
 async fn status(State(st): State<AppState>) -> Json<StatusResponse> {
+    // Never calls the worker: everything here is the daemon's own state or the
+    // cached health with its ages computed now.
+    let info = st.worker.info();
+    let meta = st.worker.meta();
+    let busy = st.ask_slot.available_permits() == 0;
+    let v2 =
+        !st.cfg.health_interval.is_zero() && meta.features.iter().any(|f| f == health::FEATURE);
+    let mut capabilities = Vec::new();
+    if st.tasks_enabled {
+        capabilities.push("tasks.v1".to_string());
+    }
+    if v2 {
+        capabilities.push("status.v2".to_string());
+    }
     Json(StatusResponse {
         service: "ok".into(),
         version: env!("CARGO_PKG_VERSION").into(),
-        worker: st.worker.info(),
-        busy: st.ask_slot.available_permits() == 0,
-        capabilities: if st.tasks_enabled {
-            vec!["tasks.v1".into()]
-        } else {
-            vec![]
-        },
+        busy,
+        capabilities,
+        health: v2.then(|| {
+            Box::new(
+                st.health
+                    .view(&st.cfg, &info, &meta, busy, health::now_ms()),
+            )
+        }),
+        worker: info,
     })
 }
 
@@ -183,7 +219,19 @@ async fn sources(State(st): State<AppState>, Extension(rid): Extension<RequestId
         .await
     {
         Ok(v) => match serde_json::from_value::<SourcesResponse>(v) {
-            Ok(s) => Json(s).into_response(),
+            Ok(mut s) => {
+                // Typed pass-through: only closed-set codes and counts survive.
+                for src in &mut s.sources {
+                    if let Some(c) = &mut src.counts {
+                        c.sanitize();
+                    }
+                    src.anomalies = std::mem::take(&mut src.anomalies)
+                        .into_iter()
+                        .map(|a| docket_proto::status::sanitize_code(&a))
+                        .collect();
+                }
+                Json(s).into_response()
+            }
             Err(_) => api_error(
                 StatusCode::BAD_GATEWAY,
                 "bad_worker_response",
