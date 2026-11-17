@@ -25,6 +25,17 @@ pub struct Config {
     /// First restart delay; doubles per consecutive failure up to `backoff_max`.
     pub backoff_base: Duration,
     pub backoff_max: Duration,
+    /// Serve `/v1/tasks...` and advertise `tasks.v1`. `DOCKET_TASKS=off` hides both.
+    pub tasks_enabled: bool,
+    /// How long a cancelled worker may take to exit after SIGTERM before the
+    /// whole process group is killed.
+    pub cancel_grace: Duration,
+    /// Events retained per task for `Last-Event-ID` replay.
+    pub task_tail: usize,
+    /// Finished tasks kept for listing and replay.
+    pub retained_tasks: usize,
+    /// Tasks allowed to wait behind the running one (`POST /v1/tasks` only).
+    pub max_queued: usize,
 }
 
 fn env_ms(name: &str, default: u64) -> Duration {
@@ -36,12 +47,21 @@ fn env_ms(name: &str, default: u64) -> Duration {
     )
 }
 
+fn env_usize(name: &str, default: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
 impl Config {
     /// Variables: `DOCKET_WORKER_CMD` (default `docket worker`),
     /// `DOCKET_DATA_DIR`, `DOCKET_SOCKET` (override), `XDG_RUNTIME_DIR`,
     /// plus millisecond tuning knobs `DOCKET_ASK_TIMEOUT_MS`,
     /// `DOCKET_CALL_TIMEOUT_MS`, `DOCKET_STARTUP_TIMEOUT_MS`,
-    /// `DOCKET_PING_INTERVAL_MS`, `DOCKET_BACKOFF_BASE_MS`, `DOCKET_BACKOFF_MAX_MS`.
+    /// `DOCKET_PING_INTERVAL_MS`, `DOCKET_BACKOFF_BASE_MS`, `DOCKET_BACKOFF_MAX_MS`,
+    /// `DOCKET_CANCEL_GRACE_MS`, and for tasks `DOCKET_TASKS` (`off` hides the
+    /// task routes), `DOCKET_TASK_TAIL`, `DOCKET_RETAINED_TASKS`, `DOCKET_MAX_QUEUED_TASKS`.
     pub fn from_env() -> Result<Self, String> {
         let (socket, socket_is_default) = match std::env::var_os("DOCKET_SOCKET") {
             Some(p) => (PathBuf::from(p), false),
@@ -63,6 +83,14 @@ impl Config {
             ping_interval: env_ms("DOCKET_PING_INTERVAL_MS", 10_000),
             backoff_base: env_ms("DOCKET_BACKOFF_BASE_MS", 500),
             backoff_max: env_ms("DOCKET_BACKOFF_MAX_MS", 10_000),
+            tasks_enabled: !matches!(
+                std::env::var("DOCKET_TASKS").ok().as_deref(),
+                Some("off" | "0" | "false" | "no")
+            ),
+            cancel_grace: env_ms("DOCKET_CANCEL_GRACE_MS", 750),
+            task_tail: env_usize("DOCKET_TASK_TAIL", 4096),
+            retained_tasks: env_usize("DOCKET_RETAINED_TASKS", 16),
+            max_queued: env_usize("DOCKET_MAX_QUEUED_TASKS", 1),
         })
     }
 }

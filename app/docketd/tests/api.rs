@@ -42,6 +42,11 @@ fn base_config(dir: &Path, cmd: Vec<String>) -> Config {
         ping_interval: Duration::from_millis(200),
         backoff_base: Duration::from_millis(100),
         backoff_max: Duration::from_millis(400),
+        tasks_enabled: true,
+        cancel_grace: Duration::from_millis(500),
+        task_tail: 1024,
+        retained_tasks: 16,
+        max_queued: 1,
     }
 }
 
