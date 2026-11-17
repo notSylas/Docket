@@ -1,0 +1,48 @@
+# Mandatory CPU-only CI (lane A). No GPU, no Ollama, no model calls, no secrets.
+# The GPU lane (marker `gpu`) is run locally: `./ci-local.sh --gpu`.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python-unit:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - name: Install backend (editable, with dev extras from pyproject.toml)
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+      - name: "Unit tests (CPU lane, GPU and integration tests deselected)"
+        working-directory: backend
+        run: python -m pytest tests/unit -m "not gpu and not integration" -q
+
+  rust-workspace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: System libraries for the egui app
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libxkbcommon-dev libwayland-dev libx11-dev libgl1-mesa-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app
+      - name: cargo test --workspace
+        working-directory: app
+        run: cargo test --workspace

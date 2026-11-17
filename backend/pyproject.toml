@@ -43,5 +43,6 @@ packages = ["src/docket"]
 [tool.pytest.ini_options]
 markers = [
     "integration: requires a running Ollama instance with qwen3:14b and qwen3-embedding:0.6b pulled",
+    "gpu: GPU lane (Ollama + ROCm hardware); deselected by the mandatory CPU-only CI (-m 'not gpu')",
 ]
 testpaths = ["tests"]
