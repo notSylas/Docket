@@ -203,3 +203,12 @@ def test_sources_list_stays_old_shape_without_a_database_path():
     msgs, _ = run([req(1, "sources.list")])
     (s,) = msgs[0]["result"]["sources"]
     assert set(s) == {"id", "display_name", "path", "status", "files"}
+
+
+def test_sources_list_adds_readiness_and_counts(tmp_path):
+    ctx = make_context()
+    ctx.settings = SimpleNamespace(gen_model="g", embed_model="e", sqlite_path=tmp_path / "none.sqlite3", data_dir=tmp_path)
+    msgs, _ = run([req(1, "sources.list")], ctx=ctx)
+    (s,) = msgs[0]["result"]["sources"]
+    assert s["files"] == 3 and s["readiness"] == "unavailable"
+    assert s["counts"]["versions"] == {"known": False, "reason": "db_missing"}

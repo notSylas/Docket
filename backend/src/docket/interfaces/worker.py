@@ -189,6 +189,12 @@ def build_methods(context: Any, service_factory: Callable[[Any, Any], Any]) -> d
             files = context.readiness.files_by_source()
         except Exception:  # noqa: BLE001
             files = {}
+        reports: dict = {}
+        db_path = getattr(context.settings, "sqlite_path", None)
+        if db_path is not None:
+            from docket.services.status import source_reports
+
+            reports = source_reports(db_path, context.settings.data_dir, [(s.id, s.status.value) for s in sources])
         return {
             "sources": [
                 {
@@ -197,6 +203,7 @@ def build_methods(context: Any, service_factory: Callable[[Any, Any], Any]) -> d
                     "path": s.path,
                     "status": s.status.value,
                     "files": int(files.get(s.id, 0)),
+                    **reports.get(s.id, {}),
                 }
                 for s in sources
             ]

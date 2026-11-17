@@ -1,6 +1,6 @@
 //! Local HTTP/JSON API types (`/v1/...`) and the worker result shapes.
 
-use crate::status::StatusHealth;
+use crate::status::{Readiness, SourceCounts, StatusHealth};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -97,6 +97,15 @@ pub struct SourceInfo {
     /// Files usable now: READY or keyword-only versions that have chunks.
     #[serde(default)]
     pub files: u32,
+    /// Readiness (needs the `status.v2` capability); absent from old workers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub readiness: Option<Readiness>,
+    /// Closed-set anomaly flags, e.g. `empty_ready`, `interrupted_job`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub anomalies: Vec<String>,
+    /// Counts by accounting unit; see `docket_proto::status`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counts: Option<SourceCounts>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -346,5 +355,30 @@ mod tests {
         let ask = r#"{"answer":"a","abstained":true,"citations":[],"timings":{"total_s":0.5}}"#;
         let a: AskResult = serde_json::from_str(ask).unwrap();
         assert_eq!(serde_json::to_string(&a).unwrap(), ask);
+    }
+
+    #[test]
+    fn new_ask_and_source_fields_round_trip() {
+        let r: SourcesResponse = serde_json::from_value(json!({"sources":[{
+            "id":"s","display_name":"d","path":"/p","status":"active","files":1,"readiness":"partial",
+            "anomalies":["empty_ready"],"counts":{"versions":{"known":true,"total":2,"ready":1,"empty_ready":1,"reconciles":true}}
+        }]})).unwrap();
+        let s = &r.sources[0];
+        assert_eq!(s.readiness, Some(Readiness::Partial));
+        assert_eq!(
+            s.counts
+                .as_ref()
+                .unwrap()
+                .versions
+                .as_ref()
+                .unwrap()
+                .empty_ready,
+            Some(1)
+        );
+        let odd: SourceInfo = serde_json::from_value(
+            json!({"id":"s","display_name":"d","path":"p","status":"a","readiness":"???"}),
+        )
+        .unwrap();
+        assert_eq!(odd.readiness, Some(Readiness::Unknown));
     }
 }

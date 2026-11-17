@@ -1436,6 +1436,57 @@ async fn capable_worker_advertises_status_v2_and_serves_fresh_sections() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn scenarios_are_reported_with_states_codes_and_source_readiness() {
+    use docket_proto::status::{Readiness, SectionState, Tri};
+    for (scenario, ready, check) in [
+        ("db_unavailable", Readiness::Ready, 0),
+        ("model_missing", Readiness::Ready, 1),
+        ("indexing", Readiness::Indexing, 2),
+        ("partial", Readiness::Partial, 3),
+        ("empty_ready", Readiness::Partial, 3),
+    ] {
+        let mut d = start_health(&["--scenario", scenario], |_| {}).await;
+        let h = d.healthy().await.health.unwrap();
+        match check {
+            0 => {
+                let db = h.sections.database.unwrap();
+                assert_eq!(db.state, SectionState::Unavailable);
+                assert_eq!(db.code, "db_unreadable");
+                assert_eq!(db.data.readable, Tri::No);
+            }
+            1 => {
+                let m = h.sections.models.unwrap();
+                assert_eq!(
+                    (m.state, m.code.as_str()),
+                    (SectionState::Degraded, "model_missing")
+                );
+                assert_eq!(m.data.answer.installed, Tri::No);
+                assert_eq!(m.data.embed.resident, Tri::Unknown);
+            }
+            2 => {
+                let i = h.sections.indexing.unwrap();
+                let v = i.data.versions.unwrap();
+                assert_eq!((v.ready, v.pending, v.reconciles), (Some(1), Some(2), true));
+            }
+            _ => {
+                let v = h.sections.indexing.unwrap().data.versions.unwrap();
+                assert_eq!((v.ready, v.empty_ready), (Some(2), Some(1)));
+            }
+        }
+        let (_, body) = d.get("/v1/sources").await;
+        let s: SourcesResponse = serde_json::from_str(&body).unwrap();
+        assert_eq!(s.sources[0].readiness, Some(ready), "{scenario}");
+        assert_eq!(s.sources[0].files, 3, "old `files` is untouched");
+        let c = s.sources[0].counts.as_ref().unwrap();
+        // Tiered/path-only history: unknown, never zero.
+        let job = c.job.as_ref().unwrap();
+        assert!(!job.known && job.skipped_by_code.is_empty() && job.files.is_none());
+        assert_eq!(c.history.as_ref().unwrap().superseded, Some(2));
+        d.stop().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn status_never_blocks_during_a_slow_question_and_refresh_pauses_then_resumes() {
     let mut d = start_health(&[], |_| {}).await;
     let _ = d.healthy().await;
@@ -1586,6 +1637,26 @@ async fn user_cancel_is_a_relaunch_but_not_a_crash() {
         })
         .await;
     assert_eq!(s.health.unwrap().worker_process.crashes, 0);
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn hostile_worker_text_never_reaches_status_sources_or_events() {
+    let mut d = start_health(&["--scenario", "hostile"], |_| {}).await;
+    let s = d.healthy().await;
+    let (_, status) = d.get("/v1/status").await;
+    assert_no_leak("/v1/status", &status);
+    let (_, sources) = d.get("/v1/sources").await;
+    assert_no_leak("/v1/sources", &sources);
+    let src: SourcesResponse = serde_json::from_str(&sources).unwrap();
+    let c = src.sources[0].counts.as_ref().unwrap();
+    let job = c.job.as_ref().unwrap();
+    assert_eq!(job.failed_by_code.get("unknown"), Some(&2));
+    assert_eq!(job.failed_by_code.get("timeout"), Some(&1));
+    assert_eq!(src.sources[0].anomalies, vec!["unknown", "job_partial"]);
+    // Out-of-set code became "unknown"; unknown fields were dropped.
+    let h = s.health.unwrap();
+    assert_eq!(h.sections.models.unwrap().code, "unknown");
     d.stop().await;
 }
 

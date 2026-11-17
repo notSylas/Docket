@@ -219,7 +219,19 @@ async fn sources(State(st): State<AppState>, Extension(rid): Extension<RequestId
         .await
     {
         Ok(v) => match serde_json::from_value::<SourcesResponse>(v) {
-            Ok(s) => Json(s).into_response(),
+            Ok(mut s) => {
+                // Typed pass-through: only closed-set codes and counts survive.
+                for src in &mut s.sources {
+                    if let Some(c) = &mut src.counts {
+                        c.sanitize();
+                    }
+                    src.anomalies = std::mem::take(&mut src.anomalies)
+                        .into_iter()
+                        .map(|a| docket_proto::status::sanitize_code(&a))
+                        .collect();
+                }
+                Json(s).into_response()
+            }
             Err(_) => api_error(
                 StatusCode::BAD_GATEWAY,
                 "bad_worker_response",
