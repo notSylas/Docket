@@ -14,17 +14,20 @@ from typing import Any
 import typer
 
 from docket.core.config import Settings
+from docket.eval.outputs import ensure_private_dir
 from docket.eval.schema import GoldSetError
 
 eval_app = typer.Typer(help="Measure answer accuracy: run a gold set, judge, report, compare, draft gold.")
 calibrate_app = typer.Typer(help="Calibrate the automatic judge against your own labels.")
 eval_app.add_typer(calibrate_app, name="calibrate")
+kag_app = typer.Typer(
+    help="Lane A (CPU-only, no model) KAG evaluation: silver gold, scratch library, metrics, review sheets."
+)
+eval_app.add_typer(kag_app, name="kag")
 
 
 def _eval_dir() -> Path:
-    path = Settings().data_dir / "eval"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+    return ensure_private_dir(Settings().data_dir / "eval")
 
 
 def _stamp() -> str:
@@ -75,7 +78,7 @@ def run_cmd(
     try:
         gold_set = load_gold_set(gold)
         out_path = out or _eval_dir() / f"runs-{_stamp()}.jsonl"
-        out_path.parent.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(out_path.parent)
 
         def progress(done: int, total: int, record: Any) -> None:
             flag = f" ERROR {record.error}" if record.error else ""
@@ -107,7 +110,14 @@ def judge_cmd(
     gold: Path = typer.Option(..., "--gold"),
     runs: Path = typer.Option(..., "--runs", help="JSONL from `docket eval run`."),
     out: Path | None = typer.Option(None, "--out", help="Judged JSONL (default: <runs>.judged.jsonl)."),
-    model: str = typer.Option(None, "--model", help="Judge model (default qwen3:30b)."),
+    model: str = typer.Option(
+        None, "--model",
+        help="Judge model (default qwen3:30b). Use gemma3:12b as the independent judge for qwen3 answers.",
+    ),
+    allow_self_judge: bool = typer.Option(
+        False, "--allow-self-judge",
+        help="Permit a judge that is also the answering model (comparison only; refused by default).",
+    ),
     cross_check: bool = typer.Option(False, "--cross-check", help="Also judge with a second model and record disagreements."),
     cross_model: str = typer.Option(None, "--cross-model", help="Cross-check model (default gemma3:12b)."),
 ) -> None:
@@ -133,7 +143,7 @@ def judge_cmd(
         cross = ClaimJudge(_make_gateway(cross_name), cross_name)
     out_path = out or runs.with_name(runs.stem + ".judged.jsonl")
     from docket.eval.hygiene import verify_gold_binding
-    from docket.eval.judge import is_self_judged
+    from docket.eval.judge import SelfJudgeError, require_independent_judge
 
     try:
         verify_gold_binding(gold_set, records)
@@ -142,8 +152,12 @@ def judge_cmd(
     answer_models = {str(r.configuration["gen_model"]) for r in records if r.configuration.get("gen_model")}
     judge_names = [primary_name] + ([cross_name] if cross is not None else [])
     typer.echo(f"Judge identity: {', '.join(judge_names)} (answering model: {', '.join(sorted(answer_models)) or 'not recorded'})")
-    if any(is_self_judged(a, judge_names) for a in answer_models):
-        typer.echo("WARNING: self-judged -- a judge model is also the answering model.", err=True)
+    try:
+        clash = require_independent_judge(answer_models, judge_names, allow_self_judge=allow_self_judge)
+    except SelfJudgeError as exc:
+        raise _fail(str(exc)) from exc
+    if clash:
+        typer.echo("WARNING: self-judged (--allow-self-judge) -- a judge model is also the answering model.", err=True)
 
     def progress(name: str, done: int, total: int) -> None:
         typer.echo(f"[{name}] claim {done}/{total}")
@@ -156,7 +170,7 @@ def judge_cmd(
     disagreements = sum(r.disagreement for r in judged)
     typer.echo(
         f"Wrote {len(judged)} verdicts to {out_path} "
-        f"({by_source['judge']} judged, {doubts} doubt, {disagreements} cross-check disagreements)"
+        f"({by_source['judge']} judged, {doubts} doubt, {disagreements} cross-check disagreements: model-to-model agreement, not human validation)"
     )
 
 
@@ -170,6 +184,7 @@ def report_cmd(
     labels: Path | None = typer.Option(None, "--labels", help="Human calibration labels."),
     calibration_judged: Path | None = typer.Option(None, "--calibration-judged", help="Judged dev runs used for calibration (defaults to --judged)."),
     require_milestone: bool = typer.Option(False, "--require-milestone", help="Exit 1 unless the accuracy milestone passes."),
+    redact: bool = typer.Option(False, "--redact", help="With --json: strip question/answer/passage text from the output."),
 ) -> None:
     """Print accuracy (with Wilson intervals), retrieval and failure breakdowns."""
     from docket.eval.judge import load_judged
@@ -197,9 +212,41 @@ def report_cmd(
         )
     except GoldSetError as exc:
         raise _fail(str(exc)) from exc
-    typer.echo(json.dumps(report_to_dict(report), indent=2) if as_json else format_report(report))
+    from docket.eval.outputs import redact_dict
+
+    payload = report_to_dict(report)
+    typer.echo(json.dumps(redact_dict(payload) if redact else payload, indent=2) if as_json else format_report(report))
     if require_milestone and not report.milestone["passed"]:
         raise typer.Exit(code=1)
+
+
+@eval_app.command("export")
+def export_cmd(
+    runs: Path = typer.Option(..., "--runs", help="JSONL from `docket eval run`."),
+    out: Path = typer.Option(..., "--out", help="New file (created 0600; refuses to overwrite)."),
+    judged: Path | None = typer.Option(None, "--judged", help="Judged JSONL to export instead of the runs."),
+    redact: bool = typer.Option(False, "--redact", help="Strip prompts, answers, passage text and judge reasons."),
+) -> None:
+    """Copy runs (or judged verdicts) to a new private file, optionally redacted for sharing."""
+    from docket.eval.judge import load_judged
+    from docket.eval.outputs import open_private, redact_dict, redact_record
+    from docket.eval.schema import load_records
+
+    try:
+        with open_private(out, overwrite=False) as fh:
+            count = 0
+            if judged is not None:
+                for run in load_judged(judged):
+                    data = run.model_dump(mode="json")
+                    fh.write(json.dumps(redact_dict(data) if redact else data) + "\n")
+                    count += 1
+            else:
+                for record in load_records(runs):
+                    fh.write((redact_record(record) if redact else record).model_dump_json() + "\n")
+                    count += 1
+    except (GoldSetError, OSError) as exc:
+        raise _fail(str(exc)) from exc
+    typer.echo(f"Wrote {count} {'redacted ' if redact else ''}lines to {out}")
 
 
 @eval_app.command("compare")
@@ -257,7 +304,7 @@ def draft_cmd(
         result = draft_questions(
             gateway, chunks, count=count, seed=seed, existing_questions=existing, progress=progress
         )
-        out_path.parent.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(out_path.parent)
         merge_into_file(out_path, result.questions)
     except (GoldSetError, EvalSetupError) as exc:
         raise _fail(str(exc)) from exc
@@ -322,6 +369,47 @@ def calibrate_score_cmd(
     typer.echo(format_calibration(result))
 
 
+@calibrate_app.command("sheet-export")
+def calibrate_sheet_export_cmd(
+    results_dir: Path = typer.Option(..., "--results-dir", help="Folder of saved runs (*.jsonl) and judged files (*.j14.jsonl)."),
+    out_dir: Path = typer.Option(None, "--out-dir", help="Default: <results-dir>/labels (created 0700, files 0600)."),
+    gold_dir: Path = typer.Option(None, "--gold-dir", help="Folder of gold*.yaml (default backend/eval-public)."),
+    n: int = typer.Option(80, "--n", min=2, help="Total items including seeded ones."),
+    seeded: int = typer.Option(12, "--seeded", min=0, help="Seeded mutated answers (wrong number/entity, unsupported sentence)."),
+    seed: int = typer.Option(0, "--seed"),
+) -> None:
+    """Export a blind, stratified human-label sheet (CSV+JSONL), instructions and a separate key."""
+    from docket.eval.calibration_sheet import discover_sources, export_label_sheet
+
+    gold_dir = gold_dir or Path(__file__).resolve().parents[3] / "eval-public"
+    try:
+        sources = discover_sources(results_dir, gold_dir)
+        summary = export_label_sheet(sources, out_dir or results_dir / "labels", n=n, seeded=seeded, seed=seed)
+    except GoldSetError as exc:
+        raise _fail(str(exc)) from exc
+    typer.echo(f"Exported {summary['items']} items ({summary['real']} real, {summary['seeded']} seeded) from {summary['sources']} sources")
+    typer.echo(f"Strata: {summary['strata']}")
+    for name, path in summary["paths"].items():
+        typer.echo(f"  {name}: {path}")
+    typer.echo("Give labelers ONLY the sheet and the instructions; keep labels_key.jsonl private.")
+
+
+@calibrate_app.command("sheet-score")
+def calibrate_sheet_score_cmd(
+    labels: Path = typer.Option(..., "--labels", help="The returned CSV/JSONL sheet."),
+    key: Path = typer.Option(..., "--key", help="labels_key.jsonl written at export."),
+    n_boot: int = typer.Option(5000, "--n-boot", min=100),
+) -> None:
+    """Kappa (bootstrap CI), agreement and confusion matrix of each judge vs the human labels."""
+    from docket.eval.calibration_sheet import format_sheet_score, load_key, load_returned_labels, score_label_sheet
+
+    try:
+        result = score_label_sheet(load_returned_labels(labels), load_key(key), n_boot=n_boot)
+    except GoldSetError as exc:
+        raise _fail(str(exc)) from exc
+    typer.echo(format_sheet_score(result))
+
+
 @eval_app.command("freeze")
 def freeze_cmd(
     corpus: Path = typer.Option(..., "--corpus"),
@@ -336,3 +424,102 @@ def freeze_cmd(
     except (GoldSetError, OSError) as exc:
         raise _fail(str(exc)) from exc
     typer.echo(f"Froze {len(manifest.files)} documents to {out}")
+
+
+def _default_kag_gold() -> Path:
+    return Path(__file__).resolve().parents[3] / "eval-public" / "kag" / "kag-gold-cuad12.silver.yaml"
+
+
+@kag_app.command("run")
+def kag_run_cmd(
+    db: Path = typer.Option(..., "--db", help="Scratch library docket.sqlite3 with the KAG tables built (never the real data dir)."),
+    gold: Path = typer.Option(None, "--gold", help="KAG gold YAML (default eval-public/kag/kag-gold-cuad12.silver.yaml)."),
+    ks: str = typer.Option("3,6,12", "--ks", help="Comma-separated k values for clause recall@k."),
+    human_only: bool = typer.Option(False, "--human-only", help="Only count human_reviewed items (silver excluded)."),
+    n_boot: int = typer.Option(2000, "--n-boot", min=100, help="Bootstrap resamples per metric."),
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output."),
+    redact: bool = typer.Option(False, "--redact", help="With --json: drop paths and document file names."),
+    out: Path | None = typer.Option(None, "--out", help="Also write the report here (created 0600)."),
+) -> None:
+    """Run the KAG Lane A evaluation (entity P/R, resolution, roles, clause recall on/off, provenance, lifecycle)."""
+    from docket.eval.kag.graph import RealDataDirError
+    from docket.eval.kag.run import format_kag_report, report_to_json, run_kag_eval
+    from docket.eval.kag.schema import load_kag_gold
+    from docket.eval.outputs import write_private_text
+
+    try:
+        gold_path = gold or _default_kag_gold()
+        report = run_kag_eval(
+            load_kag_gold(gold_path), db, gold_path=str(gold_path),
+            ks=tuple(int(k) for k in ks.split(",")), human_only=human_only, n_boot=n_boot,
+        )
+    except (GoldSetError, RealDataDirError, ValueError, OSError) as exc:
+        raise _fail(str(exc)) from exc
+    text = report_to_json(report, redact=redact) if as_json else format_kag_report(report)
+    typer.echo(text)
+    if out is not None:
+        write_private_text(out, text + "\n")
+
+
+@kag_app.command("silver")
+def kag_silver_cmd(
+    gold: list[Path] = typer.Option(None, "--gold", help="gold-cuad*.yaml to derive from (repeatable; default gold-cuad.yaml + gold-cuad-scale.yaml)."),
+    out: Path = typer.Option(None, "--out", help="Output YAML (default eval-public/kag/kag-gold-cuad12.silver.yaml)."),
+) -> None:
+    """Derive SILVER (unreviewed) KAG labels mechanically from existing gold; never marks anything human-reviewed."""
+    from docket.eval.kag.silver import build_silver, write_gold_yaml
+
+    base = Path(__file__).resolve().parents[3] / "eval-public"
+    paths = gold or [base / "gold-cuad.yaml", base / "gold-cuad-scale.yaml"]
+    try:
+        built = build_silver(paths, corpus="CUAD v1 12-contract slice")
+        write_gold_yaml(built, out or _default_kag_gold())
+    except (GoldSetError, OSError) as exc:
+        raise _fail(str(exc)) from exc
+    typer.echo(
+        f"Wrote silver gold to {out or _default_kag_gold()}: {len(built.entities)} entity docs, "
+        f"{len(built.resolution_pairs)} resolution pairs, {len(built.roles)} roles, {len(built.clauses)} clauses (all silver_unreviewed)"
+    )
+
+
+@kag_app.command("library")
+def kag_library_cmd(
+    source_db: Path = typer.Option(..., "--source-db", help="Existing scratch library whose stored chunks are reused."),
+    gold: Path = typer.Option(None, "--gold", help="KAG gold; its documents are copied (default silver gold)."),
+    dest: Path = typer.Option(..., "--dest", help="NEW scratch directory (never the real data dir)."),
+) -> None:
+    """Build a scratch library (no model, no embeddings): copy stored chunks, run the deterministic KAG builder."""
+    from docket.eval.kag.graph import RealDataDirError
+    from docket.eval.kag.schema import load_kag_gold
+    from docket.eval.kag.scratch import ScratchError, build_scratch_library
+
+    try:
+        files = sorted(load_kag_gold(gold or _default_kag_gold()).files())
+        info = build_scratch_library(source_db, files, dest)
+    except (GoldSetError, ScratchError, RealDataDirError, OSError) as exc:
+        raise _fail(str(exc)) from exc
+    typer.echo(f"Built {info['db']}: {info['documents']} documents, {info['chunks']} chunks, {info['built']} document rows built")
+
+
+@kag_app.command("review")
+def kag_review_cmd(
+    db: Path = typer.Option(..., "--db", help="Scratch library with the KAG tables built."),
+    out_dir: Path = typer.Option(..., "--out-dir", help="Review sheet directory (created 0700, files 0600; contains document text)."),
+    max_pairs: int = typer.Option(60, "--max-pairs", min=1),
+) -> None:
+    """Export CSV review sheets (entities, resolution pairs, relations) + instructions for a human."""
+    from docket.eval.kag.graph import RealDataDirError, connect_ro, load_snapshot
+    from docket.eval.kag.review_sheet import export_review_sheets
+
+    try:
+        conn = connect_ro(db)
+        try:
+            summary = export_review_sheets(conn, load_snapshot(conn), out_dir, max_pairs=max_pairs)
+        finally:
+            conn.close()
+    except (RealDataDirError, OSError) as exc:
+        raise _fail(str(exc)) from exc
+    typer.echo(f"Wrote review sheets: {summary['entity_rows']} entity rows, {summary['resolution_rows']} resolution pairs, "
+               f"{summary['relation_rows']} relation pairs")
+    for name, path in summary["paths"].items():
+        typer.echo(f"  {name}: {path}")

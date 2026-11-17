@@ -3,6 +3,9 @@
 #   ./ci-local.sh          CPU lane: python unit suite (-m "not gpu and not integration") + cargo test --workspace
 #   ./ci-local.sh --gpu    GPU lane: tests marked `gpu` (needs Ollama + ROCm; opt-in via DOCKET_GPU_LANE=1)
 #   ./ci-local.sh --python-only | --rust-only
+#   ./ci-local.sh --kag-eval   OPTIONAL, non-GPU: print the Lane A KAG metrics table for a scratch library
+#                              (DOCKET_KAG_EVAL_DB=<scratch docket.sqlite3>; build one with `docket eval kag library`).
+#                              Prints a skip notice when unset; never touches ~/.local/share/docket. Silver labels only.
 # Python: $DOCKET_CI_PYTHON, else backend/.venv, else python3. PYTHONPATH is pinned to THIS checkout's
 # backend/src (never `python -I`). Scratch data lives under a temp dir, never ~/.local/share/docket.
 set -euo pipefail
@@ -21,8 +24,9 @@ case "${1:-}" in
   --gpu) mode="gpu" ;;
   --python-only) mode="py" ;;
   --rust-only) mode="rust" ;;
+  --kag-eval) mode="kag" ;;
   "") ;;
-  *) echo "usage: $0 [--gpu|--python-only|--rust-only]" >&2; exit 2 ;;
+  *) echo "usage: $0 [--gpu|--python-only|--rust-only|--kag-eval]" >&2; exit 2 ;;
 esac
 
 py="${DOCKET_CI_PYTHON:-}"
@@ -40,6 +44,13 @@ run_python() {
 run_rust() {
   (cd "$here/app" && cargo test --workspace)
 }
+run_kag_eval() {
+  if [ -z "${DOCKET_KAG_EVAL_DB:-}" ]; then
+    echo "kag-eval: skipped (set DOCKET_KAG_EVAL_DB to a scratch library docket.sqlite3)"
+    return 0
+  fi
+  (cd "$here/backend" && "$py" -m docket.interfaces.cli.main eval kag run --db "$DOCKET_KAG_EVAL_DB")
+}
 run_gpu() {
   (cd "$here/backend" && DOCKET_GPU_LANE=1 "$py" -m pytest tests -m gpu -q)
 }
@@ -49,4 +60,5 @@ case "$mode" in
   py) run_python ;;
   rust) run_rust ;;
   gpu) run_gpu ;;
+  kag) run_kag_eval ;;
 esac

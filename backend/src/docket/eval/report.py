@@ -392,7 +392,8 @@ def _accuracy_lines(report: Report) -> list[str]:
         ]
     lines = [
         f"Accuracy (judged)    {o.strict.fmt()}",
-        f"Judge: {report.judged_runs} runs resolved, {report.judge_disagreements} cross-check disagreements",
+        f"Judge: {report.judged_runs} runs resolved, {report.judge_disagreements} cross-check disagreements "
+        "(model-to-model agreement, not human validation)",
     ]
     if o.needs_judge_runs:
         lines.append(

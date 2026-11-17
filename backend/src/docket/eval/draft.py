@@ -39,6 +39,7 @@ from docket.eval.schema import (
     QuestionType,
     load_gold_set,
 )
+from docket.eval.outputs import write_private_text
 from docket.eval.scoring import normalize_text
 from docket.infra.inference.gateway import InferenceGateway
 from docket.prompts.draft import DRAFT_SYSTEM, draft_prompt
@@ -267,7 +268,7 @@ def save_gold_file(path: Path, questions: Sequence[Question]) -> None:
         width=100,
     )
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(body, encoding="utf-8")
+    write_private_text(tmp, body)
     os.replace(tmp, path)
 
 
