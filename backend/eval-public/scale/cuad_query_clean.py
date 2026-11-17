@@ -12,6 +12,9 @@ from pathlib import Path
 
 
 def main():
+    from scale_guard import check_docket_checkout  # sibling module; fails loudly under `python -I`
+
+    check_docket_checkout()
     from docket.core.config import Settings
     from docket.eval.runner import EvalRunner, OllamaMetaGateway, select_questions
     from docket.eval.schema import load_gold_set, fingerprint
@@ -33,12 +36,19 @@ def main():
     db.execute("UPDATE sources SET status='ACTIVE' WHERE id IN (%s)" % ",".join("?" * len(a.keep)), a.keep)
     db.execute("UPDATE sources SET status='REVOKED' WHERE id NOT IN (%s)" % ",".join("?" * len(a.keep)), a.keep)
     db.commit(); db.close()
+    from docket.eval.hygiene import require_one_source_per_document
+    library = require_one_source_per_document(a.work / "docket.sqlite3")  # one servable source per contract
+    print("library:", library)
     gold = load_gold_set(a.gold)
     qs = select_questions(gold, split=None)
     with EvalRunner(a.corpus, gateway=OllamaMetaGateway(gen_model=Settings().gen_model), data_dir=a.work) as runner:
         runner._sources = {}  # query-only: nothing is ingested
         runner.ingest()
+        from docket.eval.manifest import build_manifest, write_manifest
+        baseline = build_manifest(runner._context.settings, gold, lane="gpu", gold_path=a.gold, library=library)
+        write_manifest(baseline, a.out.with_name(a.out.name + ".manifest.json"), overwrite=True)
         runner.run(qs, repeats=a.repeats, out_path=a.out, gold_digest=fingerprint(gold),
+                   manifest=baseline.model_dump(mode="json"),
                    progress=lambda d, t, r: print(f"{d}/{t} {r.question_id}#{r.repeat} {r.latency_s:.1f}s"
                                                   + (f" ERROR {r.error}" if r.error else ""), flush=True))
 

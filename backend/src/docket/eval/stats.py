@@ -64,3 +64,126 @@ def pass_majority(outcomes: Sequence[bool]) -> bool:
 
 def pass_all(outcomes: Sequence[bool]) -> bool:
     return bool(outcomes) and all(outcomes)
+
+
+# -- bootstrap and paired comparison -----------------------------------------
+#
+# Percentile bootstrap with a private, seeded `random.Random` (deterministic,
+# never touches global state). Questions are the resampling unit ("clusters");
+# repeats of one question stay together, so repeats are never treated as
+# independent evidence.
+
+CI_METHOD = "percentile bootstrap, questions resampled as clusters (repeats nested), 95%"
+
+# Explicit thresholds for `classify_difference`.
+IMPROVEMENT_ALPHA = 0.05  # McNemar exact p must be below this
+MIN_DISCORDANT = 5  # fewer discordant questions than this is never conclusive
+
+
+def _mean(values: Sequence[float]) -> float:
+    return sum(values) / len(values)
+
+
+def _percentile_interval(samples: list[float], alpha: float) -> tuple[float, float]:
+    samples.sort()
+    n = len(samples)
+    lo = samples[min(n - 1, max(0, int((alpha / 2) * n)))]
+    hi = samples[min(n - 1, max(0, int((1 - alpha / 2) * n) - 1))]
+    return (lo, hi)
+
+
+def bootstrap_ci(
+    values: Sequence[float], *, stat=_mean, n_boot: int = 10000, alpha: float = 0.05, seed: int = 0
+) -> tuple[float, float]:
+    """Percentile bootstrap interval of `stat` over i.i.d. `values`."""
+    import random
+
+    if not values:
+        return (0.0, 1.0)
+    rng = random.Random(seed)
+    n = len(values)
+    samples = [stat([values[rng.randrange(n)] for _ in range(n)]) for _ in range(n_boot)]
+    return _percentile_interval(samples, alpha)
+
+
+def cluster_bootstrap_ci(
+    outcomes_by_question: Mapping[str, Sequence[bool]],
+    *, n_boot: int = 10000, alpha: float = 0.05, seed: int = 0,
+) -> tuple[float, float]:
+    """Interval for the question-level pass rate (majority of repeats passes),
+    resampling whole questions with their repeats."""
+    import random
+
+    ids = sorted(q for q, runs in outcomes_by_question.items() if runs)
+    if not ids:
+        return (0.0, 1.0)
+    passed = [1.0 if pass_majority(outcomes_by_question[q]) else 0.0 for q in ids]
+    rng = random.Random(seed)
+    n = len(ids)
+    samples = [sum(passed[rng.randrange(n)] for _ in range(n)) / n for _ in range(n_boot)]
+    return _percentile_interval(samples, alpha)
+
+
+def paired_bootstrap_diff(
+    a: Mapping[str, Sequence[bool]], b: Mapping[str, Sequence[bool]],
+    *, n_boot: int = 10000, alpha: float = 0.05, seed: int = 0,
+) -> tuple[float, tuple[float, float]]:
+    """Accuracy(b) - accuracy(a) over the same questions (question-level
+    majority pass), with a paired question-cluster bootstrap interval."""
+    import random
+
+    if set(a) != set(b):
+        raise ValueError("both runs must cover the same question ids")
+    ids = sorted(q for q in a if a[q] and b[q])
+    if not ids:
+        return (0.0, (-1.0, 1.0))
+    delta = [float(pass_majority(b[q])) - float(pass_majority(a[q])) for q in ids]
+    rng = random.Random(seed)
+    n = len(ids)
+    samples = [sum(delta[rng.randrange(n)] for _ in range(n)) / n for _ in range(n_boot)]
+    return (sum(delta) / n, _percentile_interval(samples, alpha))
+
+
+def kappa_ci(
+    a: Sequence[Hashable], b: Sequence[Hashable], *, n_boot: int = 5000, alpha: float = 0.05, seed: int = 0
+) -> tuple[float, tuple[float, float]]:
+    """Cohen's kappa with a percentile bootstrap interval over items."""
+    import random
+
+    point = cohen_kappa(a, b)
+    rng = random.Random(seed)
+    n = len(a)
+    samples = []
+    for _ in range(n_boot):
+        idx = [rng.randrange(n) for _ in range(n)]
+        samples.append(cohen_kappa([a[i] for i in idx], [b[i] for i in idx]))
+    return (point, _percentile_interval(samples, alpha))
+
+
+MEASURED_IMPROVEMENT = "measured improvement"
+MEASURED_REGRESSION = "measured regression"
+INCONCLUSIVE = "statistically inconclusive"
+
+
+def classify_difference(
+    diff: float, diff_ci: tuple[float, float], a_only: int, b_only: int,
+    *, alpha: float = IMPROVEMENT_ALPHA, min_discordant: int = MIN_DISCORDANT,
+) -> str:
+    """Label a paired difference (B minus A). A direction is only called when
+    ALL hold: the bootstrap interval excludes 0 on that side, exact McNemar
+    p < alpha, and at least `min_discordant` questions flipped."""
+    p = mcnemar_exact(a_only, b_only)
+    if a_only + b_only < min_discordant or p >= alpha:
+        return INCONCLUSIVE
+    lo, hi = diff_ci
+    if diff > 0 and lo > 0 and b_only > a_only:
+        return MEASURED_IMPROVEMENT
+    if diff < 0 and hi < 0 and a_only > b_only:
+        return MEASURED_REGRESSION
+    return INCONCLUSIVE
+
+
+def improvement_supported(
+    diff: float, diff_ci: tuple[float, float], a_only: int, b_only: int, alpha: float = IMPROVEMENT_ALPHA
+) -> bool:
+    return classify_difference(diff, diff_ci, a_only, b_only, alpha=alpha) == MEASURED_IMPROVEMENT

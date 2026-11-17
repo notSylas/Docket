@@ -11,6 +11,10 @@ OUT_DIR/stages.json (ingest wall time, chunks, sources per stage). Judge/report 
 import argparse, json, shutil, sys, time
 from pathlib import Path
 
+from scale_guard import check_docket_checkout  # sibling module; fails loudly under `python -I`
+
+check_docket_checkout()
+
 from docket.core.config import Settings
 from docket.eval.runner import EvalRunner, OllamaMetaGateway, select_questions
 from docket.eval.schema import load_gold_set, fingerprint, Split
@@ -21,6 +25,9 @@ def main():
     ap.add_argument("--gold", type=Path, default=Path(__file__).resolve().parent.parent / "gold-cuad-scale.yaml")
     ap.add_argument("--sizes", type=int, nargs="+", default=[12, 50, 200, 510])
     ap.add_argument("--repeats", type=int, nargs="+", default=[3, 1, 1, 3])
+    ap.add_argument("--allow-duplicate-sources", action="store_true",
+                    help="record (not fail on) contracts presented by several sources; this driver adds one source "
+                         "per stage, so use cuad_query_clean.py for clean-library measurements")
     a = ap.parse_args()
     assert "/.local/share/docket" not in str(a.data.resolve())
     a.out.mkdir(parents=True, exist_ok=True)
@@ -44,13 +51,25 @@ def main():
         with EvalRunner(corpus, gateway=OllamaMetaGateway(gen_model=Settings().gen_model), data_dir=a.data) as runner:
             runner.ingest()
             ingest_s = time.perf_counter() - t0
+            from docket.eval.hygiene import LibraryHygieneError, require_one_source_per_document
+            try:
+                library = require_one_source_per_document(a.data / "docket.sqlite3")
+            except LibraryHygieneError as exc:
+                if not a.allow_duplicate_sources:
+                    raise SystemExit(f"[{size}] library hygiene: {exc}")
+                print(f"[{size}] WARNING library hygiene: {exc}", flush=True)
+                library = {"hygiene_violation": str(exc)}
             n_chunks = len(runner.corpus_chunks())
             print(f"[{size}] ingest {ingest_s:.0f}s chunks={n_chunks} failures={runner.ingest_failures[:3]}", flush=True)
+            from docket.eval.manifest import build_manifest, write_manifest
+            baseline = build_manifest(runner._context.settings, gold, lane="gpu", gold_path=a.gold, library=library)
+            write_manifest(baseline, outp.with_name(outp.name + ".manifest.json"), overwrite=True)
             runner.run(qs, repeats=reps, out_path=outp, gold_digest=fingerprint(gold),
+                       manifest=baseline.model_dump(mode="json"),
                        progress=lambda d, t, r: print(f"[{size}] {d}/{t} {r.question_id}#{r.repeat} {r.latency_s:.1f}s"
                                                       + (f" ERROR {r.error}" if r.error else ""), flush=True))
         stages[str(size)] = {"ingest_wall_s_incremental": round(ingest_s, 1), "chunks_in_library": n_chunks,
-                             "repeats": reps, "questions": len(qs), "ingest_failures": runner.ingest_failures[:5]}
+                             "repeats": reps, "questions": len(qs), "ingest_failures": runner.ingest_failures[:5], "library": library}
         (a.out / "stages.json").write_text(json.dumps(stages, indent=1))
 
 

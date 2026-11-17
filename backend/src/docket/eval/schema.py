@@ -301,6 +301,8 @@ class RunRecord(BaseModel):
     spans_indexed: list[bool] = Field(default_factory=list)
     # Document-layer / KAG record for the answer (None when no flag acted).
     doc_layer: dict[str, Any] | None = None
+    # Baseline manifest (eval.manifest.BaselineManifest dump); None on older runs.
+    manifest: dict[str, Any] | None = None
     error: str | None = None
 
 
@@ -321,6 +323,8 @@ def load_records(path: str | Path) -> list[RunRecord]:
 def fingerprint(value: BaseModel | dict) -> str:
     """Stable digest binding evaluation artifacts to the exact inputs scored."""
     payload = value.model_dump(mode="json") if isinstance(value, BaseModel) else value
+    if isinstance(value, RunRecord) and payload.get("manifest") is None:
+        payload.pop("manifest", None)  # additive field: keeps pre-manifest fingerprints stable
     encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 

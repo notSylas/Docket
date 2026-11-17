@@ -441,6 +441,7 @@ class EvalRunner:
         progress: ProgressFn | None = None,
         gold_digest: str | None = None,
         benchmark_digest: str | None = None,
+        manifest: dict | None = None,
     ) -> list[RunRecord]:
         """Run every question `repeats` times; append each record to
         `out_path` (JSONL) as it finishes so an interrupted run keeps its data.
@@ -465,6 +466,7 @@ class EvalRunner:
                         record = self.run_once(question, repeat)
                         record.gold_fingerprint = gold_digest
                         record.benchmark_fingerprint = benchmark_digest
+                        record.manifest = manifest
                         records.append(record)
                         done += 1
                         if out:
@@ -509,6 +511,9 @@ def run_eval(
     mode: QueryMode | None = None,
     progress: ProgressFn | None = None,
     manifest_path: Path | None = None,
+    lane: str = "cpu",
+    judges: list[str] | None = None,
+    gold_path: Path | None = None,
 ) -> list[RunRecord]:
     """Ingest `corpus_dir` into a temp data dir, run the selected questions
     `repeats` times each, write JSONL to `out_path`, and clean up the temp dir."""
@@ -520,9 +525,21 @@ def run_eval(
         if repeats != manifest.repeats:
             raise GoldSetError(f"frozen benchmark requires {manifest.repeats} repeats")
     questions = select_questions(gold, split=split, ids=ids)
+    from docket.eval.benchmark import corpus_hashes
+    from docket.eval.manifest import build_manifest, write_manifest
+
     with EvalRunner(corpus_dir, gateway=gateway, parser=parser, top_k=top_k, mode=mode) as runner:
+        try:
+            hashes = corpus_hashes(corpus_dir)
+        except GoldSetError:
+            hashes = None
+        baseline = build_manifest(
+            runner._context.settings, gold, lane=lane, judges=judges or [], gold_path=gold_path, corpus=hashes,
+        )
+        write_manifest(baseline, out_path.with_name(out_path.name + ".manifest.json"), overwrite=True)
         runner.ingest()
         return runner.run(
             questions, repeats=repeats, out_path=out_path, progress=progress,
             gold_digest=fingerprint(gold), benchmark_digest=benchmark_digest,
+            manifest=baseline.model_dump(mode="json"),
         )

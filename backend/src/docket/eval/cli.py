@@ -58,6 +58,7 @@ def run_cmd(
     ids: list[str] = typer.Option(None, "--id", help="Only these question ids (repeatable)."),
     mode: str = typer.Option("auto", "--mode", help="auto | fast | agent; use forced modes for paired routing comparisons."),
     manifest: Path | None = typer.Option(None, "--manifest", help="Frozen benchmark manifest; verify inputs before running."),
+    lane: str = typer.Option("cpu", "--lane", help="cpu | gpu: recorded in the run manifest."),
 ) -> None:
     """Ingest the corpus into a temp dir and record answers for the gold questions."""
     from docket.eval.report import build_report, format_report
@@ -69,6 +70,8 @@ def run_cmd(
         raise _fail("--mode must be auto, fast or agent")
     if split not in ("dev", "test", "all"):
         raise _fail("--split must be dev, test or all")
+    if lane not in ("cpu", "gpu"):
+        raise _fail("--lane must be cpu or gpu")
     try:
         gold_set = load_gold_set(gold)
         out_path = out or _eval_dir() / f"runs-{_stamp()}.jsonl"
@@ -90,6 +93,8 @@ def run_cmd(
             mode=None if mode == "auto" else QueryMode(mode),
             manifest_path=manifest,
             progress=progress,
+            lane=lane,
+            gold_path=gold,
         )
     except (GoldSetError, EvalSetupError) as exc:
         raise _fail(str(exc)) from exc
@@ -127,6 +132,18 @@ def judge_cmd(
         cross_name = cross_model or DEFAULT_CROSS_CHECK_MODEL
         cross = ClaimJudge(_make_gateway(cross_name), cross_name)
     out_path = out or runs.with_name(runs.stem + ".judged.jsonl")
+    from docket.eval.hygiene import verify_gold_binding
+    from docket.eval.judge import is_self_judged
+
+    try:
+        verify_gold_binding(gold_set, records)
+    except GoldSetError as exc:
+        raise _fail(str(exc)) from exc
+    answer_models = {str(r.configuration["gen_model"]) for r in records if r.configuration.get("gen_model")}
+    judge_names = [primary_name] + ([cross_name] if cross is not None else [])
+    typer.echo(f"Judge identity: {', '.join(judge_names)} (answering model: {', '.join(sorted(answer_models)) or 'not recorded'})")
+    if any(is_self_judged(a, judge_names) for a in answer_models):
+        typer.echo("WARNING: self-judged -- a judge model is also the answering model.", err=True)
 
     def progress(name: str, done: int, total: int) -> None:
         typer.echo(f"[{name}] claim {done}/{total}")
@@ -157,18 +174,25 @@ def report_cmd(
     """Print accuracy (with Wilson intervals), retrieval and failure breakdowns."""
     from docket.eval.judge import load_judged
     from docket.eval.report import build_report, format_report, report_to_dict
-    from docket.eval.schema import load_gold_set, load_records
+    from docket.eval.schema import fingerprint, load_gold_set, load_records
 
     from docket.eval.benchmark import load_benchmark
     from docket.eval.calibration import score_labels
+    from docket.eval.hygiene import verify_gold_binding
+
     try:
         judgments = load_judged(judged) if judged else None
         calibration_judgments = load_judged(calibration_judged) if calibration_judged else judgments
         if labels is not None and calibration_judgments is None:
             raise GoldSetError("--labels requires --judged")
+        gold_set, run_records = load_gold_set(gold), load_records(runs)
+        bench = load_benchmark(manifest) if manifest else None
+        verify_gold_binding(
+            gold_set, run_records, benchmark_fingerprint=fingerprint(bench) if bench else None,
+        )
         report = build_report(
-            load_gold_set(gold), load_records(runs), judgments,
-            benchmark=load_benchmark(manifest) if manifest else None,
+            gold_set, run_records, judgments,
+            benchmark=bench,
             calibration=score_labels(labels, calibration_judgments) if labels else None,
         )
     except GoldSetError as exc:
@@ -187,14 +211,15 @@ def compare_cmd(
     fail_on: str = typer.Option("significant", "--fail-on", help="significant | any: when to exit non-zero."),
 ) -> None:
     """Paired flips and McNemar p between two runs; exit 1 if B regressed vs A."""
-    from docket.eval.compare import compare_outcomes, format_comparison, load_outcomes
+    from docket.eval.compare import compare_outcomes, describe_judging, format_comparison, load_repeat_outcomes
     from docket.eval.schema import load_gold_set
 
     if fail_on not in ("significant", "any"):
         raise _fail("--fail-on must be significant or any")
     try:
         gold_set = load_gold_set(gold) if gold else None
-        comparison = compare_outcomes(load_outcomes(a, gold_set), load_outcomes(b, gold_set))
+        comparison = compare_outcomes(load_repeat_outcomes(a, gold_set), load_repeat_outcomes(b, gold_set))
+        comparison.judging_a, comparison.judging_b = describe_judging(a), describe_judging(b)
     except (GoldSetError, OSError) as exc:
         raise _fail(str(exc)) from exc
     typer.echo(format_comparison(comparison, a.name, b.name))

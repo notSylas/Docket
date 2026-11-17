@@ -152,6 +152,14 @@ class JudgedRun(BaseModel):
     support_checked: bool = False
     record_fingerprint: str | None = None
     gold_fingerprint: str | None = None
+    # Judge identity (optional so older judged files still load): the model
+    # that produced the answer and whether any judge is that same model.
+    answer_model: str | None = None
+    self_judged: bool = False
+
+
+def is_self_judged(answer_model: str | None, judge_models: list[str]) -> bool:
+    return bool(answer_model) and answer_model in judge_models
 
 
 def _combine(supported: list[bool | None]) -> JudgeVerdict:
@@ -250,6 +258,8 @@ def judge_runs(
     judged: list[JudgedRun] = []
     for record, score, claims in entries:
         claim_results = results[(record.question_id, record.repeat)]
+        answer_model = record.configuration.get("gen_model") if record.configuration else None
+        identity = {"answer_model": answer_model, "self_judged": is_self_judged(answer_model, models)}
         if claims:
             judged.append(
                 JudgedRun(
@@ -265,6 +275,7 @@ def judge_runs(
                     support_checked=any(c.kind == "support" for c in claims),
                     record_fingerprint=fingerprint(record),
                     gold_fingerprint=gold_digest,
+                    **identity,
                 )
             )
         else:
@@ -276,6 +287,7 @@ def judge_runs(
                     source="deterministic",
                     record_fingerprint=fingerprint(record),
                     gold_fingerprint=gold_digest,
+                    answer_model=answer_model,
                 )
             )
     if out_path is not None:
