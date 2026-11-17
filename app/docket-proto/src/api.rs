@@ -138,6 +138,16 @@ pub struct StatusResponse {
     pub version: String,
     pub worker: WorkerInfo,
     pub busy: bool,
+    /// Optional feature flags, e.g. `"tasks.v1"`. Absent from the JSON when
+    /// empty, so older clients see exactly the old document.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<String>,
+}
+
+impl StatusResponse {
+    pub fn has_capability(&self, name: &str) -> bool {
+        self.capabilities.iter().any(|c| c == name)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -303,9 +313,19 @@ mod tests {
                 chunks: Some(9),
             },
             busy: false,
+            capabilities: vec![],
         };
         let v = serde_json::to_string(&s).unwrap();
         assert!(v.contains(r#""state":"up""#));
+        assert!(!v.contains("capabilities"), "old shape when empty");
         assert_eq!(serde_json::from_str::<StatusResponse>(&v).unwrap(), s);
+        let with = StatusResponse {
+            capabilities: vec!["tasks.v1".into()],
+            ..s
+        };
+        let v = serde_json::to_string(&with).unwrap();
+        assert!(v.contains(r#""capabilities":["tasks.v1"]"#));
+        assert!(with.has_capability("tasks.v1") && !with.has_capability("x"));
+        assert_eq!(serde_json::from_str::<StatusResponse>(&v).unwrap(), with);
     }
 }

@@ -1,10 +1,12 @@
 //! Talks to `docketd` from background threads so the UI never blocks.
 
+use crate::model::{task_step, TaskStep};
 use docket_proto::api::{
-    parse_ask_event, AskEvent, AskRequest, AskResult, ApiError, Phase, Scope, SourceInfo,
+    parse_ask_event, ApiError, AskEvent, AskRequest, AskResult, Phase, Scope, SourceInfo,
     SourcesResponse, StatusResponse,
 };
 use docket_proto::client::{self, sse_events};
+use docket_proto::task::{parse_task_event, CreateTaskRequest, CreateTaskResponse, TaskKind};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -22,6 +24,12 @@ pub enum Event {
     Answer(Box<AskResult>, f64),
     AskFailed(String),
     DaemonStarted(Result<(), String>),
+    /// The daemon accepted the question as a task (needed to stop it).
+    TaskStarted(String),
+    /// The question was stopped; the partial text is gone.
+    Cancelled,
+    /// The stop request could not be delivered.
+    StopFailed(String),
 }
 
 pub struct Backend {
@@ -164,7 +172,113 @@ impl Backend {
         });
     }
 
-    pub fn ask(&self, question: String, source_id: Option<String>) {
+    /// Ask to stop a running task. The outcome arrives as the task's own
+    /// events (`Cancelled`); only a failure to send is reported here.
+    pub fn cancel(&self, task_id: String) {
+        let (socket, tx, ctx) = (self.socket.clone(), self.tx.clone(), self.ctx.clone());
+        std::thread::spawn(move || {
+            let path = format!("/v1/tasks/{task_id}/cancel");
+            let res = client::request(&socket, "POST", &path, &[], None, Some(SHORT))
+                .map_err(|e| e.to_string())
+                .and_then(|r| {
+                    let code = r.status;
+                    let body = r.text().unwrap_or_default();
+                    if code == 200 {
+                        Ok(())
+                    } else {
+                        Err(http_error(&body, code))
+                    }
+                });
+            if let Err(e) = res {
+                send(&tx, &ctx, Event::StopFailed(format!("could not stop: {e}")));
+            }
+        });
+    }
+
+    /// Ask a question. With `use_tasks` (the daemon advertises `tasks.v1`) it
+    /// runs as a task so it can be stopped; otherwise the plain `/v1/ask`.
+    pub fn ask(&self, question: String, source_id: Option<String>, use_tasks: bool) {
+        if use_tasks {
+            self.ask_task(question, source_id);
+        } else {
+            self.ask_legacy(question, source_id);
+        }
+    }
+
+    fn ask_task(&self, question: String, source_id: Option<String>) {
+        let (socket, tx, ctx) = (self.socket.clone(), self.tx.clone(), self.ctx.clone());
+        std::thread::spawn(move || {
+            let t0 = Instant::now();
+            let req = CreateTaskRequest {
+                kind: TaskKind::Ask,
+                question,
+                scope: source_id.map(|id| Scope {
+                    source_id: Some(id),
+                    folder: None,
+                }),
+                stream: true,
+                deadline_ms: None,
+            };
+            let body = serde_json::to_string(&req).unwrap_or_default();
+            let fail = |m: String| {
+                send(&tx, &ctx, Event::AskFailed(m));
+            };
+            let resp = match client::post_json(&socket, "/v1/tasks", &body, None, SHORT) {
+                Ok(r) => r,
+                Err(e) => return fail(format!("cannot reach the service: {e}")),
+            };
+            let code = resp.status;
+            let text = resp.text().unwrap_or_default();
+            if code != 202 {
+                return fail(http_error(&text, code));
+            }
+            let Ok(created) = serde_json::from_str::<CreateTaskResponse>(&text) else {
+                return fail("unexpected response from the service".into());
+            };
+            let id = created.task_id.0;
+            send(&tx, &ctx, Event::TaskStarted(id.clone()));
+            let path = format!("/v1/tasks/{id}/events");
+            let resp = match client::request(&socket, "GET", &path, &[], None, Some(ASK_READ)) {
+                Ok(r) if r.status == 200 => r,
+                Ok(r) => {
+                    let code = r.status;
+                    return fail(http_error(&r.text().unwrap_or_default(), code));
+                }
+                Err(e) => return fail(format!("cannot reach the service: {e}")),
+            };
+            let mut last_error = None;
+            for ev in sse_events(resp.body) {
+                let Ok(ev) = ev else {
+                    return fail("connection to the service was lost".into());
+                };
+                // Unknown or malformed events are skipped, as for /v1/ask.
+                let Some(te) = parse_task_event(&ev.data) else {
+                    continue;
+                };
+                match task_step(&te.body, &mut last_error) {
+                    TaskStep::Phase(p) => {
+                        send(&tx, &ctx, Event::Phase(p));
+                    }
+                    TaskStep::Delta(t) => {
+                        send(&tx, &ctx, Event::Delta(t));
+                    }
+                    TaskStep::Answer(r) => {
+                        send(&tx, &ctx, Event::Answer(r, t0.elapsed().as_secs_f64()));
+                        return;
+                    }
+                    TaskStep::Failed(m) => return fail(m),
+                    TaskStep::Cancelled => {
+                        send(&tx, &ctx, Event::Cancelled);
+                        return;
+                    }
+                    TaskStep::Skip => {}
+                }
+            }
+            fail("the service ended the answer early".into());
+        });
+    }
+
+    fn ask_legacy(&self, question: String, source_id: Option<String>) {
         let (socket, tx, ctx) = (self.socket.clone(), self.tx.clone(), self.ctx.clone());
         std::thread::spawn(move || {
             let t0 = Instant::now();

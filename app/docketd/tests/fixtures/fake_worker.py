@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Fake docket worker for docketd tests. Behaviour is chosen by the question."""
-import json, os, sys, time
+import json, os, signal, subprocess, sys, time
 
 args = sys.argv[1:]
 def opt(name):
@@ -17,6 +17,8 @@ if "--exit-immediately" in args:
 if "--startup-noise" in args:
     print("loading models...", flush=True)
     print('{"hello": "not protocol"}', flush=True)
+
+STATE_DIR = os.path.dirname(opt("--pidfile") or "/tmp/x")
 
 def send(obj):
     sys.stdout.write(json.dumps(obj) + "\n")
@@ -64,6 +66,29 @@ for line in sys.stdin:
             progress(i, "retrieving")
             print("[1, 2, 3]", flush=True)
             send({"jsonrpc": "2.0", "id": i, "result": RESULT})
+        elif q in ("stream_stall", "late", "stubborn", "child"):
+            # Scenarios for cancellation tests. All of them stall after some output.
+            for p in ("retrieving", "reading", "answering"):
+                progress(i, p)
+            send({"jsonrpc": "2.0", "method": "delta", "params": {"text": "partial ", "id": i}})
+            if q == "late":
+                # Asked to die (SIGTERM), it still answers a moment later: the
+                # daemon must never publish that late result.
+                def on_term(sig, frame, i=i):
+                    time.sleep(0.3)
+                    with open(os.path.join(STATE_DIR, "late-marker"), "w") as f:
+                        f.write("late result emitted")
+                    send({"jsonrpc": "2.0", "method": "delta", "params": {"text": "LATE-DELTA", "id": i}})
+                    send({"jsonrpc": "2.0", "id": i, "result": dict(RESULT, answer="LATE-RESULT")})
+                    os._exit(0)
+                signal.signal(signal.SIGTERM, on_term)
+            elif q == "stubborn":
+                signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            elif q == "child":
+                kid = subprocess.Popen(["sleep", "600"])
+                with open(os.path.join(STATE_DIR, "childpid"), "w") as f:
+                    f.write(str(kid.pid))
+            time.sleep(3600)
         elif q == "slow":
             progress(i, "retrieving")
             time.sleep(1.5)

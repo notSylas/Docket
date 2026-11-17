@@ -1,9 +1,10 @@
 //! The local HTTP API. Served only on the Unix socket.
 
 use crate::config::Config;
-use crate::worker::{CallError, WorkerHandle};
+use crate::tasks::{CancelOutcome, Pull, Registry, SubmitError, Tasks};
+use crate::worker::{CallError, CallOpts, WorkerHandle};
 use axum::body::Bytes;
-use axum::extract::{DefaultBodyLimit, Extension, Request, State};
+use axum::extract::{DefaultBodyLimit, Extension, Path, Request, State};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, Sse};
@@ -11,7 +12,11 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use docket_proto::api::{
-    ApiError, AskRequest, AskResult, ErrorBody, Phase, SourcesResponse, StatusResponse,
+    ApiError, AskRequest, AskResult, ErrorBody, SourcesResponse, StatusResponse,
+};
+use docket_proto::task::{
+    CancelRequest, CancelResponse, CancelSource, CreateTaskRequest, CreateTaskResponse, TaskEvent,
+    TaskEventBody, TaskId, TaskState, TasksResponse,
 };
 use serde_json::Value;
 use std::convert::Infallible;
@@ -30,7 +35,8 @@ pub struct AppState {
     worker: WorkerHandle,
     /// One question at a time.
     ask_slot: Arc<Semaphore>,
-    ask_timeout: Duration,
+    tasks: Tasks,
+    tasks_enabled: bool,
     call_timeout: Duration,
     counter: Arc<AtomicU64>,
     boot: u64,
@@ -42,14 +48,21 @@ impl AppState {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs() & 0xffff_ffff)
             .unwrap_or(0);
+        let ask_slot = Arc::new(Semaphore::new(1));
+        let registry = Registry::new(cfg.task_tail, cfg.retained_tasks, cfg.max_queued);
         Self {
+            tasks: Tasks::new(registry, worker.clone(), ask_slot.clone(), cfg.ask_timeout),
             worker,
-            ask_slot: Arc::new(Semaphore::new(1)),
-            ask_timeout: cfg.ask_timeout,
+            ask_slot,
+            tasks_enabled: cfg.tasks_enabled,
             call_timeout: cfg.call_timeout,
             counter: Arc::new(AtomicU64::new(1)),
             boot,
         }
+    }
+
+    pub fn registry(&self) -> Arc<Registry> {
+        self.tasks.registry.clone()
     }
 }
 
@@ -57,11 +70,18 @@ impl AppState {
 pub struct RequestId(pub String);
 
 pub fn router(state: AppState) -> Router {
-    Router::new()
+    let mut r = Router::new()
         .route("/v1/status", get(status))
         .route("/v1/sources", get(sources))
-        .route("/v1/ask", post(ask))
-        .layer(DefaultBodyLimit::max(MAX_BODY))
+        .route("/v1/ask", post(ask));
+    // `DOCKET_TASKS=off` leaves these routes (and the capability) out entirely.
+    if state.tasks_enabled {
+        r = r
+            .route("/v1/tasks", post(create_task).get(list_tasks))
+            .route("/v1/tasks/{id}/events", get(task_events))
+            .route("/v1/tasks/{id}/cancel", post(cancel_task));
+    }
+    r.layer(DefaultBodyLimit::max(MAX_BODY))
         .layer(middleware::from_fn_with_state(state.clone(), request_id))
         .with_state(state)
 }
@@ -110,6 +130,11 @@ fn call_error(e: CallError, rid: &str) -> (StatusCode, ErrorBody) {
             "worker_crashed",
             "the worker stopped unexpectedly; it is being restarted".to_string(),
         ),
+        CallError::Cancelled { .. } => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "cancelled",
+            "the request was cancelled".to_string(),
+        ),
         CallError::Rpc(err) => match err.kind() {
             Some("NoContentIndexed") => (
                 StatusCode::CONFLICT,
@@ -139,13 +164,22 @@ async fn status(State(st): State<AppState>) -> Json<StatusResponse> {
         version: env!("CARGO_PKG_VERSION").into(),
         worker: st.worker.info(),
         busy: st.ask_slot.available_permits() == 0,
+        capabilities: if st.tasks_enabled {
+            vec!["tasks.v1".into()]
+        } else {
+            vec![]
+        },
     })
 }
 
 async fn sources(State(st): State<AppState>, Extension(rid): Extension<RequestId>) -> Response {
     match st
         .worker
-        .call("sources.list", Value::Null, st.call_timeout, None)
+        .call(
+            "sources.list",
+            Value::Null,
+            CallOpts::timeout(st.call_timeout),
+        )
         .await
     {
         Ok(v) => match serde_json::from_value::<SourcesResponse>(v) {
@@ -176,31 +210,71 @@ fn parse_ask(body: &Bytes) -> Result<AskRequest, &'static str> {
     Ok(req)
 }
 
-fn delta_of(params: &Value) -> Option<&str> {
-    params.get("text")?.as_str()
+/// Cancels its task when dropped. Dropping happens when the client goes away
+/// (the HTTP future or stream is dropped); after a normal finish it is a no-op.
+struct CancelOnDrop {
+    registry: Arc<Registry>,
+    id: String,
 }
 
-fn phase_of(params: &Value) -> Option<Phase> {
-    Phase::parse(params.get("phase")?.as_str()?)
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.registry
+            .request_cancel(&self.id, CancelSource::ClientGone);
+    }
 }
 
-async fn run_ask(
-    st: &AppState,
-    req: &AskRequest,
-    progress: Option<mpsc::UnboundedSender<Value>>,
-) -> Result<AskResult, CallError> {
-    let params = serde_json::to_value(req).unwrap_or(Value::Null);
-    let v = st
-        .worker
-        .call("query.ask", params, st.ask_timeout, progress)
-        .await?;
-    serde_json::from_value::<AskResult>(v).map_err(|_| {
-        CallError::Rpc(docket_proto::rpc::RpcError {
-            code: docket_proto::rpc::SERVER_ERROR,
-            message: "unexpected worker response".into(),
-            data: None,
-        })
-    })
+fn busy(rid: &str) -> Response {
+    api_error(
+        StatusCode::TOO_MANY_REQUESTS,
+        "busy",
+        "another question is already being answered",
+        rid,
+    )
+}
+
+fn sse_event(name: &str, data: &impl serde::Serialize) -> Option<Event> {
+    Event::default().event(name).json_data(data).ok()
+}
+
+/// HTTP status for the stable error codes of a failed task.
+fn status_of(code: &str) -> StatusCode {
+    match code {
+        "worker_unavailable" | "cancelled" => StatusCode::SERVICE_UNAVAILABLE,
+        "timeout" => StatusCode::GATEWAY_TIMEOUT,
+        "no_content" => StatusCode::CONFLICT,
+        "bad_request" => StatusCode::BAD_REQUEST,
+        _ => StatusCode::BAD_GATEWAY,
+    }
+}
+
+/// Map a task event to the OLD `/v1/ask` SSE vocabulary (`phase`, `delta`,
+/// `result`, `error`); everything else is invisible to old clients.
+fn compat_event(ev: &TaskEvent, rid: &str) -> Option<Event> {
+    let err = |code: &str, message: &str| {
+        sse_event(
+            "error",
+            &ApiError {
+                error: ErrorBody {
+                    code: code.into(),
+                    message: message.into(),
+                    request_id: rid.into(),
+                },
+            },
+        )
+    };
+    match &ev.body {
+        TaskEventBody::Phase { phase } => {
+            sse_event("phase", &serde_json::json!({ "phase": phase }))
+        }
+        TaskEventBody::Delta { text } => sse_event("delta", &serde_json::json!({ "text": text })),
+        TaskEventBody::Result { result } => sse_event("result", result),
+        TaskEventBody::Error { code, message } => err(code, message),
+        TaskEventBody::State {
+            state: TaskState::Cancelled,
+        } => err("cancelled", "the question was cancelled"),
+        _ => None,
+    }
 }
 
 async fn ask(
@@ -213,103 +287,209 @@ async fn ask(
         Ok(r) => r,
         Err(m) => return api_error(StatusCode::BAD_REQUEST, "bad_request", m, &rid.0),
     };
-    let Ok(permit) = st.ask_slot.clone().try_acquire_owned() else {
-        return api_error(
-            StatusCode::TOO_MANY_REQUESTS,
-            "busy",
-            "another question is already being answered",
-            &rid.0,
-        );
-    };
     let wants_sse = headers
         .get(header::ACCEPT)
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.contains("text/event-stream"));
-
-    if !wants_sse {
-        // Plain JSON has nowhere to put deltas: never ask the worker to stream.
-        let req = AskRequest {
+    // Plain JSON has nowhere to put deltas: never ask the worker to stream.
+    let req = if wants_sse {
+        req
+    } else {
+        AskRequest {
             stream: false,
             ..req
-        };
-        let out = run_ask(&st, &req, None).await;
-        drop(permit);
-        return match out {
-            Ok(r) => Json(r).into_response(),
-            Err(e) => {
-                let (status, body) = call_error(e, &rid.0);
-                (status, Json(ApiError { error: body })).into_response()
+        }
+    };
+    // `/v1/ask` is a thin adapter over a task. No waiting: busy means 429.
+    let registry = st.registry();
+    let (id, _) = match st.tasks.submit(req, None, false) {
+        Ok(t) => t,
+        Err(SubmitError::Busy) => return busy(&rid.0),
+    };
+    let Some(mut sub) = registry.subscribe(&id.0, 0) else {
+        return api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            "task vanished",
+            &rid.0,
+        );
+    };
+    let guard = CancelOnDrop {
+        registry: registry.clone(),
+        id: id.0.clone(),
+    };
+
+    if !wants_sse {
+        let mut result: Option<AskResult> = None;
+        let mut error: Option<(String, String)> = None;
+        let mut state = TaskState::Queued;
+        while let Pull::Event(ev) = sub.next().await {
+            match ev.body {
+                TaskEventBody::Result { result: r } => result = Some(*r),
+                TaskEventBody::Error { code, message } => error = Some((code, message)),
+                TaskEventBody::State { state: s } => state = s,
+                _ => {}
+            }
+        }
+        drop(guard);
+        return match (result, error) {
+            (Some(r), _) => Json(r).into_response(),
+            (None, Some((code, message))) => {
+                warn!(target: "docketd::http", request_id = %rid.0, code = %code, "call failed");
+                api_error(status_of(&code), &code, &message, &rid.0)
+            }
+            (None, None) => {
+                let (code, m) = if state == TaskState::Cancelled {
+                    ("cancelled", "the request was cancelled")
+                } else {
+                    ("worker_error", "the question could not be answered")
+                };
+                api_error(status_of(code), code, m, &rid.0)
             }
         };
     }
 
     let (etx, erx) = mpsc::channel::<Result<Event, Infallible>>(32);
+    let rid = rid.0;
     tokio::spawn(async move {
-        // The permit lives as long as the worker is busy, even if the client
-        // goes away: the worker cannot be interrupted mid-question.
-        let _permit = permit;
-        let send_phase = |etx: &mpsc::Sender<Result<Event, Infallible>>, p: Phase| {
-            let ev = Event::default()
-                .event("phase")
-                .json_data(serde_json::json!({ "phase": p }))
-                .ok();
-            let etx = etx.clone();
-            async move {
-                if let Some(ev) = ev {
-                    let _ = etx.send(Ok(ev)).await;
-                }
-            }
-        };
-        send_phase(&etx, Phase::Retrieving).await;
-        let (ptx, mut prx) = mpsc::unbounded_channel::<Value>();
-        let fwd_tx = etx.clone();
-        let want_deltas = req.stream;
-        let fwd = tokio::spawn(async move {
-            let mut last = Phase::Retrieving;
-            while let Some(p) = prx.recv().await {
-                if want_deltas {
-                    if let Some(text) = delta_of(&p) {
-                        if let Ok(ev) = Event::default()
-                            .event("delta")
-                            .json_data(serde_json::json!({ "text": text }))
-                        {
-                            let _ = fwd_tx.send(Ok(ev)).await;
-                        }
-                        continue;
-                    }
-                }
-                if let Some(ph) = phase_of(&p) {
-                    if ph != last && ph != Phase::Done {
-                        last = ph;
-                        if let Ok(ev) = Event::default()
-                            .event("phase")
-                            .json_data(serde_json::json!({ "phase": ph }))
-                        {
-                            let _ = fwd_tx.send(Ok(ev)).await;
+        // Dropped on every exit path: a client that goes away (the receiver
+        // closes) cancels the task and frees the worker.
+        let _guard = guard;
+        loop {
+            tokio::select! {
+                _ = etx.closed() => break,
+                n = sub.next() => match n {
+                    Pull::Event(ev) => {
+                        if let Some(e) = compat_event(&ev, &rid) {
+                            if etx.send(Ok(e)).await.is_err() {
+                                break;
+                            }
                         }
                     }
-                }
-            }
-        });
-        let out = run_ask(&st, &req, Some(ptx)).await;
-        let _ = fwd.await;
-        match out {
-            Ok(r) => {
-                send_phase(&etx, Phase::Done).await;
-                if let Ok(ev) = Event::default().event("result").json_data(&r) {
-                    let _ = etx.send(Ok(ev)).await;
-                }
-            }
-            Err(e) => {
-                let (_, body) = call_error(e, &rid.0);
-                if let Ok(ev) = Event::default()
-                    .event("error")
-                    .json_data(ApiError { error: body })
-                {
-                    let _ = etx.send(Ok(ev)).await;
-                }
+                    Pull::Gap => {
+                        if let Some(e) = sse_event("error", &ApiError { error: ErrorBody {
+                            code: "stream_lagged".into(),
+                            message: "the answer stream fell behind".into(),
+                            request_id: rid.clone(),
+                        }}) {
+                            let _ = etx.send(Ok(e)).await;
+                        }
+                        break;
+                    }
+                    Pull::End => break,
+                },
             }
         }
     });
     Sse::new(ReceiverStream::new(erx)).into_response()
+}
+
+async fn create_task(
+    State(st): State<AppState>,
+    Extension(rid): Extension<RequestId>,
+    body: Bytes,
+) -> Response {
+    let req: CreateTaskRequest = match serde_json::from_slice(&body) {
+        Ok(r) => r,
+        Err(_) => {
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                "bad_request",
+                "body must be {\"kind\":\"ask\",\"question\": string}",
+                &rid.0,
+            )
+        }
+    };
+    let ask = req.ask();
+    if let Err(m) = parse_ask(&Bytes::from(serde_json::to_vec(&ask).unwrap_or_default())) {
+        return api_error(StatusCode::BAD_REQUEST, "bad_request", m, &rid.0);
+    }
+    match st.tasks.submit(ask, req.deadline_ms, true) {
+        Ok((id, _)) => {
+            let state = st.tasks.registry.state(&id.0).unwrap_or(TaskState::Queued);
+            (
+                StatusCode::ACCEPTED,
+                Json(CreateTaskResponse { task_id: id, state }),
+            )
+                .into_response()
+        }
+        Err(SubmitError::Busy) => busy(&rid.0),
+    }
+}
+
+async fn list_tasks(State(st): State<AppState>) -> Json<TasksResponse> {
+    Json(TasksResponse {
+        tasks: st.tasks.registry.list(),
+    })
+}
+
+async fn task_events(
+    State(st): State<AppState>,
+    Extension(rid): Extension<RequestId>,
+    Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    let after = headers
+        .get("last-event-id")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(0);
+    let Some(mut sub) = st.tasks.registry.subscribe(&id, after) else {
+        return api_error(StatusCode::NOT_FOUND, "not_found", "no such task", &rid.0);
+    };
+    let (etx, erx) = mpsc::channel::<Result<Event, Infallible>>(32);
+    tokio::spawn(async move {
+        // Watching a task never cancels it, whether or not the watcher leaves.
+        loop {
+            tokio::select! {
+                _ = etx.closed() => break,
+                n = sub.next() => match n {
+                    Pull::Event(ev) => {
+                        let e = Event::default()
+                            .id(ev.seq.to_string())
+                            .event(ev.body.event_name())
+                            .json_data(&*ev);
+                        if let Ok(e) = e {
+                            if etx.send(Ok(e)).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    Pull::Gap => sub.resync(),
+                    Pull::End => break,
+                },
+            }
+        }
+    });
+    Sse::new(ReceiverStream::new(erx)).into_response()
+}
+
+async fn cancel_task(
+    State(st): State<AppState>,
+    Extension(rid): Extension<RequestId>,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> Response {
+    if !body.is_empty() && serde_json::from_slice::<CancelRequest>(&body).is_err() {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "bad_request",
+            "body must be {}",
+            &rid.0,
+        );
+    }
+    let reg = &st.tasks.registry;
+    let (accepted, state) = match reg.request_cancel(&id, CancelSource::User) {
+        CancelOutcome::NotFound => {
+            return api_error(StatusCode::NOT_FOUND, "not_found", "no such task", &rid.0)
+        }
+        CancelOutcome::Accepted => (true, TaskState::Cancelling),
+        CancelOutcome::Already(s) => (false, s),
+    };
+    Json(CancelResponse {
+        task_id: TaskId(id),
+        state,
+        accepted,
+    })
+    .into_response()
 }

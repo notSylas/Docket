@@ -131,6 +131,24 @@ impl DocketApp {
                     self.messages.push(Message::Error(e));
                     self.focus_input = true;
                 }
+                Event::TaskStarted(id) => {
+                    if let Some((cur, _)) = &mut self.asking {
+                        if let Some(target) = cur.set_task(id) {
+                            self.backend.cancel(target);
+                        }
+                    }
+                }
+                Event::Cancelled => {
+                    self.asking = None;
+                    self.messages.push(Message::Cancelled);
+                    self.focus_input = true;
+                }
+                Event::StopFailed(e) => {
+                    if let Some((cur, _)) = &mut self.asking {
+                        cur.stop_failed();
+                    }
+                    self.conn.note = e;
+                }
                 Event::DaemonStarted(Err(e)) => self.conn.note = e,
                 Event::DaemonStarted(Ok(())) => {}
             }
@@ -146,7 +164,15 @@ impl DocketApp {
         self.messages.push(Message::User(q.clone()));
         self.asking = Some((Pending::new(), Instant::now()));
         self.open_cite = None;
-        self.backend.ask(q, self.scope.clone());
+        self.backend.ask(q, self.scope.clone(), self.conn.tasks_v1);
+    }
+
+    fn stop(&mut self) {
+        if let Some((cur, _)) = &mut self.asking {
+            if let Some(target) = cur.request_stop() {
+                self.backend.cancel(target);
+            }
+        }
     }
 
     fn can_ask(&self) -> bool {
@@ -350,12 +376,25 @@ impl DocketApp {
                     self.focus_input = false;
                 }
                 let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                let send = ui.add_enabled(
-                    enabled && !self.input.trim().is_empty(),
-                    egui::Button::new("Ask").fill(ACCENT),
-                );
-                if send.clicked() || (enter && enabled) {
-                    self.submit();
+                let stopping = self.asking.as_ref().is_some_and(|(p, _)| p.stop_requested);
+                if self.asking.is_some() && self.conn.tasks_v1 {
+                    // A question is running: the button becomes Stop.
+                    let label = if stopping { "Stopping..." } else { "Stop" };
+                    let stop = ui.add_enabled(
+                        !stopping,
+                        egui::Button::new(label).fill(BAD.gamma_multiply(0.85)),
+                    );
+                    if stop.clicked() {
+                        self.stop();
+                    }
+                } else {
+                    let send = ui.add_enabled(
+                        enabled && !self.input.trim().is_empty(),
+                        egui::Button::new("Ask").fill(ACCENT),
+                    );
+                    if send.clicked() || (enter && enabled) {
+                        self.submit();
+                    }
                 }
             });
             ui.add_space(8.0);
@@ -381,6 +420,13 @@ impl DocketApp {
                             });
                         }
                         Message::Answer { result, wall_s } => self.answer_card(ui, i, result, *wall_s),
+                        Message::Cancelled => {
+                            egui::Frame::group(ui.style()).show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                ui.label(RichText::new(model::STOPPED_TITLE).strong());
+                                ui.label(RichText::new(model::STOPPED_NOTE).small().weak());
+                            });
+                        }
                         Message::Error(e) => {
                             egui::Frame::group(ui.style()).stroke(egui::Stroke::new(1.5, BAD)).show(ui, |ui| {
                                 ui.set_width(ui.available_width());
@@ -392,7 +438,7 @@ impl DocketApp {
                 }
                 self.messages = msgs;
                 if let Some((pending, since)) = &self.asking {
-                    if pending.is_draft() {
+                    if pending.is_draft() && !pending.stop_requested {
                         // Streamed text is a draft: dim, plain (no citation
                         // chips) and labelled until the daemon has validated it.
                         egui::Frame::group(ui.style()).show(ui, |ui| {
@@ -402,7 +448,9 @@ impl DocketApp {
                     }
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        let label = if pending.is_validating() {
+                        let label = if pending.stop_requested {
+                            "Stopping... the partial answer is discarded".to_string()
+                        } else if pending.is_validating() {
                             "Validating citations... (draft above is not yet verified)".to_string()
                         } else {
                             pending.phase.label().to_string()
