@@ -120,10 +120,36 @@ struct Call {
     reply: oneshot::Sender<Result<Value, CallError>>,
 }
 
+/// What the supervisor knows about the worker process beyond `WorkerInfo`.
+/// Read by `/v1/status`; never contains messages, only closed codes.
+#[derive(Debug, Clone, Default)]
+pub struct WorkerMeta {
+    /// `features` of the worker's last start-up `ping` (empty for an old
+    /// worker). Kept while the worker is down so the capability does not flap.
+    pub features: Vec<String>,
+    /// Generation of the current (or last) worker process; 0 before launch.
+    pub generation: u64,
+    /// Unexpected failures: crash, hung call, failed start. Not user cancels.
+    pub crashes: u64,
+    pub last_error_code: Option<&'static str>,
+    /// Epoch ms when the worker entered its current state.
+    pub since_ms: u64,
+    /// Epoch ms of the last successful exchange of any kind.
+    pub last_ok_ms: Option<u64>,
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 #[derive(Clone)]
 pub struct WorkerHandle {
     tx: mpsc::Sender<Call>,
     info: Arc<Mutex<WorkerInfo>>,
+    meta: Arc<Mutex<WorkerMeta>>,
 }
 
 impl WorkerHandle {
@@ -139,9 +165,14 @@ impl WorkerHandle {
             model: String::new(),
             chunks: None,
         }));
+        let meta = Arc::new(Mutex::new(WorkerMeta {
+            since_ms: now_ms(),
+            ..WorkerMeta::default()
+        }));
         let sup = Supervisor {
             cfg: cfg.clone(),
             info: info.clone(),
+            meta: meta.clone(),
             child: None,
             generation: 0,
             next_id: 1,
@@ -150,7 +181,7 @@ impl WorkerHandle {
             starts: 0,
         };
         let task = tokio::spawn(sup.run(rx, shutdown));
-        (Self { tx, info }, task)
+        (Self { tx, info, meta }, task)
     }
 
     pub fn info(&self) -> WorkerInfo {
@@ -160,6 +191,10 @@ impl WorkerHandle {
             model: String::new(),
             chunks: None,
         })
+    }
+
+    pub fn meta(&self) -> WorkerMeta {
+        self.meta.lock().map(|g| g.clone()).unwrap_or_default()
     }
 
     pub async fn call(
@@ -195,6 +230,7 @@ struct Running {
 struct Supervisor {
     cfg: Config,
     info: Arc<Mutex<WorkerInfo>>,
+    meta: Arc<Mutex<WorkerMeta>>,
     child: Option<Running>,
     /// Generation of the current worker process; 0 before the first launch.
     generation: u64,
@@ -206,8 +242,31 @@ struct Supervisor {
 
 impl Supervisor {
     fn set_state(&self, state: WorkerState) {
-        if let Ok(mut i) = self.info.lock() {
-            i.state = state;
+        let changed = match self.info.lock() {
+            Ok(mut i) => {
+                let changed = i.state != state;
+                i.state = state;
+                changed
+            }
+            Err(_) => false,
+        };
+        if changed {
+            if let Ok(mut m) = self.meta.lock() {
+                m.since_ms = now_ms();
+            }
+        }
+    }
+
+    fn note_ok(&self) {
+        if let Ok(mut m) = self.meta.lock() {
+            m.last_ok_ms = Some(now_ms());
+        }
+    }
+
+    fn note_failure(&self, code: &'static str) {
+        if let Ok(mut m) = self.meta.lock() {
+            m.crashes += 1;
+            m.last_error_code = Some(code);
         }
     }
 
@@ -306,6 +365,7 @@ impl Supervisor {
             Ok(c) => c,
             Err(e) => {
                 warn!(target: "docketd::worker", error = %e, "worker spawn failed");
+                self.note_failure("spawn_failed");
                 self.set_state(WorkerState::Down);
                 self.schedule_backoff();
                 return Err(CallError::Unavailable("could not start the worker".into()));
@@ -342,6 +402,10 @@ impl Supervisor {
             }
         });
         self.generation += 1;
+        if let Ok(mut m) = self.meta.lock() {
+            m.generation = self.generation;
+            m.features.clear();
+        }
         self.child = Some(Running {
             pid: child.id(),
             child,
@@ -357,7 +421,23 @@ impl Supervisor {
             .exchange("ping", Value::Null, CallOpts::timeout(startup))
             .await
         {
-            Ok(_) => {}
+            Ok(pong) => {
+                // Additive capabilities; an old worker has none.
+                let features: Vec<String> = pong
+                    .get("features")
+                    .and_then(Value::as_array)
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(Value::as_str)
+                            .filter(|f| f.len() <= 40)
+                            .map(String::from)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if let Ok(mut m) = self.meta.lock() {
+                    m.features = features;
+                }
+            }
             Err(e) => {
                 warn!(target: "docketd::worker", error = ?e_kind(&e), "worker failed its first ping");
                 return Err(CallError::Unavailable("worker did not become ready".into()));
@@ -433,11 +513,13 @@ impl Supervisor {
             Ok(v) => {
                 self.failures = 0;
                 self.set_state(WorkerState::Up);
+                self.note_ok();
                 Ok(v)
             }
             Err(CallError::Rpc(e)) => {
                 self.failures = 0;
                 self.set_state(WorkerState::Up);
+                self.note_ok();
                 Err(CallError::Rpc(e))
             }
             Err(CallError::Cancelled { by, .. }) => {
@@ -456,6 +538,11 @@ impl Supervisor {
             Err(e) => {
                 warn!(target: "docketd::worker", method, task = ?opts.task, generation,
                     "worker call failed; restarting worker");
+                self.note_failure(match &e {
+                    CallError::Timeout => "worker_timeout",
+                    CallError::Crashed => "worker_crashed",
+                    _ => "worker_unavailable",
+                });
                 self.stop_child().await;
                 self.set_state(WorkerState::Down);
                 self.schedule_backoff();

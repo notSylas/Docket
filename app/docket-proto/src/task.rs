@@ -283,6 +283,7 @@ mod tests {
                     abstained: false,
                     citations: vec![],
                     timings: Default::default(),
+                    ..Default::default()
                 }),
             },
             TaskEventBody::Error {

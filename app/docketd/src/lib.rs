@@ -3,6 +3,7 @@
 
 pub mod api;
 pub mod config;
+pub mod health;
 pub mod socket;
 pub mod tasks;
 pub mod worker;
@@ -19,8 +20,9 @@ pub async fn serve(
 ) -> std::io::Result<()> {
     let listener = socket::bind(&cfg.socket, cfg.socket_is_default)?;
     let (stop_tx, stop_rx) = watch::channel(false);
-    let (handle, sup) = worker::WorkerHandle::spawn(&cfg, stop_rx);
+    let (handle, sup) = worker::WorkerHandle::spawn(&cfg, stop_rx.clone());
     let state = api::AppState::new(&cfg, handle);
+    let health = state.spawn_health(&cfg, stop_rx.clone());
     let registry = state.registry();
     let app = api::router(state);
     info!(target: "docketd", socket = %cfg.socket.display(), "listening");
@@ -38,6 +40,7 @@ pub async fn serve(
         .with_graceful_shutdown(shutdown)
         .await;
     let _ = stop_tx.send(true);
+    let _ = health.await;
     let _ = sup.await;
     let _ = std::fs::remove_file(&cfg.socket);
     info!(target: "docketd", "stopped");

@@ -1,5 +1,6 @@
 //! Local HTTP/JSON API types (`/v1/...`) and the worker result shapes.
 
+use crate::status::StatusHealth;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -77,7 +78,7 @@ pub struct Timings {
     pub by_phase: BTreeMap<String, f64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AskResult {
     pub answer: String,
     pub abstained: bool,
@@ -93,6 +94,7 @@ pub struct SourceInfo {
     pub display_name: String,
     pub path: String,
     pub status: String,
+    /// Files usable now: READY or keyword-only versions that have chunks.
     #[serde(default)]
     pub files: u32,
 }
@@ -142,6 +144,9 @@ pub struct StatusResponse {
     /// empty, so older clients see exactly the old document.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub capabilities: Vec<String>,
+    /// Health sections with freshness (only with the `status.v2` capability).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health: Option<Box<StatusHealth>>,
 }
 
 impl StatusResponse {
@@ -267,6 +272,7 @@ mod tests {
                 total_s: 1.5,
                 by_phase: BTreeMap::from([("generation".to_string(), 1.2)]),
             },
+            ..Default::default()
         };
         let s = serde_json::to_string(&r).unwrap();
         assert_eq!(serde_json::from_str::<AskResult>(&s).unwrap(), r);
@@ -314,6 +320,7 @@ mod tests {
             },
             busy: false,
             capabilities: vec![],
+            health: None,
         };
         let v = serde_json::to_string(&s).unwrap();
         assert!(v.contains(r#""state":"up""#));
@@ -327,5 +334,17 @@ mod tests {
         assert!(v.contains(r#""capabilities":["tasks.v1"]"#));
         assert!(with.has_capability("tasks.v1") && !with.has_capability("x"));
         assert_eq!(serde_json::from_str::<StatusResponse>(&v).unwrap(), with);
+    }
+    #[test]
+    fn old_documents_are_byte_identical_when_new_fields_are_absent() {
+        let status = r#"{"service":"ok","version":"0.1.0","worker":{"state":"up","restarts":0,"model":"m","chunks":1},"busy":false}"#;
+        let s: StatusResponse = serde_json::from_str(status).unwrap();
+        assert_eq!(serde_json::to_string(&s).unwrap(), status);
+        let src = r#"{"sources":[{"id":"s","display_name":"d","path":"/p","status":"active","files":3}]}"#;
+        let r: SourcesResponse = serde_json::from_str(src).unwrap();
+        assert_eq!(serde_json::to_string(&r).unwrap(), src);
+        let ask = r#"{"answer":"a","abstained":true,"citations":[],"timings":{"total_s":0.5}}"#;
+        let a: AskResult = serde_json::from_str(ask).unwrap();
+        assert_eq!(serde_json::to_string(&a).unwrap(), ask);
     }
 }

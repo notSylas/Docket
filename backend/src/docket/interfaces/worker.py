@@ -7,7 +7,12 @@ stderr, so stray prints and native-library noise cannot corrupt the stream.
 Logs go to stderr, which the daemon captures; log lines never carry question
 or answer text.
 
-Methods: ``ping``, ``status``, ``sources.list``, ``query.ask``.
+Methods: ``ping``, ``status``, ``health``, ``sources.list``, ``query.ask``.
+``ping`` additionally lists ``features`` (``health.v1``, ``sources.counts.v1``,
+``ask.meta.v1``); ``health`` returns per-section state, code and producer
+timestamp from a dedicated read-only SQLite connection and GET-only local
+Ollama probes (no migration, write, model load or inference). Counts and codes
+only: never paths, document text or error messages.
 ``query.ask`` emits ``progress`` notifications (no ``id``) with a ``phase`` of
 ``retrieving``, ``reading`` or ``answering`` before the final response.
 
@@ -18,8 +23,10 @@ checked. Delta text is UNVALIDATED; the final response's ``answer`` and
 ``citations`` are authoritative and replace it (an answer whose citations fail
 validation arrives as the abstention). Without ``stream`` nothing changes.
 
-The worker is read-only: it reuses ``SourceManager``/``QueryService`` exactly as
-the CLI and TUI do, performs no ingestion and takes no writer lock. Requests
+The worker is read-only by convention (not enforced; M1): it reuses
+``SourceManager``/``QueryService`` exactly as the CLI and TUI do, performs no
+ingestion and takes no writer lock, but its engine is a normal read-write one
+and start-up may run migrations. Enforced read-only is deferred to M1. Requests
 are handled one at a time; the daemon allows a single in-flight query.
 """
 
@@ -38,6 +45,8 @@ INVALID_PARAMS = -32602
 SERVER_ERROR = -32000
 
 PROTOCOL_VERSION = 1
+# Additive capabilities advertised by `ping`; the protocol version is unchanged.
+FEATURES = ["health.v1", "sources.counts.v1", "ask.meta.v1"]
 EXCERPT_CHARS = 400
 
 Notify = Callable[[str, dict], None]
@@ -140,7 +149,13 @@ def build_methods(context: Any, service_factory: Callable[[Any, Any], Any]) -> d
     started = time.monotonic()
 
     def ping(_params: dict, _notify: Notify) -> dict:
-        return {"pong": True, "protocol": PROTOCOL_VERSION, "uptime_s": round(time.monotonic() - started, 1)}
+        return {"pong": True, "protocol": PROTOCOL_VERSION, "uptime_s": round(time.monotonic() - started, 1),
+                "features": list(FEATURES)}
+
+    def health(_params: dict, _notify: Notify) -> dict:
+        from docket.services.status import build_health
+
+        return build_health(context.settings, started, PROTOCOL_VERSION, FEATURES)
 
     def status(_params: dict, _notify: Notify) -> dict:
         settings = context.settings
@@ -260,7 +275,7 @@ def build_methods(context: Any, service_factory: Callable[[Any, Any], Any]) -> d
             "timings": timings,
         }
 
-    return {"ping": ping, "status": status, "sources.list": sources_list, "query.ask": query_ask}
+    return {"ping": ping, "status": status, "health": health, "sources.list": sources_list, "query.ask": query_ask}
 
 
 def run() -> None:

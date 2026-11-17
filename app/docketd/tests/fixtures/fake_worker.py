@@ -20,6 +20,15 @@ if "--startup-noise" in args:
 
 STATE_DIR = os.path.dirname(opt("--pidfile") or "/tmp/x")
 
+# --- status scenarios (R2a). Without `--health` this is an "old" worker: its
+# ping has no `features` and it has no `health` method, exactly as before.
+HEALTH = "--health" in args
+SCENARIO = opt("--scenario") or "healthy"   # healthy|db_unavailable|model_missing|indexing|partial|empty_ready|hostile
+HEALTH_DELAY = float(opt("--health-delay") or 0)  # seconds before answering `health`
+HEALTH_NEVER = "--health-never" in args          # accept `health` and never answer
+NEVER_AFTER = int(opt("--health-never-after")) if opt("--health-never-after") else None  # answer N calls, then hang
+HOSTILE = "/home/alice/payroll-SECRET-9917.xlsx"
+
 def send(obj):
     sys.stdout.write(json.dumps(obj) + "\n")
     sys.stdout.flush()
@@ -35,6 +44,83 @@ RESULT = {
     "timings": {"total_s": 0.01},
 }
 
+def health_calls():
+    try:
+        with open(opt("--healthlog")) as f:
+            return len(f.read().splitlines())
+    except OSError:
+        return 0
+
+def now_ms():
+    return int(time.time() * 1000)
+
+def section(state, code, **data):
+    return {"state": state, "code": code, "checked_at_ms": now_ms(), **data}
+
+def vcounts(**kw):
+    c = dict(known=True, unit="current_version_per_file", ready=0, keyword_only=0, empty_ready=0, pending=0,
+             failed=0, other=0)
+    c.update(kw)
+    c["total"] = sum(c[k] for k in ("ready", "keyword_only", "empty_ready", "pending", "failed", "other"))
+    c["reconciles"] = True
+    return c
+
+def health_doc():
+    sc = SCENARIO
+    models = section("ok", "ok", ollama="yes",
+                     answer={"name": "fake-model", "installed": "yes", "reachable": "yes", "resident": "yes", "size_vram": 100},
+                     embed={"name": "fake-embed", "installed": "yes", "reachable": "yes", "resident": "no"})
+    database = section("ok", "ok", readable="yes", revision="0012_fake", at_head="yes")
+    indexing = section("ok", "ok", snapshot_ms=now_ms(), versions=vcounts(ready=3), dead_letters=0,
+                       eta_s={"tier1": 0, "tier2": 0}, writer="free")
+    if sc == "db_unavailable":
+        database = section("unavailable", "db_unreadable", readable="no", at_head="unknown")
+        indexing = section("unavailable", "index_unreadable")
+    elif sc == "model_missing":
+        models = section("degraded", "model_missing", ollama="yes",
+                         answer={"name": "fake-model", "installed": "no", "reachable": "yes", "resident": "no"},
+                         embed={"name": "fake-embed", "installed": "yes", "reachable": "yes", "resident": "unknown"})
+    elif sc == "indexing":
+        indexing = section("ok", "ok", snapshot_ms=now_ms(), versions=vcounts(ready=1, pending=2),
+                           queue={"known": True, "unit": "ingest_queue_row", "queued": 2, "running": 0, "dead": 0},
+                           eta_s={"tier1": 30, "tier2": None}, writer="held")
+    elif sc in ("partial", "empty_ready"):
+        indexing = section("degraded", "anomalies", snapshot_ms=now_ms(), versions=vcounts(ready=2, empty_ready=1),
+                           dead_letters=0, writer="free")
+    elif sc == "hostile":
+        models = section("ok", "/home/alice/leak", ollama="yes", leak=HOSTILE,
+                         answer={"name": HOSTILE, "installed": "yes", "reachable": "yes", "resident": "no"},
+                         embed={"name": "e", "installed": "yes", "reachable": "yes", "resident": "no"})
+        database = section("ok", "ok", readable="yes", revision=HOSTILE, at_head="yes", error=HOSTILE)
+        indexing = section("degraded", "queue_dead_letters", dead_letters=1, last_error=HOSTILE,
+                           dead_letter_paths=[HOSTILE], writer=HOSTILE)
+    return {"v": 1, "checked_at_ms": now_ms(),
+            "process": section("ok", "ok", uptime_s=5, protocol=1, features=["health.v1", HOSTILE]),
+            "database": database, "models": models, "indexing": indexing}
+
+def source_status():
+    sc = SCENARIO
+    snap = now_ms()
+    job = {"known": False, "reason": "no_whole_source_job"}
+    base = {"snapshot_ms": snap, "versions": vcounts(ready=3), "queue": {"known": True, "unit": "ingest_queue_row", "queued": 0, "running": 0, "dead": 0},
+            "job": job, "history": {"known": True, "unit": "superseded_evidence_version", "superseded": 2},
+            "basis": {"versions": "snapshot", "skipped_by_code": "unknown", "writer_lock": "free"}}
+    anomalies = []
+    readiness = "ready"
+    if sc == "indexing":
+        base["versions"] = vcounts(ready=1, pending=2)
+        readiness = "indexing"
+    elif sc in ("partial", "empty_ready"):
+        base["versions"] = vcounts(ready=2, empty_ready=1)
+        readiness, anomalies = "partial", ["empty_ready"]
+    elif sc == "hostile":
+        base["job"] = {"known": True, "unit": "ingestion_file_result_of_one_job", "job_id": "job_1", "status": "PARTIAL",
+                       "files": 2, "outcomes": {"failed": 2}, "failed_by_code": {HOSTILE: 2, "timeout": 1},
+                       "skipped_by_code": {"too_large": 1}, "reconciles": True}
+        base["basis"]["leak"] = HOSTILE
+        readiness, anomalies = "partial", [HOSTILE, "job_partial"]
+    return {"readiness": readiness, "anomalies": anomalies, "counts": base}
+
 for line in sys.stdin:
     try:
         req = json.loads(line)
@@ -42,13 +128,27 @@ for line in sys.stdin:
         send({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}})
         continue
     i, method, params = req.get("id"), req.get("method"), req.get("params") or {}
+    if method == "health" and opt("--healthlog"):
+        # Logged even for a worker without `health`: proves no call was sent.
+        with open(opt("--healthlog"), "a") as f:
+            f.write("health\n")
     if method == "ping":
-        send({"jsonrpc": "2.0", "id": i, "result": {"pong": True}})
+        pong = {"pong": True}
+        if HEALTH:
+            pong["features"] = ["health.v1", "sources.counts.v1", "ask.meta.v1"]
+        send({"jsonrpc": "2.0", "id": i, "result": pong})
+    elif method == "health" and HEALTH:
+        if HEALTH_NEVER or (NEVER_AFTER is not None and health_calls() > NEVER_AFTER):
+            time.sleep(3600)
+        time.sleep(HEALTH_DELAY)
+        send({"jsonrpc": "2.0", "id": i, "result": health_doc()})
     elif method == "status":
         send({"jsonrpc": "2.0", "id": i, "result": {"worker": "ok", "model": "fake-model", "chunks": 5}})
     elif method == "sources.list":
-        send({"jsonrpc": "2.0", "id": i, "result": {"sources": [
-            {"id": "s1", "display_name": "Docs", "path": "/x/Docs", "status": "active", "files": 3}]}})
+        src = {"id": "s1", "display_name": "Docs", "path": "/x/Docs", "status": "active", "files": 3}
+        if HEALTH:
+            src.update(source_status())
+        send({"jsonrpc": "2.0", "id": i, "result": {"sources": [src]}})
     elif method == "query.ask":
         q = params.get("question", "")
         if q == "crash":
@@ -93,6 +193,12 @@ for line in sys.stdin:
             progress(i, "retrieving")
             time.sleep(1.5)
             send({"jsonrpc": "2.0", "id": i, "result": RESULT})
+        elif q == "meta":
+            send({"jsonrpc": "2.0", "id": i, "result": dict(
+                RESULT, answer="I could not find that.", abstained=True, citations=[],
+                abstention_reason="NO_EVIDENCE", scope_file_count=4,
+                index_coverage={"indexed": 3, "total": 5, "keyword_only": 2, "used_provisional": False},
+                warning_codes=["no_citations"], scope_label=HOSTILE)})
         elif q == "badshape":
             send({"jsonrpc": "2.0", "id": i, "result": {"nope": 1}})
         else:

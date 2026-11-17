@@ -174,3 +174,32 @@ def test_ask_without_stream_flag_gets_no_delta_callback_and_no_validating_phase(
     assert "on_delta" not in svc.calls[0][1]
     assert [m["params"]["phase"] for m in msgs if m.get("method") == "progress"] == [
         "retrieving", "reading", "answering"]
+
+
+# -- R2a: additive status protocol --------------------------------------------
+
+def test_ping_advertises_features_without_changing_protocol():
+    msgs, _ = run([req(1, "ping")])
+    r = msgs[0]["result"]
+    assert r["protocol"] == 1 and r["pong"] is True
+    assert {"health.v1", "sources.counts.v1", "ask.meta.v1"} <= set(r["features"])
+
+
+def test_health_method_returns_sections_and_never_leaks(tmp_path, monkeypatch):
+    from docket.services import status as st
+
+    monkeypatch.setattr(st, "models_section", lambda *a, **k: st._section("unavailable", "ollama_unreachable"))
+    ctx = make_context()
+    ctx.settings = SimpleNamespace(gen_model="g", embed_model="e", sqlite_path=tmp_path / "x.sqlite3", data_dir=tmp_path)
+    msgs, _ = run([req(1, "health")], ctx=ctx)
+    h = msgs[0]["result"]
+    assert h["v"] == 1
+    assert h["database"]["code"] == "db_missing" and h["models"]["code"] == "ollama_unreachable"
+    assert h["indexing"]["state"] == "unavailable" and h["process"]["state"] == "ok"
+    assert str(tmp_path) not in json.dumps(h)
+
+
+def test_sources_list_stays_old_shape_without_a_database_path():
+    msgs, _ = run([req(1, "sources.list")])
+    (s,) = msgs[0]["result"]["sources"]
+    assert set(s) == {"id", "display_name", "path", "status", "files"}
