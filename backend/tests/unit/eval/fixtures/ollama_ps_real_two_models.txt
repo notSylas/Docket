@@ -1,0 +1,3 @@
+NAME                    ID              SIZE      PROCESSOR    CONTEXT    UNTIL              
+qwen3-embedding:0.6b    ac6da0dfba84    2.4 GB    100% GPU     4096       4 minutes from now    
+qwen3:14b               bdbd181c33f2    9.6 GB    100% GPU     4096       4 minutes from now    

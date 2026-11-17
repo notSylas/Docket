@@ -25,6 +25,8 @@ def main():
     ap.add_argument("--repeats", type=int, default=1)
     ap.add_argument("--gold", type=Path, default=Path(__file__).resolve().parent.parent / "gold-cuad-scale.yaml")
     ap.add_argument("--corpus", type=Path, required=True, help="any folder with one sub-folder (never ingested)")
+    ap.add_argument("--allow-cpu-fallback", action="store_true",
+                    help="escape hatch: do not fail when a model is offloaded to CPU (still recorded in <out>.gpu.json)")
     a = ap.parse_args()
     for p in (a.src, a.work):
         assert "/.local/share/docket" not in str(p.resolve())
@@ -46,11 +48,20 @@ def main():
         runner.ingest()
         from docket.eval.manifest import build_manifest, write_manifest
         baseline = build_manifest(runner._context.settings, gold, lane="gpu", gold_path=a.gold, library=library)
-        write_manifest(baseline, a.out.with_name(a.out.name + ".manifest.json"), overwrite=True)
-        runner.run(qs, repeats=a.repeats, out_path=a.out, gold_digest=fingerprint(gold),
-                   manifest=baseline.model_dump(mode="json"),
-                   progress=lambda d, t, r: print(f"{d}/{t} {r.question_id}#{r.repeat} {r.latency_s:.1f}s"
-                                                  + (f" ERROR {r.error}" if r.error else ""), flush=True))
+        mpath = a.out.with_name(a.out.name + ".manifest.json")
+        write_manifest(baseline, mpath, overwrite=True)
+        from docket.eval.gpu_metrics import gpu_lane_guard
+
+        def record_gpu(summary):
+            baseline.gpu = summary.to_dict()
+            write_manifest(baseline, mpath, overwrite=True)
+
+        with gpu_lane_guard("gpu", a.out.with_name(a.out.name + ".gpu.json"),
+                            allow_cpu_fallback=a.allow_cpu_fallback, on_summary=record_gpu):
+            runner.run(qs, repeats=a.repeats, out_path=a.out, gold_digest=fingerprint(gold),
+                       manifest=baseline.model_dump(mode="json"),
+                       progress=lambda d, t, r: print(f"{d}/{t} {r.question_id}#{r.repeat} {r.latency_s:.1f}s"
+                                                      + (f" ERROR {r.error}" if r.error else ""), flush=True))
 
 
 if __name__ == "__main__":

@@ -59,6 +59,7 @@ class BaselineManifest(BaseModel):
     python_version: str = ""
     packages: dict[str, str] = Field(default_factory=dict)
     hardware: dict[str, str] = Field(default_factory=dict)  # GPU name, VRAM, ROCm, Ollama versions
+    gpu: dict[str, Any] | None = None  # GpuSummary of the run (lane=gpu), filled in when the run ends
 
     def fingerprint(self) -> str:
         """Digest of the identity-bearing fields (excludes timestamp)."""
@@ -113,7 +114,18 @@ def hardware_info(run: Run = _default_run) -> dict[str, str]:
                     break
     version = _try(run, ["rocm-smi", "--showdriverversion"])
     if version:
-        info["rocm_driver"] = version.splitlines()[-1].strip() if version else ""
+        for line in version.splitlines():
+            if line.lower().startswith("driver version"):  # real output ends with a banner line
+                info["rocm_driver"] = line.split(":", 1)[-1].strip()
+                break
+    env_line = _try(run, ["systemctl", "show", "ollama", "-p", "Environment", "--value"])
+    if env_line:  # record only the Ollama tuning variables of the service (no secrets, no PATH)
+        for token in env_line.split():
+            key, _, value = token.partition("=")
+            if key.startswith("OLLAMA_") and key not in ("OLLAMA_HOST",):
+                info[f"ollama_env_{key}"] = value
+    if env_line is not None:
+        info.setdefault("ollama_env_OLLAMA_GPU_OVERHEAD", "unset")
     for path in ("/opt/rocm/.info/version", "/opt/rocm/.info/version-dev"):
         try:
             info["rocm_version"] = Path(path).read_text().strip()
