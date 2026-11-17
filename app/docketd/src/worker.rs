@@ -252,7 +252,9 @@ impl Supervisor {
         // Cancelled while still queued behind another call: the worker never
         // saw the request, so there is nothing to terminate.
         if let Some(by) = call.opts.cancel.as_ref().and_then(CancelToken::source) {
-            let _ = call.reply.send(Err(CallError::Cancelled { by, worker: None }));
+            let _ = call
+                .reply
+                .send(Err(CallError::Cancelled { by, worker: None }));
             return;
         }
         let result = match self.ensure_started().await {

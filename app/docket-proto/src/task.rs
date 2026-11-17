@@ -179,16 +179,33 @@ pub struct TaskEvent {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TaskEventBody {
-    State { state: TaskState },
-    Phase { phase: Phase },
+    State {
+        state: TaskState,
+    },
+    Phase {
+        phase: Phase,
+    },
     /// Unvalidated answer text.
-    Delta { text: String },
+    Delta {
+        text: String,
+    },
     /// Authoritative answer.
-    Result { result: Box<AskResult> },
-    Error { code: String, message: String },
-    CancelRequested { by: CancelSource },
-    WorkerTerminated { how: WorkerExit },
-    InferenceStopped { status: InferenceStatus },
+    Result {
+        result: Box<AskResult>,
+    },
+    Error {
+        code: String,
+        message: String,
+    },
+    CancelRequested {
+        by: CancelSource,
+    },
+    WorkerTerminated {
+        how: WorkerExit,
+    },
+    InferenceStopped {
+        status: InferenceStatus,
+    },
 }
 
 impl TaskEventBody {
@@ -310,7 +327,13 @@ mod tests {
             TaskState::TimedOut,
         ]
         .iter()
-        .map(|s| serde_json::to_value(s).unwrap().as_str().unwrap().to_string())
+        .map(|s| {
+            serde_json::to_value(s)
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
         .collect();
         assert_eq!(
             names,
@@ -334,10 +357,10 @@ mod tests {
             serde_json::from_value(json!({"kind":"ask","question":"q"})).unwrap();
         assert!(!r.stream && r.deadline_ms.is_none());
         assert_eq!(r.ask().question, "q");
-        assert!(
-            serde_json::from_value::<CreateTaskRequest>(json!({"kind":"ingest","question":"q"}))
-                .is_err()
-        );
+        assert!(serde_json::from_value::<CreateTaskRequest>(
+            json!({"kind":"ingest","question":"q"})
+        )
+        .is_err());
         assert_eq!(
             serde_json::to_value(&r).unwrap(),
             json!({"kind":"ask","question":"q"})

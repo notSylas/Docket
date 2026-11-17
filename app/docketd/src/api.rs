@@ -175,7 +175,11 @@ async fn status(State(st): State<AppState>) -> Json<StatusResponse> {
 async fn sources(State(st): State<AppState>, Extension(rid): Extension<RequestId>) -> Response {
     match st
         .worker
-        .call("sources.list", Value::Null, CallOpts::timeout(st.call_timeout))
+        .call(
+            "sources.list",
+            Value::Null,
+            CallOpts::timeout(st.call_timeout),
+        )
         .await
     {
         Ok(v) => match serde_json::from_value::<SourcesResponse>(v) {
@@ -260,7 +264,9 @@ fn compat_event(ev: &TaskEvent, rid: &str) -> Option<Event> {
         )
     };
     match &ev.body {
-        TaskEventBody::Phase { phase } => sse_event("phase", &serde_json::json!({ "phase": phase })),
+        TaskEventBody::Phase { phase } => {
+            sse_event("phase", &serde_json::json!({ "phase": phase }))
+        }
         TaskEventBody::Delta { text } => sse_event("delta", &serde_json::json!({ "text": text })),
         TaskEventBody::Result { result } => sse_event("result", result),
         TaskEventBody::Error { code, message } => err(code, message),
@@ -301,7 +307,12 @@ async fn ask(
         Err(SubmitError::Busy) => return busy(&rid.0),
     };
     let Some(mut sub) = registry.subscribe(&id.0, 0) else {
-        return api_error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "task vanished", &rid.0);
+        return api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            "task vanished",
+            &rid.0,
+        );
     };
     let guard = CancelOnDrop {
         registry: registry.clone(),
@@ -312,15 +323,12 @@ async fn ask(
         let mut result: Option<AskResult> = None;
         let mut error: Option<(String, String)> = None;
         let mut state = TaskState::Queued;
-        loop {
-            match sub.next().await {
-                Pull::Event(ev) => match ev.body {
-                    TaskEventBody::Result { result: r } => result = Some(*r),
-                    TaskEventBody::Error { code, message } => error = Some((code, message)),
-                    TaskEventBody::State { state: s } => state = s,
-                    _ => {}
-                },
-                Pull::Gap | Pull::End => break,
+        while let Pull::Event(ev) = sub.next().await {
+            match ev.body {
+                TaskEventBody::Result { result: r } => result = Some(*r),
+                TaskEventBody::Error { code, message } => error = Some((code, message)),
+                TaskEventBody::State { state: s } => state = s,
+                _ => {}
             }
         }
         drop(guard);
@@ -463,7 +471,12 @@ async fn cancel_task(
     body: Bytes,
 ) -> Response {
     if !body.is_empty() && serde_json::from_slice::<CancelRequest>(&body).is_err() {
-        return api_error(StatusCode::BAD_REQUEST, "bad_request", "body must be {}", &rid.0);
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "bad_request",
+            "body must be {}",
+            &rid.0,
+        );
     }
     let reg = &st.tasks.registry;
     let (accepted, state) = match reg.request_cancel(&id, CancelSource::User) {

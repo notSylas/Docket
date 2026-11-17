@@ -437,13 +437,10 @@ impl Tasks {
             .registry
             .create(deadline, permit.is_none())
             .map_err(|Busy| SubmitError::Busy)?;
-        tokio::spawn(self.clone().run_ask(
-            id.0.clone(),
-            cancel.clone(),
-            req,
-            deadline,
-            permit,
-        ));
+        tokio::spawn(
+            self.clone()
+                .run_ask(id.0.clone(), cancel.clone(), req, deadline, permit),
+        );
         Ok((id, cancel))
     }
 
@@ -564,10 +561,7 @@ fn cancelled(worker: Option<docket_proto::task::WorkerExit>) -> (TaskState, Vec<
 }
 
 /// Turn the end of a worker call into the task's final state and events.
-fn outcome(
-    out: Result<Value, CallError>,
-    cancel: &CancelToken,
-) -> (TaskState, Vec<TaskEventBody>) {
+fn outcome(out: Result<Value, CallError>, cancel: &CancelToken) -> (TaskState, Vec<TaskEventBody>) {
     match out {
         Ok(_) if cancel.is_cancelled() => {
             // The user's cancel won the race: the answer is discarded and
@@ -610,9 +604,7 @@ fn outcome(
                 FailureReason::NoContent,
                 "Nothing is indexed yet. Add a folder with the docket CLI first.".into(),
             ),
-            _ if err.code == rpc::INVALID_PARAMS => {
-                failed(FailureReason::BadRequest, err.message)
-            }
+            _ if err.code == rpc::INVALID_PARAMS => failed(FailureReason::BadRequest, err.message),
             _ => failed(FailureReason::WorkerError, err.message),
         },
     }

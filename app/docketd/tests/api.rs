@@ -273,28 +273,30 @@ async fn sse_stream_true_forwards_deltas_between_phases_and_result() {
     let names: Vec<_> = p.events.iter().map(|e| e.event.as_str()).collect();
     assert_eq!(
         names,
-        [
-            "phase", "phase", "phase", "delta", "delta", "delta", "phase", "phase", "result"
-        ]
+        ["phase", "phase", "phase", "delta", "delta", "delta", "phase", "phase", "result"]
     );
     let text: String = p
         .events
         .iter()
         .filter(|e| e.event == "delta")
-        .map(|e| serde_json::from_str::<serde_json::Value>(&e.data).unwrap()["text"]
-            .as_str()
-            .unwrap()
-            .to_string())
+        .map(|e| {
+            serde_json::from_str::<serde_json::Value>(&e.data).unwrap()["text"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
         .collect();
     assert_eq!(text, "The rate is 2,650 [rates.txt#1].");
     let phases: Vec<String> = p
         .events
         .iter()
         .filter(|e| e.event == "phase")
-        .map(|e| serde_json::from_str::<serde_json::Value>(&e.data).unwrap()["phase"]
-            .as_str()
-            .unwrap()
-            .to_string())
+        .map(|e| {
+            serde_json::from_str::<serde_json::Value>(&e.data).unwrap()["phase"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
         .collect();
     assert_eq!(
         phases,
@@ -519,7 +521,6 @@ async fn worker_exiting_at_startup_does_not_wedge_the_daemon() {
     d.stop().await;
 }
 
-
 // ---------------------------------------------------------------------------
 // R1: tasks, cancellation, stale-event safety
 // ---------------------------------------------------------------------------
@@ -535,30 +536,47 @@ impl Daemon {
         let s = self.sock.clone();
         tokio::task::spawn_blocking(move || {
             let h: Vec<(&str, &str)> = headers.iter().map(|(k, v)| (*k, v.as_str())).collect();
-            let r = client::request(&s, method, &path, &h, body.as_deref().map(str::as_bytes), Some(T))
-                .unwrap();
+            let r = client::request(
+                &s,
+                method,
+                &path,
+                &h,
+                body.as_deref().map(str::as_bytes),
+                Some(T),
+            )
+            .unwrap();
             (r.status, r.text().unwrap())
         })
         .await
         .unwrap()
     }
 
-    async fn create_task(&self, question: &str, stream: bool, deadline_ms: Option<u64>) -> (u16, String) {
+    async fn create_task(
+        &self,
+        question: &str,
+        stream: bool,
+        deadline_ms: Option<u64>,
+    ) -> (u16, String) {
         let mut b = serde_json::json!({"kind":"ask","question":question,"stream":stream});
         if let Some(d) = deadline_ms {
             b["deadline_ms"] = d.into();
         }
-        self.http("POST", "/v1/tasks".into(), Some(b.to_string()), vec![]).await
+        self.http("POST", "/v1/tasks".into(), Some(b.to_string()), vec![])
+            .await
     }
 
     async fn new_task(&self, question: &str, stream: bool) -> String {
         let (c, b) = self.create_task(question, stream, None).await;
         assert_eq!(c, 202, "{b}");
-        serde_json::from_str::<CreateTaskResponse>(&b).unwrap().task_id.0
+        serde_json::from_str::<CreateTaskResponse>(&b)
+            .unwrap()
+            .task_id
+            .0
     }
 
     async fn cancel_task(&self, id: &str) -> (u16, String) {
-        self.http("POST", format!("/v1/tasks/{id}/cancel"), None, vec![]).await
+        self.http("POST", format!("/v1/tasks/{id}/cancel"), None, vec![])
+            .await
     }
 
     async fn tasks(&self) -> Vec<TaskInfo> {
@@ -568,7 +586,11 @@ impl Daemon {
     }
 
     async fn task(&self, id: &str) -> TaskInfo {
-        self.tasks().await.into_iter().find(|t| t.task_id.0 == id).unwrap()
+        self.tasks()
+            .await
+            .into_iter()
+            .find(|t| t.task_id.0 == id)
+            .unwrap()
     }
 
     async fn wait_task(&self, id: &str, what: &str, pred: impl Fn(&TaskInfo) -> bool) -> TaskInfo {
@@ -578,7 +600,11 @@ impl Daemon {
             if pred(&t) {
                 return t;
             }
-            assert!(t0.elapsed() < T, "task never reached: {what} (at {:?})", t.state);
+            assert!(
+                t0.elapsed() < T,
+                "task never reached: {what} (at {:?})",
+                t.state
+            );
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
     }
@@ -633,7 +659,10 @@ fn pos(evs: &[TaskEvent], f: impl Fn(&TaskEventBody) -> bool) -> Option<usize> {
 async fn wait_dead(pid: i32, what: &str) {
     let t0 = Instant::now();
     while alive(pid) {
-        assert!(t0.elapsed() < Duration::from_secs(10), "{what}: pid {pid} still alive");
+        assert!(
+            t0.elapsed() < Duration::from_secs(10),
+            "{what}: pid {pid} still alive"
+        );
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
 }
@@ -647,19 +676,35 @@ fn long_backoff(c: &mut Config) {
 
 fn assert_cancel_semantics(evs: &[TaskEvent], by: CancelSource) {
     assert_contiguous(evs);
-    let req = pos(evs, |b| matches!(b, TaskEventBody::CancelRequested { by: x } if *x == by))
-        .expect("cancel_requested");
+    let req = pos(
+        evs,
+        |b| matches!(b, TaskEventBody::CancelRequested { by: x } if *x == by),
+    )
+    .expect("cancel_requested");
     let term = pos(evs, |b| matches!(b, TaskEventBody::WorkerTerminated { .. }))
         .expect("worker_terminated");
     let inf = pos(evs, |b| {
-        matches!(b, TaskEventBody::InferenceStopped { status: InferenceStatus::Unverified })
+        matches!(
+            b,
+            TaskEventBody::InferenceStopped {
+                status: InferenceStatus::Unverified
+            }
+        )
     })
     .expect("inference_stopped is always unverified");
-    assert!(req < term && term < inf, "cancel_requested, worker_terminated, inference_stopped in order");
+    assert!(
+        req < term && term < inf,
+        "cancel_requested, worker_terminated, inference_stopped in order"
+    );
     assert_eq!(states(evs).last(), Some(&TaskState::Cancelled));
     assert!(states(evs).contains(&TaskState::Cancelling));
     // The three facts are distinct events; there is no other claim about inference.
-    assert_eq!(evs.iter().filter(|e| matches!(e.body, TaskEventBody::InferenceStopped { .. })).count(), 1);
+    assert_eq!(
+        evs.iter()
+            .filter(|e| matches!(e.body, TaskEventBody::InferenceStopped { .. }))
+            .count(),
+        1
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -668,15 +713,25 @@ async fn cancel_stalled_worker_is_bounded_kills_worker_and_next_question_works()
     let mut d = Daemon::start_with(&[], long_backoff).await;
     let old = d.pid();
     let id = d.new_task("hang", false).await;
-    d.wait_task(&id, "running", |t| t.state == TaskState::Running && t.last_seq >= 3).await;
+    d.wait_task(&id, "running", |t| {
+        t.state == TaskState::Running && t.last_seq >= 3
+    })
+    .await;
     let collector = d.collect_events(&id, None);
     let t0 = Instant::now();
     let (code, body) = d.cancel_task(&id).await;
     assert_eq!(code, 200, "{body}");
     let c: CancelResponse = serde_json::from_str(&body).unwrap();
-    assert!(c.accepted && c.state == TaskState::Cancelling, "cancelling is not cancelled");
+    assert!(
+        c.accepted && c.state == TaskState::Cancelling,
+        "cancelling is not cancelled"
+    );
     let evs = collector.await.unwrap();
-    assert!(t0.elapsed() < Duration::from_secs(3), "cancel took {:?}", t0.elapsed());
+    assert!(
+        t0.elapsed() < Duration::from_secs(3),
+        "cancel took {:?}",
+        t0.elapsed()
+    );
     assert_cancel_semantics(&evs, CancelSource::User);
     assert!(matches!(
         evs.iter().find_map(|e| match &e.body {
@@ -690,8 +745,14 @@ async fn cancel_stalled_worker_is_bounded_kills_worker_and_next_question_works()
     let t1 = Instant::now();
     let (code, body) = d.ask("again").await;
     assert_eq!(code, 200, "{body}");
-    assert!(t1.elapsed() < Duration::from_secs(10), "no backoff after a user cancel");
-    assert!(serde_json::from_str::<AskResult>(&body).unwrap().answer.contains("2,650"));
+    assert!(
+        t1.elapsed() < Duration::from_secs(10),
+        "no backoff after a user cancel"
+    );
+    assert!(serde_json::from_str::<AskResult>(&body)
+        .unwrap()
+        .answer
+        .contains("2,650"));
     assert_eq!(d.starts(), 2);
     assert_eq!(d.status().await.worker.restarts, 1);
     assert!(!d.status().await.busy, "permit released");
@@ -707,7 +768,9 @@ async fn cancel_mid_stream_discards_later_output_and_leaves_no_result() {
     assert_eq!(d.cancel_task(&id).await.0, 200);
     let evs = collector.await.unwrap();
     assert_cancel_semantics(&evs, CancelSource::User);
-    assert!(evs.iter().any(|e| matches!(&e.body, TaskEventBody::Delta { text } if text == "partial ")));
+    assert!(evs
+        .iter()
+        .any(|e| matches!(&e.body, TaskEventBody::Delta { text } if text == "partial ")));
     assert!(pos(&evs, |b| matches!(b, TaskEventBody::Result { .. })).is_none());
     let (code, _) = d.ask("after stop").await;
     assert_eq!(code, 200);
@@ -779,7 +842,13 @@ async fn worker_that_ignores_sigterm_is_killed_after_the_grace_period() {
     let evs = collector.await.unwrap();
     assert!(t0.elapsed() < Duration::from_secs(3));
     assert_cancel_semantics(&evs, CancelSource::User);
-    assert!(pos(&evs, |b| matches!(b, TaskEventBody::WorkerTerminated { how: WorkerExit::Killed })).is_some());
+    assert!(pos(&evs, |b| matches!(
+        b,
+        TaskEventBody::WorkerTerminated {
+            how: WorkerExit::Killed
+        }
+    ))
+    .is_some());
     wait_dead(old, "stubborn worker").await;
     d.stop().await;
 }
@@ -817,7 +886,10 @@ async fn cancel_and_timeout_kill_the_whole_process_group_no_orphans() {
     d.wait_worker(WorkerState::Up).await;
     let id = d.create_task("child", false, Some(700)).await;
     assert_eq!(id.0, 202);
-    let id = serde_json::from_str::<CreateTaskResponse>(&id.1).unwrap().task_id.0;
+    let id = serde_json::from_str::<CreateTaskResponse>(&id.1)
+        .unwrap()
+        .task_id
+        .0;
     let kid = child_pid(&d);
     let evs = d.events(&id).await;
     assert_eq!(states(&evs).last(), Some(&TaskState::TimedOut));
@@ -864,7 +936,9 @@ async fn client_disconnect_mid_stream_cancels_with_client_gone_and_frees_the_wor
     .await
     .unwrap();
     let id = d.newest_task().await;
-    let t = d.wait_task(&id, "cancelled", |t| t.state == TaskState::Cancelled).await;
+    let t = d
+        .wait_task(&id, "cancelled", |t| t.state == TaskState::Cancelled)
+        .await;
     assert!(t.last_seq > 6);
     let evs = d.events(&id).await;
     assert_cancel_semantics(&evs, CancelSource::ClientGone);
@@ -876,7 +950,13 @@ async fn client_disconnect_mid_stream_cancels_with_client_gone_and_frees_the_wor
     // Same for a plain JSON /v1/ask whose client gives up (read timeout).
     let s = d.sock.clone();
     tokio::task::spawn_blocking(move || {
-        let r = client::post_json(&s, "/v1/ask", r#"{"question":"hang"}"#, None, Duration::from_millis(400));
+        let r = client::post_json(
+            &s,
+            "/v1/ask",
+            r#"{"question":"hang"}"#,
+            None,
+            Duration::from_millis(400),
+        );
         assert!(r.is_err() || r.unwrap().text().is_err());
     })
     .await
@@ -904,7 +984,9 @@ async fn deadline_gives_timed_out_not_failed() {
     assert_contiguous(&evs);
     assert_eq!(states(&evs).last(), Some(&TaskState::TimedOut));
     assert!(!states(&evs).contains(&TaskState::Failed));
-    assert!(evs.iter().any(|e| matches!(&e.body, TaskEventBody::Error { code, .. } if code == "timeout")));
+    assert!(evs
+        .iter()
+        .any(|e| matches!(&e.body, TaskEventBody::Error { code, .. } if code == "timeout")));
     assert!(pos(&evs, |b| matches!(b, TaskEventBody::CancelRequested { .. })).is_none());
     wait_dead(old, "hung worker").await;
     d.wait_worker(WorkerState::Up).await;
@@ -913,11 +995,17 @@ async fn deadline_gives_timed_out_not_failed() {
     // A per-task deadline lowers the limit; it cannot raise it above the daemon's.
     let (c, b) = d.create_task("hang", false, Some(200)).await;
     assert_eq!(c, 202);
-    let short = serde_json::from_str::<CreateTaskResponse>(&b).unwrap().task_id.0;
+    let short = serde_json::from_str::<CreateTaskResponse>(&b)
+        .unwrap()
+        .task_id
+        .0;
     assert_eq!(d.task(&short).await.deadline_ms, 200);
     let (c, b) = d.create_task("slow", false, Some(3_600_000)).await;
     assert_eq!(c, 202);
-    let capped = serde_json::from_str::<CreateTaskResponse>(&b).unwrap().task_id.0;
+    let capped = serde_json::from_str::<CreateTaskResponse>(&b)
+        .unwrap()
+        .task_id
+        .0;
     assert_eq!(d.task(&capped).await.deadline_ms, 600);
     d.stop().await;
 }
@@ -929,8 +1017,14 @@ async fn worker_crash_fails_the_task_with_a_typed_reason_and_the_worker_restarts
     let evs = d.events(&id).await;
     assert_contiguous(&evs);
     assert_eq!(states(&evs).last(), Some(&TaskState::Failed));
-    assert!(evs.iter().any(|e| matches!(&e.body, TaskEventBody::Error { code, .. } if code == "worker_crashed")));
-    assert!(pos(&evs, |b| matches!(b, TaskEventBody::InferenceStopped { .. })).is_none());
+    assert!(evs
+        .iter()
+        .any(|e| matches!(&e.body, TaskEventBody::Error { code, .. } if code == "worker_crashed")));
+    assert!(pos(&evs, |b| matches!(
+        b,
+        TaskEventBody::InferenceStopped { .. }
+    ))
+    .is_none());
     let t0 = Instant::now();
     loop {
         if d.ask("again").await.0 == 200 {
@@ -946,7 +1040,11 @@ async fn worker_crash_fails_the_task_with_a_typed_reason_and_the_worker_restarts
 #[tokio::test(flavor = "multi_thread")]
 async fn normal_task_streams_in_order_with_replay_and_capability() {
     let mut d = Daemon::start(&[]).await;
-    assert!(d.status().await.capabilities.contains(&"tasks.v1".to_string()));
+    assert!(d
+        .status()
+        .await
+        .capabilities
+        .contains(&"tasks.v1".to_string()));
     let id = d.new_task("rate?", true).await;
     let evs = d.events(&id).await;
     assert_contiguous(&evs);
@@ -963,14 +1061,27 @@ async fn normal_task_streams_in_order_with_replay_and_capability() {
         .collect();
     assert_eq!(text, "The rate is 2,650 [rates.txt#1].");
     let result_at = pos(&evs, |b| matches!(b, TaskEventBody::Result { .. })).unwrap();
-    assert!(matches!(evs[result_at].body, TaskEventBody::Result { ref result } if !result.abstained && result.citations.len() == 1));
+    assert!(
+        matches!(evs[result_at].body, TaskEventBody::Result { ref result } if !result.abstained && result.citations.len() == 1)
+    );
     assert!(evs.iter().all(|e| e.task_id.0 == id));
     // Last-Event-ID: exactly the missed tail, in order, no duplicates.
     let tail = d.collect_events(&id, Some(4)).await.unwrap();
     assert_eq!(tail, evs[4..].to_vec());
-    assert!(d.collect_events(&id, Some(evs.len() as u64)).await.unwrap().is_empty());
+    assert!(d
+        .collect_events(&id, Some(evs.len() as u64))
+        .await
+        .unwrap()
+        .is_empty());
     // The raw SSE carries the seq as the event id.
-    let (c, raw) = d.http("GET", format!("/v1/tasks/{id}/events"), None, vec![("Last-Event-ID", "2".into())]).await;
+    let (c, raw) = d
+        .http(
+            "GET",
+            format!("/v1/tasks/{id}/events"),
+            None,
+            vec![("Last-Event-ID", "2".into())],
+        )
+        .await;
     assert_eq!(c, 200);
     assert!(raw.contains("id: 3\n") && !raw.contains("id: 2\n") && raw.contains("event: state"));
     // Listing.
@@ -989,11 +1100,22 @@ async fn normal_task_streams_in_order_with_replay_and_capability() {
 async fn old_ask_clients_see_exactly_the_old_vocabulary() {
     let mut d = Daemon::start(&[]).await;
     let p = d
-        .post(r#"{"question":"rate?","stream":true}"#, Some("text/event-stream"))
+        .post(
+            r#"{"question":"rate?","stream":true}"#,
+            Some("text/event-stream"),
+        )
         .await;
     for e in &p.events {
-        assert!(["phase", "delta", "result", "error"].contains(&e.event.as_str()), "{}", e.event);
-        assert!(!e.data.contains("task_id") && !e.data.contains("\"seq\""), "{}", e.data);
+        assert!(
+            ["phase", "delta", "result", "error"].contains(&e.event.as_str()),
+            "{}",
+            e.event
+        );
+        assert!(
+            !e.data.contains("task_id") && !e.data.contains("\"seq\""),
+            "{}",
+            e.data
+        );
     }
     assert_eq!(p.events[0].data, r#"{"phase":"retrieving"}"#);
     assert_eq!(p.events[3].event, "delta");
@@ -1002,7 +1124,9 @@ async fn old_ask_clients_see_exactly_the_old_vocabulary() {
     assert!(docket_proto::api::parse_ask_event("state", r#"{"state":"running"}"#).is_none());
     assert!(docket_proto::api::parse_ask_event("cancel_requested", "{}").is_none());
     // Errors keep the old envelope with the request id.
-    let p = d.post(r#"{"question":"crash"}"#, Some("text/event-stream")).await;
+    let p = d
+        .post(r#"{"question":"crash"}"#, Some("text/event-stream"))
+        .await;
     let last = p.events.last().unwrap();
     assert_eq!(last.event, "error");
     let e: ApiError = serde_json::from_str(&last.data).unwrap();
@@ -1023,7 +1147,12 @@ async fn cancel_of_finished_unknown_and_double_cancel_is_idempotent() {
     assert!(!r.accepted && r.state == TaskState::Succeeded);
     // Unknown task.
     assert_eq!(d.cancel_task("t-nope").await.0, 404);
-    assert_eq!(d.http("GET", "/v1/tasks/t-nope/events".into(), None, vec![]).await.0, 404);
+    assert_eq!(
+        d.http("GET", "/v1/tasks/t-nope/events".into(), None, vec![])
+            .await
+            .0,
+        404
+    );
     // Double cancel of a running one.
     let id = d.new_task("hang", false).await;
     d.wait_task(&id, "running", |t| t.last_seq >= 3).await;
@@ -1035,7 +1164,12 @@ async fn cancel_of_finished_unknown_and_double_cancel_is_idempotent() {
     assert!(first.accepted && !second.accepted);
     let evs = collector.await.unwrap();
     assert_cancel_semantics(&evs, CancelSource::User);
-    assert_eq!(evs.iter().filter(|e| matches!(e.body, TaskEventBody::CancelRequested { .. })).count(), 1);
+    assert_eq!(
+        evs.iter()
+            .filter(|e| matches!(e.body, TaskEventBody::CancelRequested { .. }))
+            .count(),
+        1
+    );
     // After it finished: still 200, not accepted, state cancelled.
     let third: CancelResponse = serde_json::from_str(&d.cancel_task(&id).await.1).unwrap();
     assert!(!third.accepted && third.state == TaskState::Cancelled);
@@ -1054,7 +1188,8 @@ async fn queued_task_cancel_never_touches_the_worker_and_the_queue_is_bounded() 
     let mut d = Daemon::start(&[]).await;
     let pid = d.pid();
     let running = d.new_task("slow", false).await;
-    d.wait_task(&running, "running", |t| t.state == TaskState::Running).await;
+    d.wait_task(&running, "running", |t| t.state == TaskState::Running)
+        .await;
     let queued = d.new_task("rate?", false).await;
     assert_eq!(d.task(&queued).await.state, TaskState::Queued);
     // The wait queue holds one; a third is refused like /v1/ask refuses.
@@ -1066,17 +1201,32 @@ async fn queued_task_cancel_never_touches_the_worker_and_the_queue_is_bounded() 
     assert_eq!(c, 200);
     assert!(serde_json::from_str::<CancelResponse>(&b).unwrap().accepted);
     let evs = collector.await.unwrap();
-    assert_eq!(states(&evs), [TaskState::Queued, TaskState::Cancelling, TaskState::Cancelled]);
-    assert!(pos(&evs, |b| matches!(b, TaskEventBody::WorkerTerminated { .. } | TaskEventBody::InferenceStopped { .. })).is_none());
+    assert_eq!(
+        states(&evs),
+        [
+            TaskState::Queued,
+            TaskState::Cancelling,
+            TaskState::Cancelled
+        ]
+    );
+    assert!(pos(&evs, |b| matches!(
+        b,
+        TaskEventBody::WorkerTerminated { .. } | TaskEventBody::InferenceStopped { .. }
+    ))
+    .is_none());
     // The running task is unaffected and finishes; the worker was never restarted.
     let evs = d.events(&running).await;
     assert_eq!(states(&evs).last(), Some(&TaskState::Succeeded));
     assert_eq!((d.pid(), d.starts()), (pid, 1));
     // A queued task that is NOT cancelled runs after the running one.
     let a = d.new_task("slow", false).await;
-    d.wait_task(&a, "running", |t| t.state == TaskState::Running).await;
+    d.wait_task(&a, "running", |t| t.state == TaskState::Running)
+        .await;
     let b = d.new_task("rate?", false).await;
-    assert_eq!(states(&d.events(&b).await).last(), Some(&TaskState::Succeeded));
+    assert_eq!(
+        states(&d.events(&b).await).last(),
+        Some(&TaskState::Succeeded)
+    );
     d.stop().await;
 }
 
@@ -1094,14 +1244,21 @@ async fn shutdown_during_a_task_cancels_cleanly_and_leaves_no_orphan() {
     assert!(!d.sock.exists());
     wait_dead(pid, "worker").await;
     wait_dead(kid, "worker's child").await;
-    assert_eq!(d.starts(), 1, "no replacement worker is started while shutting down");
+    assert_eq!(
+        d.starts(),
+        1,
+        "no replacement worker is started while shutting down"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn tasks_off_hides_routes_and_capability_but_ask_still_works() {
     let mut d = Daemon::start_with(&[], |c| c.tasks_enabled = false).await;
     let (_, status) = d.get("/v1/status").await;
-    assert!(!status.contains("capabilities") && !status.contains("tasks.v1"), "{status}");
+    assert!(
+        !status.contains("capabilities") && !status.contains("tasks.v1"),
+        "{status}"
+    );
     assert_eq!(d.get("/v1/tasks").await.0, 404);
     assert_eq!(d.create_task("q", false, None).await.0, 404);
     assert_eq!(d.cancel_task("t-1").await.0, 404);
@@ -1114,15 +1271,47 @@ async fn tasks_off_hides_routes_and_capability_but_ask_still_works() {
 async fn task_routes_enforce_the_same_input_limits() {
     let mut d = Daemon::start(&[]).await;
     let big = format!(r#"{{"kind":"ask","question":"{}"}}"#, "a".repeat(100_000));
-    assert_eq!(d.http("POST", "/v1/tasks".into(), Some(big.clone()), vec![]).await.0, 413);
-    assert_eq!(d.http("POST", "/v1/tasks/t-1/cancel".into(), Some(big), vec![]).await.0, 413);
-    let (c, b) = d.http("POST", "/v1/tasks".into(), Some(r#"{"kind":"ingest","question":"q"}"#.into()), vec![]).await;
+    assert_eq!(
+        d.http("POST", "/v1/tasks".into(), Some(big.clone()), vec![])
+            .await
+            .0,
+        413
+    );
+    assert_eq!(
+        d.http("POST", "/v1/tasks/t-1/cancel".into(), Some(big), vec![])
+            .await
+            .0,
+        413
+    );
+    let (c, b) = d
+        .http(
+            "POST",
+            "/v1/tasks".into(),
+            Some(r#"{"kind":"ingest","question":"q"}"#.into()),
+            vec![],
+        )
+        .await;
     assert_eq!((c, err_code(&b).as_str()), (400, "bad_request"));
     assert_eq!(d.create_task("   ", false, None).await.0, 400);
     let long = "a".repeat(9_000);
     assert_eq!(d.create_task(&long, false, None).await.0, 400);
-    assert_eq!(d.http("POST", "/v1/tasks".into(), Some("nope".into()), vec![]).await.0, 400);
-    assert_eq!(d.http("POST", "/v1/tasks/t-1/cancel".into(), Some("nope".into()), vec![]).await.0, 400);
+    assert_eq!(
+        d.http("POST", "/v1/tasks".into(), Some("nope".into()), vec![])
+            .await
+            .0,
+        400
+    );
+    assert_eq!(
+        d.http(
+            "POST",
+            "/v1/tasks/t-1/cancel".into(),
+            Some("nope".into()),
+            vec![]
+        )
+        .await
+        .0,
+        400
+    );
     // Error bodies never echo the question.
     let (_, b) = d.create_task("   ", false, None).await;
     assert!(!b.contains("aaaa"));
