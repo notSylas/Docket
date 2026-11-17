@@ -188,3 +188,32 @@ def test_end_to_end_with_synthetic_returned_sheet(sheet, tmp_path):
     s = score_label_sheet(load_returned_labels(ret), key, n_boot=200)
     assert s.unlabeled == 0 and s.seeded_caught == s.seeded_labeled == summary["seeded"]
     assert all(j.agreement is not None for j in s.judges)
+
+
+def test_cli_sheet_export_and_score_with_synthetic_labels(tmp_path, fixtures_dir, make_record):
+    from typer.testing import CliRunner
+
+    from docket.interfaces.cli.main import app
+
+    runner = CliRunner()
+    results, gold_dir = build_results(tmp_path, fixtures_dir, make_record)
+    out = tmp_path / "lab"
+    r = runner.invoke(app, ["eval", "calibrate", "sheet-export", "--results-dir", str(results), "--gold-dir", str(gold_dir),
+                            "--out-dir", str(out), "--n", "13", "--seeded", "3"])
+    assert r.exit_code == 0, r.output
+    assert "keep labels_key.jsonl private" in r.output and (out / "LABELING_INSTRUCTIONS.txt").exists()
+    empty = runner.invoke(app, ["eval", "calibrate", "sheet-score", "--labels", str(out / "label_sheet.csv"),
+                                "--key", str(out / "labels_key.jsonl")])
+    assert empty.exit_code == 1 and "no labeled items" in empty.output  # blank sheet is never scored
+    key = load_key(out / "labels_key.jsonl")
+    rows = list(csv.DictReader((out / "label_sheet.csv").open(newline="")))
+    for row in rows:  # SYNTHETIC labels for the test only
+        row["correct"] = "yes" if key[row["item_id"]]["judge_verdict"] == "pass" and key[row["item_id"]]["kind"] == "real" else "no"
+    filled = tmp_path / "filled.csv"
+    with filled.open("w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=list(rows[0]))
+        w.writeheader()
+        w.writerows(rows)
+    ok = runner.invoke(app, ["eval", "calibrate", "sheet-score", "--labels", str(filled), "--key", str(out / "labels_key.jsonl"),
+                             "--n-boot", "100"])
+    assert ok.exit_code == 0 and "HUMAN" in ok.output and "model-to-model" in ok.output

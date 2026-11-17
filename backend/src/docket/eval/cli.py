@@ -20,6 +20,10 @@ from docket.eval.schema import GoldSetError
 eval_app = typer.Typer(help="Measure answer accuracy: run a gold set, judge, report, compare, draft gold.")
 calibrate_app = typer.Typer(help="Calibrate the automatic judge against your own labels.")
 eval_app.add_typer(calibrate_app, name="calibrate")
+kag_app = typer.Typer(
+    help="Lane A (CPU-only, no model) KAG evaluation: silver gold, scratch library, metrics, review sheets."
+)
+eval_app.add_typer(kag_app, name="kag")
 
 
 def _eval_dir() -> Path:
@@ -420,3 +424,102 @@ def freeze_cmd(
     except (GoldSetError, OSError) as exc:
         raise _fail(str(exc)) from exc
     typer.echo(f"Froze {len(manifest.files)} documents to {out}")
+
+
+def _default_kag_gold() -> Path:
+    return Path(__file__).resolve().parents[3] / "eval-public" / "kag" / "kag-gold-cuad12.silver.yaml"
+
+
+@kag_app.command("run")
+def kag_run_cmd(
+    db: Path = typer.Option(..., "--db", help="Scratch library docket.sqlite3 with the KAG tables built (never the real data dir)."),
+    gold: Path = typer.Option(None, "--gold", help="KAG gold YAML (default eval-public/kag/kag-gold-cuad12.silver.yaml)."),
+    ks: str = typer.Option("3,6,12", "--ks", help="Comma-separated k values for clause recall@k."),
+    human_only: bool = typer.Option(False, "--human-only", help="Only count human_reviewed items (silver excluded)."),
+    n_boot: int = typer.Option(2000, "--n-boot", min=100, help="Bootstrap resamples per metric."),
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output."),
+    redact: bool = typer.Option(False, "--redact", help="With --json: drop paths and document file names."),
+    out: Path | None = typer.Option(None, "--out", help="Also write the report here (created 0600)."),
+) -> None:
+    """Run the KAG Lane A evaluation (entity P/R, resolution, roles, clause recall on/off, provenance, lifecycle)."""
+    from docket.eval.kag.graph import RealDataDirError
+    from docket.eval.kag.run import format_kag_report, report_to_json, run_kag_eval
+    from docket.eval.kag.schema import load_kag_gold
+    from docket.eval.outputs import write_private_text
+
+    try:
+        gold_path = gold or _default_kag_gold()
+        report = run_kag_eval(
+            load_kag_gold(gold_path), db, gold_path=str(gold_path),
+            ks=tuple(int(k) for k in ks.split(",")), human_only=human_only, n_boot=n_boot,
+        )
+    except (GoldSetError, RealDataDirError, ValueError, OSError) as exc:
+        raise _fail(str(exc)) from exc
+    text = report_to_json(report, redact=redact) if as_json else format_kag_report(report)
+    typer.echo(text)
+    if out is not None:
+        write_private_text(out, text + "\n")
+
+
+@kag_app.command("silver")
+def kag_silver_cmd(
+    gold: list[Path] = typer.Option(None, "--gold", help="gold-cuad*.yaml to derive from (repeatable; default gold-cuad.yaml + gold-cuad-scale.yaml)."),
+    out: Path = typer.Option(None, "--out", help="Output YAML (default eval-public/kag/kag-gold-cuad12.silver.yaml)."),
+) -> None:
+    """Derive SILVER (unreviewed) KAG labels mechanically from existing gold; never marks anything human-reviewed."""
+    from docket.eval.kag.silver import build_silver, write_gold_yaml
+
+    base = Path(__file__).resolve().parents[3] / "eval-public"
+    paths = gold or [base / "gold-cuad.yaml", base / "gold-cuad-scale.yaml"]
+    try:
+        built = build_silver(paths, corpus="CUAD v1 12-contract slice")
+        write_gold_yaml(built, out or _default_kag_gold())
+    except (GoldSetError, OSError) as exc:
+        raise _fail(str(exc)) from exc
+    typer.echo(
+        f"Wrote silver gold to {out or _default_kag_gold()}: {len(built.entities)} entity docs, "
+        f"{len(built.resolution_pairs)} resolution pairs, {len(built.roles)} roles, {len(built.clauses)} clauses (all silver_unreviewed)"
+    )
+
+
+@kag_app.command("library")
+def kag_library_cmd(
+    source_db: Path = typer.Option(..., "--source-db", help="Existing scratch library whose stored chunks are reused."),
+    gold: Path = typer.Option(None, "--gold", help="KAG gold; its documents are copied (default silver gold)."),
+    dest: Path = typer.Option(..., "--dest", help="NEW scratch directory (never the real data dir)."),
+) -> None:
+    """Build a scratch library (no model, no embeddings): copy stored chunks, run the deterministic KAG builder."""
+    from docket.eval.kag.graph import RealDataDirError
+    from docket.eval.kag.schema import load_kag_gold
+    from docket.eval.kag.scratch import ScratchError, build_scratch_library
+
+    try:
+        files = sorted(load_kag_gold(gold or _default_kag_gold()).files())
+        info = build_scratch_library(source_db, files, dest)
+    except (GoldSetError, ScratchError, RealDataDirError, OSError) as exc:
+        raise _fail(str(exc)) from exc
+    typer.echo(f"Built {info['db']}: {info['documents']} documents, {info['chunks']} chunks, {info['built']} document rows built")
+
+
+@kag_app.command("review")
+def kag_review_cmd(
+    db: Path = typer.Option(..., "--db", help="Scratch library with the KAG tables built."),
+    out_dir: Path = typer.Option(..., "--out-dir", help="Review sheet directory (created 0700, files 0600; contains document text)."),
+    max_pairs: int = typer.Option(60, "--max-pairs", min=1),
+) -> None:
+    """Export CSV review sheets (entities, resolution pairs, relations) + instructions for a human."""
+    from docket.eval.kag.graph import RealDataDirError, connect_ro, load_snapshot
+    from docket.eval.kag.review_sheet import export_review_sheets
+
+    try:
+        conn = connect_ro(db)
+        try:
+            summary = export_review_sheets(conn, load_snapshot(conn), out_dir, max_pairs=max_pairs)
+        finally:
+            conn.close()
+    except (RealDataDirError, OSError) as exc:
+        raise _fail(str(exc)) from exc
+    typer.echo(f"Wrote review sheets: {summary['entity_rows']} entity rows, {summary['resolution_rows']} resolution pairs, "
+               f"{summary['relation_rows']} relation pairs")
+    for name, path in summary["paths"].items():
+        typer.echo(f"  {name}: {path}")
