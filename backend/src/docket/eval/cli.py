@@ -14,6 +14,7 @@ from typing import Any
 import typer
 
 from docket.core.config import Settings
+from docket.eval.outputs import ensure_private_dir
 from docket.eval.schema import GoldSetError
 
 eval_app = typer.Typer(help="Measure answer accuracy: run a gold set, judge, report, compare, draft gold.")
@@ -22,9 +23,7 @@ eval_app.add_typer(calibrate_app, name="calibrate")
 
 
 def _eval_dir() -> Path:
-    path = Settings().data_dir / "eval"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+    return ensure_private_dir(Settings().data_dir / "eval")
 
 
 def _stamp() -> str:
@@ -75,7 +74,7 @@ def run_cmd(
     try:
         gold_set = load_gold_set(gold)
         out_path = out or _eval_dir() / f"runs-{_stamp()}.jsonl"
-        out_path.parent.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(out_path.parent)
 
         def progress(done: int, total: int, record: Any) -> None:
             flag = f" ERROR {record.error}" if record.error else ""
@@ -181,6 +180,7 @@ def report_cmd(
     labels: Path | None = typer.Option(None, "--labels", help="Human calibration labels."),
     calibration_judged: Path | None = typer.Option(None, "--calibration-judged", help="Judged dev runs used for calibration (defaults to --judged)."),
     require_milestone: bool = typer.Option(False, "--require-milestone", help="Exit 1 unless the accuracy milestone passes."),
+    redact: bool = typer.Option(False, "--redact", help="With --json: strip question/answer/passage text from the output."),
 ) -> None:
     """Print accuracy (with Wilson intervals), retrieval and failure breakdowns."""
     from docket.eval.judge import load_judged
@@ -208,9 +208,41 @@ def report_cmd(
         )
     except GoldSetError as exc:
         raise _fail(str(exc)) from exc
-    typer.echo(json.dumps(report_to_dict(report), indent=2) if as_json else format_report(report))
+    from docket.eval.outputs import redact_dict
+
+    payload = report_to_dict(report)
+    typer.echo(json.dumps(redact_dict(payload) if redact else payload, indent=2) if as_json else format_report(report))
     if require_milestone and not report.milestone["passed"]:
         raise typer.Exit(code=1)
+
+
+@eval_app.command("export")
+def export_cmd(
+    runs: Path = typer.Option(..., "--runs", help="JSONL from `docket eval run`."),
+    out: Path = typer.Option(..., "--out", help="New file (created 0600; refuses to overwrite)."),
+    judged: Path | None = typer.Option(None, "--judged", help="Judged JSONL to export instead of the runs."),
+    redact: bool = typer.Option(False, "--redact", help="Strip prompts, answers, passage text and judge reasons."),
+) -> None:
+    """Copy runs (or judged verdicts) to a new private file, optionally redacted for sharing."""
+    from docket.eval.judge import load_judged
+    from docket.eval.outputs import open_private, redact_dict, redact_record
+    from docket.eval.schema import load_records
+
+    try:
+        with open_private(out, overwrite=False) as fh:
+            count = 0
+            if judged is not None:
+                for run in load_judged(judged):
+                    data = run.model_dump(mode="json")
+                    fh.write(json.dumps(redact_dict(data) if redact else data) + "\n")
+                    count += 1
+            else:
+                for record in load_records(runs):
+                    fh.write((redact_record(record) if redact else record).model_dump_json() + "\n")
+                    count += 1
+    except (GoldSetError, OSError) as exc:
+        raise _fail(str(exc)) from exc
+    typer.echo(f"Wrote {count} {'redacted ' if redact else ''}lines to {out}")
 
 
 @eval_app.command("compare")
@@ -268,7 +300,7 @@ def draft_cmd(
         result = draft_questions(
             gateway, chunks, count=count, seed=seed, existing_questions=existing, progress=progress
         )
-        out_path.parent.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(out_path.parent)
         merge_into_file(out_path, result.questions)
     except (GoldSetError, EvalSetupError) as exc:
         raise _fail(str(exc)) from exc

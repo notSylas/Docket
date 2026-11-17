@@ -48,6 +48,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
 from docket.core.db.models import EvidenceVersion, VersionStatus
+from docket.eval.outputs import write_private_text
 from docket.eval.review import DEFAULT_SAMPLE_SIZE, ReviewResult, bucket_sample, load_labels_yaml
 from docket.infra.evidence.store import ContentAddressedStore
 from docket.infra.parsing.formula_crop import crop_formula_region
@@ -268,10 +269,10 @@ def export_labels(
         items.append(entry)
 
     labels_path = out_dir / "labels.yaml"
-    labels_path.write_text(
+    write_private_text(
+        labels_path,
         _LABELS_HEADER
         + yaml.safe_dump({"version": 1, "items": items}, sort_keys=False, allow_unicode=True, width=100),
-        encoding="utf-8",
     )
     return len(items)
 

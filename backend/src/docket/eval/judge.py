@@ -17,6 +17,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, ValidationError
 
+from docket.eval.outputs import open_private
 from docket.eval.schema import GoldSetError, GoldSet, Question, RunRecord, fingerprint, validate_run_keys
 from docket.eval.scoring import (
     RunScore,
@@ -319,7 +320,7 @@ def judge_runs(
 
 
 def write_judged(path: Path, judged: list[JudgedRun]) -> None:
-    with Path(path).open("w", encoding="utf-8") as fh:
+    with open_private(path) as fh:
         for run in judged:
             fh.write(run.model_dump_json() + "\n")
 

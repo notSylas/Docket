@@ -40,6 +40,7 @@ from docket.eval.schema import (
     fingerprint,
     require_corpus_dir,
 )
+from docket.eval.outputs import open_private
 from docket.eval.scoring import normalize_text
 from docket.infra.inference.gateway import (
     InferenceError,
@@ -456,7 +457,7 @@ class EvalRunner:
         ]
         total = len(ordered) * repeats
         records: list[RunRecord] = []
-        out = out_path.open("w", encoding="utf-8") if out_path else None
+        out = open_private(out_path) if out_path else None
         try:
             done = 0
             for question in ordered:

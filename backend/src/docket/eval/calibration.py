@@ -20,6 +20,7 @@ from pathlib import Path
 import yaml
 
 from docket.eval.judge import JudgedRun, JudgeVerdict, judged_index
+from docket.eval.outputs import write_private_text
 from docket.eval.review import DEFAULT_SAMPLE_SIZE, ReviewResult, bucket_sample, load_labels_yaml
 from docket.eval.schema import GoldSet, GoldSetError, Question, RunRecord, fingerprint
 from docket.eval.stats import cohen_kappa
@@ -95,9 +96,9 @@ def export_labels(
         "nothing contradicting them,\n# and is supported by its evidence; for an "
         "unanswerable question, correct means it declined), else false.\n"
     )
-    Path(out_path).write_text(
+    write_private_text(
+        out_path,
         header + yaml.safe_dump({"version": 1, "items": items}, sort_keys=False, allow_unicode=True, width=100),
-        encoding="utf-8",
     )
     return len(items)
 
