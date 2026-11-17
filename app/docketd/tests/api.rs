@@ -3,6 +3,10 @@
 
 use docket_proto::api::{ApiError, AskResult, Phase, SourcesResponse, StatusResponse, WorkerState};
 use docket_proto::client;
+use docket_proto::task::{
+    parse_task_event, CancelResponse, CancelSource, CreateTaskResponse, InferenceStatus, TaskEvent,
+    TaskEventBody, TaskInfo, TaskState, TasksResponse, WorkerExit,
+};
 use docketd::config::Config;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -512,5 +516,615 @@ async fn worker_exiting_at_startup_does_not_wedge_the_daemon() {
     let (code, _) = d.ask("anything").await;
     assert_eq!(code, 503);
     assert_eq!(d.status().await.service, "ok");
+    d.stop().await;
+}
+
+
+// ---------------------------------------------------------------------------
+// R1: tasks, cancellation, stale-event safety
+// ---------------------------------------------------------------------------
+
+impl Daemon {
+    async fn http(
+        &self,
+        method: &'static str,
+        path: String,
+        body: Option<String>,
+        headers: Vec<(&'static str, String)>,
+    ) -> (u16, String) {
+        let s = self.sock.clone();
+        tokio::task::spawn_blocking(move || {
+            let h: Vec<(&str, &str)> = headers.iter().map(|(k, v)| (*k, v.as_str())).collect();
+            let r = client::request(&s, method, &path, &h, body.as_deref().map(str::as_bytes), Some(T))
+                .unwrap();
+            (r.status, r.text().unwrap())
+        })
+        .await
+        .unwrap()
+    }
+
+    async fn create_task(&self, question: &str, stream: bool, deadline_ms: Option<u64>) -> (u16, String) {
+        let mut b = serde_json::json!({"kind":"ask","question":question,"stream":stream});
+        if let Some(d) = deadline_ms {
+            b["deadline_ms"] = d.into();
+        }
+        self.http("POST", "/v1/tasks".into(), Some(b.to_string()), vec![]).await
+    }
+
+    async fn new_task(&self, question: &str, stream: bool) -> String {
+        let (c, b) = self.create_task(question, stream, None).await;
+        assert_eq!(c, 202, "{b}");
+        serde_json::from_str::<CreateTaskResponse>(&b).unwrap().task_id.0
+    }
+
+    async fn cancel_task(&self, id: &str) -> (u16, String) {
+        self.http("POST", format!("/v1/tasks/{id}/cancel"), None, vec![]).await
+    }
+
+    async fn tasks(&self) -> Vec<TaskInfo> {
+        let (c, b) = self.http("GET", "/v1/tasks".into(), None, vec![]).await;
+        assert_eq!(c, 200, "{b}");
+        serde_json::from_str::<TasksResponse>(&b).unwrap().tasks
+    }
+
+    async fn task(&self, id: &str) -> TaskInfo {
+        self.tasks().await.into_iter().find(|t| t.task_id.0 == id).unwrap()
+    }
+
+    async fn wait_task(&self, id: &str, what: &str, pred: impl Fn(&TaskInfo) -> bool) -> TaskInfo {
+        let t0 = Instant::now();
+        loop {
+            let t = self.task(id).await;
+            if pred(&t) {
+                return t;
+            }
+            assert!(t0.elapsed() < T, "task never reached: {what} (at {:?})", t.state);
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+
+    /// Follow a task's event stream to its end on a background thread.
+    fn collect_events(
+        &self,
+        id: &str,
+        last_event_id: Option<u64>,
+    ) -> tokio::task::JoinHandle<Vec<TaskEvent>> {
+        let s = self.sock.clone();
+        let path = format!("/v1/tasks/{id}/events");
+        tokio::task::spawn_blocking(move || {
+            let lid = last_event_id.map(|n| n.to_string());
+            let mut h: Vec<(&str, &str)> = vec![];
+            if let Some(l) = &lid {
+                h.push(("Last-Event-ID", l));
+            }
+            let r = client::request(&s, "GET", &path, &h, None, Some(T)).unwrap();
+            assert_eq!(r.status, 200);
+            client::sse_events(r.body)
+                .map(Result::unwrap)
+                .filter_map(|e| parse_task_event(&e.data))
+                .collect()
+        })
+    }
+
+    async fn events(&self, id: &str) -> Vec<TaskEvent> {
+        self.collect_events(id, None).await.unwrap()
+    }
+}
+
+fn states(evs: &[TaskEvent]) -> Vec<TaskState> {
+    evs.iter()
+        .filter_map(|e| match e.body {
+            TaskEventBody::State { state } => Some(state),
+            _ => None,
+        })
+        .collect()
+}
+
+fn assert_contiguous(evs: &[TaskEvent]) {
+    for (i, e) in evs.iter().enumerate() {
+        assert_eq!(e.seq, i as u64 + 1, "seq must be 1,2,3...");
+    }
+}
+
+fn pos(evs: &[TaskEvent], f: impl Fn(&TaskEventBody) -> bool) -> Option<usize> {
+    evs.iter().position(|e| f(&e.body))
+}
+
+async fn wait_dead(pid: i32, what: &str) {
+    let t0 = Instant::now();
+    while alive(pid) {
+        assert!(t0.elapsed() < Duration::from_secs(10), "{what}: pid {pid} still alive");
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+/// A restart backoff this long would make "next question works" fail if a
+/// user cancel were (wrongly) counted as a failure.
+fn long_backoff(c: &mut Config) {
+    c.backoff_base = Duration::from_secs(30);
+    c.backoff_max = Duration::from_secs(30);
+}
+
+fn assert_cancel_semantics(evs: &[TaskEvent], by: CancelSource) {
+    assert_contiguous(evs);
+    let req = pos(evs, |b| matches!(b, TaskEventBody::CancelRequested { by: x } if *x == by))
+        .expect("cancel_requested");
+    let term = pos(evs, |b| matches!(b, TaskEventBody::WorkerTerminated { .. }))
+        .expect("worker_terminated");
+    let inf = pos(evs, |b| {
+        matches!(b, TaskEventBody::InferenceStopped { status: InferenceStatus::Unverified })
+    })
+    .expect("inference_stopped is always unverified");
+    assert!(req < term && term < inf, "cancel_requested, worker_terminated, inference_stopped in order");
+    assert_eq!(states(evs).last(), Some(&TaskState::Cancelled));
+    assert!(states(evs).contains(&TaskState::Cancelling));
+    // The three facts are distinct events; there is no other claim about inference.
+    assert_eq!(evs.iter().filter(|e| matches!(e.body, TaskEventBody::InferenceStopped { .. })).count(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cancel_stalled_worker_is_bounded_kills_worker_and_next_question_works() {
+    // Long backoff: a cancel counted as a failure would block the next question.
+    let mut d = Daemon::start_with(&[], long_backoff).await;
+    let old = d.pid();
+    let id = d.new_task("hang", false).await;
+    d.wait_task(&id, "running", |t| t.state == TaskState::Running && t.last_seq >= 3).await;
+    let collector = d.collect_events(&id, None);
+    let t0 = Instant::now();
+    let (code, body) = d.cancel_task(&id).await;
+    assert_eq!(code, 200, "{body}");
+    let c: CancelResponse = serde_json::from_str(&body).unwrap();
+    assert!(c.accepted && c.state == TaskState::Cancelling, "cancelling is not cancelled");
+    let evs = collector.await.unwrap();
+    assert!(t0.elapsed() < Duration::from_secs(3), "cancel took {:?}", t0.elapsed());
+    assert_cancel_semantics(&evs, CancelSource::User);
+    assert!(matches!(
+        evs.iter().find_map(|e| match &e.body {
+            TaskEventBody::WorkerTerminated { how } => Some(*how),
+            _ => None,
+        }),
+        Some(WorkerExit::Exited | WorkerExit::Killed)
+    ));
+    wait_dead(old, "cancelled worker").await;
+    // Restart without penalty: the next question is served right away.
+    let t1 = Instant::now();
+    let (code, body) = d.ask("again").await;
+    assert_eq!(code, 200, "{body}");
+    assert!(t1.elapsed() < Duration::from_secs(10), "no backoff after a user cancel");
+    assert!(serde_json::from_str::<AskResult>(&body).unwrap().answer.contains("2,650"));
+    assert_eq!(d.starts(), 2);
+    assert_eq!(d.status().await.worker.restarts, 1);
+    assert!(!d.status().await.busy, "permit released");
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cancel_mid_stream_discards_later_output_and_leaves_no_result() {
+    let mut d = Daemon::start_with(&[], long_backoff).await;
+    let id = d.new_task("stream_stall", true).await;
+    d.wait_task(&id, "first delta", |t| t.last_seq >= 6).await;
+    let collector = d.collect_events(&id, None);
+    assert_eq!(d.cancel_task(&id).await.0, 200);
+    let evs = collector.await.unwrap();
+    assert_cancel_semantics(&evs, CancelSource::User);
+    assert!(evs.iter().any(|e| matches!(&e.body, TaskEventBody::Delta { text } if text == "partial ")));
+    assert!(pos(&evs, |b| matches!(b, TaskEventBody::Result { .. })).is_none());
+    let (code, _) = d.ask("after stop").await;
+    assert_eq!(code, 200);
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stale_late_result_after_cancel_is_never_published() {
+    // The fake worker traps SIGTERM, then 0.3 s later prints a delta and a
+    // result for the task it was asked to abandon, and only then exits. The
+    // grace period is long enough for that to happen.
+    let mut d = Daemon::start_with(&[], |c| {
+        long_backoff(c);
+        c.cancel_grace = Duration::from_millis(2000);
+    })
+    .await;
+    let id = d.new_task("late", true).await;
+    d.wait_task(&id, "first delta", |t| t.last_seq >= 6).await;
+    let collector = d.collect_events(&id, None);
+    d.cancel_task(&id).await;
+    let live = collector.await.unwrap();
+    assert!(
+        d.dir.path().join("late-marker").exists(),
+        "the fake worker really emitted its late output"
+    );
+    assert_cancel_semantics(&live, CancelSource::User);
+    assert!(matches!(
+        live.iter().find_map(|e| match &e.body {
+            TaskEventBody::WorkerTerminated { how } => Some(*how),
+            _ => None,
+        }),
+        Some(WorkerExit::Exited)
+    ));
+    // Neither the live stream nor a later replay of the retained tail holds it.
+    let replay = d.events(&id).await;
+    assert_eq!(replay, live, "replay equals what was streamed");
+    for evs in [&live, &replay] {
+        assert!(pos(evs, |b| matches!(b, TaskEventBody::Result { .. })).is_none());
+        let text: String = evs
+            .iter()
+            .filter_map(|e| match &e.body {
+                TaskEventBody::Delta { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(text, "partial ", "no delta after the cancel request");
+        assert!(!serde_json::to_string(evs).unwrap().contains("LATE"));
+    }
+    // And the next question gets its own, correct answer.
+    let (code, body) = d.ask("next").await;
+    assert_eq!(code, 200, "{body}");
+    assert!(!body.contains("LATE"));
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn worker_that_ignores_sigterm_is_killed_after_the_grace_period() {
+    let mut d = Daemon::start_with(&[], |c| {
+        long_backoff(c);
+        c.cancel_grace = Duration::from_millis(300);
+    })
+    .await;
+    let old = d.pid();
+    let id = d.new_task("stubborn", false).await;
+    d.wait_task(&id, "stalled", |t| t.last_seq >= 5).await;
+    let collector = d.collect_events(&id, None);
+    let t0 = Instant::now();
+    d.cancel_task(&id).await;
+    let evs = collector.await.unwrap();
+    assert!(t0.elapsed() < Duration::from_secs(3));
+    assert_cancel_semantics(&evs, CancelSource::User);
+    assert!(pos(&evs, |b| matches!(b, TaskEventBody::WorkerTerminated { how: WorkerExit::Killed })).is_some());
+    wait_dead(old, "stubborn worker").await;
+    d.stop().await;
+}
+
+fn child_pid(d: &Daemon) -> i32 {
+    let t0 = Instant::now();
+    loop {
+        if let Ok(s) = std::fs::read_to_string(d.dir.path().join("childpid")) {
+            if let Ok(p) = s.trim().parse() {
+                return p;
+            }
+        }
+        assert!(t0.elapsed() < T, "child pid never written");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cancel_and_timeout_kill_the_whole_process_group_no_orphans() {
+    let mut d = Daemon::start_with(&[], |c| {
+        c.cancel_grace = Duration::from_millis(300);
+    })
+    .await;
+    // Cancel.
+    let id = d.new_task("child", false).await;
+    d.wait_task(&id, "stalled", |t| t.last_seq >= 5).await;
+    let kid = child_pid(&d);
+    assert!(alive(kid));
+    let collector = d.collect_events(&id, None);
+    d.cancel_task(&id).await;
+    collector.await.unwrap();
+    wait_dead(kid, "grandchild after cancel").await;
+    // Deadline.
+    std::fs::remove_file(d.dir.path().join("childpid")).unwrap();
+    d.wait_worker(WorkerState::Up).await;
+    let id = d.create_task("child", false, Some(700)).await;
+    assert_eq!(id.0, 202);
+    let id = serde_json::from_str::<CreateTaskResponse>(&id.1).unwrap().task_id.0;
+    let kid = child_pid(&d);
+    let evs = d.events(&id).await;
+    assert_eq!(states(&evs).last(), Some(&TaskState::TimedOut));
+    wait_dead(kid, "grandchild after timeout").await;
+    d.stop().await;
+}
+
+impl Daemon {
+    /// The id of the newest task (tasks created through `/v1/ask` included).
+    async fn newest_task(&self) -> String {
+        let t0 = Instant::now();
+        loop {
+            if let Some(t) = self.tasks().await.first() {
+                return t.task_id.0.clone();
+            }
+            assert!(t0.elapsed() < T, "no task appeared");
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn client_disconnect_mid_stream_cancels_with_client_gone_and_frees_the_worker() {
+    let mut d = Daemon::start_with(&[], long_backoff).await;
+    let old = d.pid();
+    // SSE /v1/ask: read the first delta, then hang up.
+    let s = d.sock.clone();
+    tokio::task::spawn_blocking(move || {
+        let r = client::post_json(
+            &s,
+            "/v1/ask",
+            r#"{"question":"stream_stall","stream":true}"#,
+            Some("text/event-stream"),
+            T,
+        )
+        .unwrap();
+        let mut it = client::sse_events(r.body);
+        loop {
+            if it.next().unwrap().unwrap().event == "delta" {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    let id = d.newest_task().await;
+    let t = d.wait_task(&id, "cancelled", |t| t.state == TaskState::Cancelled).await;
+    assert!(t.last_seq > 6);
+    let evs = d.events(&id).await;
+    assert_cancel_semantics(&evs, CancelSource::ClientGone);
+    wait_dead(old, "worker after disconnect").await;
+    // The permit is free: the next question is accepted and served at once.
+    let (code, body) = d.ask("after hangup").await;
+    assert_eq!(code, 200, "{body}");
+
+    // Same for a plain JSON /v1/ask whose client gives up (read timeout).
+    let s = d.sock.clone();
+    tokio::task::spawn_blocking(move || {
+        let r = client::post_json(&s, "/v1/ask", r#"{"question":"hang"}"#, None, Duration::from_millis(400));
+        assert!(r.is_err() || r.unwrap().text().is_err());
+    })
+    .await
+    .unwrap();
+    let t0 = Instant::now();
+    loop {
+        let tasks = d.tasks().await;
+        if tasks[0].state == TaskState::Cancelled && tasks[0].task_id.0 != id {
+            break;
+        }
+        assert!(t0.elapsed() < T, "plain-JSON disconnect did not cancel");
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let (code, _) = d.ask("and again").await;
+    assert_eq!(code, 200);
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn deadline_gives_timed_out_not_failed() {
+    let mut d = Daemon::start_with(&[], |c| c.ask_timeout = Duration::from_millis(600)).await;
+    let old = d.pid();
+    let id = d.new_task("hang", false).await;
+    let evs = d.events(&id).await;
+    assert_contiguous(&evs);
+    assert_eq!(states(&evs).last(), Some(&TaskState::TimedOut));
+    assert!(!states(&evs).contains(&TaskState::Failed));
+    assert!(evs.iter().any(|e| matches!(&e.body, TaskEventBody::Error { code, .. } if code == "timeout")));
+    assert!(pos(&evs, |b| matches!(b, TaskEventBody::CancelRequested { .. })).is_none());
+    wait_dead(old, "hung worker").await;
+    d.wait_worker(WorkerState::Up).await;
+    assert_eq!(d.ask("after timeout").await.0, 200);
+
+    // A per-task deadline lowers the limit; it cannot raise it above the daemon's.
+    let (c, b) = d.create_task("hang", false, Some(200)).await;
+    assert_eq!(c, 202);
+    let short = serde_json::from_str::<CreateTaskResponse>(&b).unwrap().task_id.0;
+    assert_eq!(d.task(&short).await.deadline_ms, 200);
+    let (c, b) = d.create_task("slow", false, Some(3_600_000)).await;
+    assert_eq!(c, 202);
+    let capped = serde_json::from_str::<CreateTaskResponse>(&b).unwrap().task_id.0;
+    assert_eq!(d.task(&capped).await.deadline_ms, 600);
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn worker_crash_fails_the_task_with_a_typed_reason_and_the_worker_restarts() {
+    let mut d = Daemon::start(&[]).await;
+    let id = d.new_task("crash", false).await;
+    let evs = d.events(&id).await;
+    assert_contiguous(&evs);
+    assert_eq!(states(&evs).last(), Some(&TaskState::Failed));
+    assert!(evs.iter().any(|e| matches!(&e.body, TaskEventBody::Error { code, .. } if code == "worker_crashed")));
+    assert!(pos(&evs, |b| matches!(b, TaskEventBody::InferenceStopped { .. })).is_none());
+    let t0 = Instant::now();
+    loop {
+        if d.ask("again").await.0 == 200 {
+            break;
+        }
+        assert!(t0.elapsed() < T, "never recovered");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(d.starts(), 2);
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn normal_task_streams_in_order_with_replay_and_capability() {
+    let mut d = Daemon::start(&[]).await;
+    assert!(d.status().await.capabilities.contains(&"tasks.v1".to_string()));
+    let id = d.new_task("rate?", true).await;
+    let evs = d.events(&id).await;
+    assert_contiguous(&evs);
+    assert_eq!(
+        states(&evs),
+        [TaskState::Queued, TaskState::Running, TaskState::Succeeded]
+    );
+    let text: String = evs
+        .iter()
+        .filter_map(|e| match &e.body {
+            TaskEventBody::Delta { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(text, "The rate is 2,650 [rates.txt#1].");
+    let result_at = pos(&evs, |b| matches!(b, TaskEventBody::Result { .. })).unwrap();
+    assert!(matches!(evs[result_at].body, TaskEventBody::Result { ref result } if !result.abstained && result.citations.len() == 1));
+    assert!(evs.iter().all(|e| e.task_id.0 == id));
+    // Last-Event-ID: exactly the missed tail, in order, no duplicates.
+    let tail = d.collect_events(&id, Some(4)).await.unwrap();
+    assert_eq!(tail, evs[4..].to_vec());
+    assert!(d.collect_events(&id, Some(evs.len() as u64)).await.unwrap().is_empty());
+    // The raw SSE carries the seq as the event id.
+    let (c, raw) = d.http("GET", format!("/v1/tasks/{id}/events"), None, vec![("Last-Event-ID", "2".into())]).await;
+    assert_eq!(c, 200);
+    assert!(raw.contains("id: 3\n") && !raw.contains("id: 2\n") && raw.contains("event: state"));
+    // Listing.
+    let t = d.task(&id).await;
+    assert_eq!(t.state, TaskState::Succeeded);
+    assert_eq!(t.last_seq, evs.len() as u64);
+    // Stdout noise from the worker never reaches an event.
+    let id = d.new_task("noise", false).await;
+    let evs = d.events(&id).await;
+    assert_eq!(states(&evs).last(), Some(&TaskState::Succeeded));
+    assert!(!serde_json::to_string(&evs).unwrap().contains("chatter"));
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn old_ask_clients_see_exactly_the_old_vocabulary() {
+    let mut d = Daemon::start(&[]).await;
+    let p = d
+        .post(r#"{"question":"rate?","stream":true}"#, Some("text/event-stream"))
+        .await;
+    for e in &p.events {
+        assert!(["phase", "delta", "result", "error"].contains(&e.event.as_str()), "{}", e.event);
+        assert!(!e.data.contains("task_id") && !e.data.contains("\"seq\""), "{}", e.data);
+    }
+    assert_eq!(p.events[0].data, r#"{"phase":"retrieving"}"#);
+    assert_eq!(p.events[3].event, "delta");
+    assert_eq!(p.events[3].data, r#"{"text":"The rate "}"#);
+    // The old decoder and a newer event name: unknown events are skipped.
+    assert!(docket_proto::api::parse_ask_event("state", r#"{"state":"running"}"#).is_none());
+    assert!(docket_proto::api::parse_ask_event("cancel_requested", "{}").is_none());
+    // Errors keep the old envelope with the request id.
+    let p = d.post(r#"{"question":"crash"}"#, Some("text/event-stream")).await;
+    let last = p.events.last().unwrap();
+    assert_eq!(last.event, "error");
+    let e: ApiError = serde_json::from_str(&last.data).unwrap();
+    assert_eq!(e.error.code, "worker_crashed");
+    assert_eq!(Some(e.error.request_id), p.rid);
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cancel_of_finished_unknown_and_double_cancel_is_idempotent() {
+    let mut d = Daemon::start_with(&[], long_backoff).await;
+    // Finished task.
+    let done = d.new_task("rate?", false).await;
+    d.events(&done).await;
+    let (c, b) = d.cancel_task(&done).await;
+    assert_eq!(c, 200);
+    let r: CancelResponse = serde_json::from_str(&b).unwrap();
+    assert!(!r.accepted && r.state == TaskState::Succeeded);
+    // Unknown task.
+    assert_eq!(d.cancel_task("t-nope").await.0, 404);
+    assert_eq!(d.http("GET", "/v1/tasks/t-nope/events".into(), None, vec![]).await.0, 404);
+    // Double cancel of a running one.
+    let id = d.new_task("hang", false).await;
+    d.wait_task(&id, "running", |t| t.last_seq >= 3).await;
+    let collector = d.collect_events(&id, None);
+    let first: CancelResponse = serde_json::from_str(&d.cancel_task(&id).await.1).unwrap();
+    let second = d.cancel_task(&id).await;
+    assert_eq!(second.0, 200);
+    let second: CancelResponse = serde_json::from_str(&second.1).unwrap();
+    assert!(first.accepted && !second.accepted);
+    let evs = collector.await.unwrap();
+    assert_cancel_semantics(&evs, CancelSource::User);
+    assert_eq!(evs.iter().filter(|e| matches!(e.body, TaskEventBody::CancelRequested { .. })).count(), 1);
+    // After it finished: still 200, not accepted, state cancelled.
+    let third: CancelResponse = serde_json::from_str(&d.cancel_task(&id).await.1).unwrap();
+    assert!(!third.accepted && third.state == TaskState::Cancelled);
+    let t0 = Instant::now();
+    while d.starts() < 2 {
+        assert!(t0.elapsed() < T, "worker was not restarted");
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    d.wait_worker(WorkerState::Up).await;
+    assert_eq!(d.starts(), 2, "double cancel restarts the worker once");
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn queued_task_cancel_never_touches_the_worker_and_the_queue_is_bounded() {
+    let mut d = Daemon::start(&[]).await;
+    let pid = d.pid();
+    let running = d.new_task("slow", false).await;
+    d.wait_task(&running, "running", |t| t.state == TaskState::Running).await;
+    let queued = d.new_task("rate?", false).await;
+    assert_eq!(d.task(&queued).await.state, TaskState::Queued);
+    // The wait queue holds one; a third is refused like /v1/ask refuses.
+    let (c, b) = d.create_task("third", false, None).await;
+    assert_eq!((c, err_code(&b).as_str()), (429, "busy"));
+    assert_eq!(d.ask("via ask").await.0, 429);
+    let collector = d.collect_events(&queued, None);
+    let (c, b) = d.cancel_task(&queued).await;
+    assert_eq!(c, 200);
+    assert!(serde_json::from_str::<CancelResponse>(&b).unwrap().accepted);
+    let evs = collector.await.unwrap();
+    assert_eq!(states(&evs), [TaskState::Queued, TaskState::Cancelling, TaskState::Cancelled]);
+    assert!(pos(&evs, |b| matches!(b, TaskEventBody::WorkerTerminated { .. } | TaskEventBody::InferenceStopped { .. })).is_none());
+    // The running task is unaffected and finishes; the worker was never restarted.
+    let evs = d.events(&running).await;
+    assert_eq!(states(&evs).last(), Some(&TaskState::Succeeded));
+    assert_eq!((d.pid(), d.starts()), (pid, 1));
+    // A queued task that is NOT cancelled runs after the running one.
+    let a = d.new_task("slow", false).await;
+    d.wait_task(&a, "running", |t| t.state == TaskState::Running).await;
+    let b = d.new_task("rate?", false).await;
+    assert_eq!(states(&d.events(&b).await).last(), Some(&TaskState::Succeeded));
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn shutdown_during_a_task_cancels_cleanly_and_leaves_no_orphan() {
+    let mut d = Daemon::start(&[]).await;
+    let pid = d.pid();
+    let id = d.new_task("child", true).await;
+    d.wait_task(&id, "stalled", |t| t.last_seq >= 6).await;
+    let kid = child_pid(&d);
+    let collector = d.collect_events(&id, None);
+    d.stop().await; // returns only once the daemon has stopped
+    let evs = collector.await.unwrap();
+    assert_cancel_semantics(&evs, CancelSource::Shutdown);
+    assert!(!d.sock.exists());
+    wait_dead(pid, "worker").await;
+    wait_dead(kid, "worker's child").await;
+    assert_eq!(d.starts(), 1, "no replacement worker is started while shutting down");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tasks_off_hides_routes_and_capability_but_ask_still_works() {
+    let mut d = Daemon::start_with(&[], |c| c.tasks_enabled = false).await;
+    let (_, status) = d.get("/v1/status").await;
+    assert!(!status.contains("capabilities") && !status.contains("tasks.v1"), "{status}");
+    assert_eq!(d.get("/v1/tasks").await.0, 404);
+    assert_eq!(d.create_task("q", false, None).await.0, 404);
+    assert_eq!(d.cancel_task("t-1").await.0, 404);
+    let (code, body) = d.ask("rate?").await;
+    assert_eq!(code, 200, "{body}");
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn task_routes_enforce_the_same_input_limits() {
+    let mut d = Daemon::start(&[]).await;
+    let big = format!(r#"{{"kind":"ask","question":"{}"}}"#, "a".repeat(100_000));
+    assert_eq!(d.http("POST", "/v1/tasks".into(), Some(big.clone()), vec![]).await.0, 413);
+    assert_eq!(d.http("POST", "/v1/tasks/t-1/cancel".into(), Some(big), vec![]).await.0, 413);
+    let (c, b) = d.http("POST", "/v1/tasks".into(), Some(r#"{"kind":"ingest","question":"q"}"#.into()), vec![]).await;
+    assert_eq!((c, err_code(&b).as_str()), (400, "bad_request"));
+    assert_eq!(d.create_task("   ", false, None).await.0, 400);
+    let long = "a".repeat(9_000);
+    assert_eq!(d.create_task(&long, false, None).await.0, 400);
+    assert_eq!(d.http("POST", "/v1/tasks".into(), Some("nope".into()), vec![]).await.0, 400);
+    assert_eq!(d.http("POST", "/v1/tasks/t-1/cancel".into(), Some("nope".into()), vec![]).await.0, 400);
+    // Error bodies never echo the question.
+    let (_, b) = d.create_task("   ", false, None).await;
+    assert!(!b.contains("aaaa"));
     d.stop().await;
 }
