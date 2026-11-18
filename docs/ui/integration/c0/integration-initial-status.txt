@@ -1,0 +1,1 @@
+Clean before adding C0 report/evidence; git status --short produced no output.

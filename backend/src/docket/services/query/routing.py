@@ -4,7 +4,7 @@ and 4.2): layer 1 only, no model call.
 This is ADDITIVE. `HeuristicQueryClassifier` (classifier.py) is the path
 `QueryService` executes today and is unchanged; nothing imports this module on
 the query path yet. `classify_route` is the candidate for layer 1 of the Auto
-router and is measured by `eval-public/experiments/g5_route_decision.py`.
+router and is measured by `evals/suites/experiments/g5_route_decision.py`.
 
 Output is a `RouteDecision`: a path, reason codes (not a confidence), and, for
 CLARIFY, one focused question. Reason codes are labels:

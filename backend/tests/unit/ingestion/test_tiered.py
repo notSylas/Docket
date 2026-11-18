@@ -110,7 +110,7 @@ def assert_consistent(engine, sf, pipeline):
 
 
 def test_fast_text_born_digital_pdf_scan_and_docx(tmp_path):
-    parsed = fast_text.parse_fast(REPO / "eval-public" / "corpus-synthetic-g6" / "contract.pdf")
+    parsed = fast_text.parse_fast(REPO.parent / "evals" / "suites" / "corpus-synthetic-g6" / "contract.pdf")
     assert parsed.text.strip() and "<!--PAGE:1-->" in parsed.text_with_page_markers
     assert parsed.parser_name == fast_text.TIER1_PARSER_NAME
 
@@ -147,7 +147,7 @@ def test_tier1_makes_files_keyword_searchable_without_embeddings(migrated_sqlite
     _write_docx(folder / "a.docx", "Lease", "the quarterly rent is nine hundred zebracorn dollars")
     _write_xlsx(folder / "b.xlsx", "Sheet1", ["name", "amt"], [["quokka", 5]])
     (folder / "c.txt").write_text("plain note about a wombat colony " * 5)
-    shutil.copy(REPO / "eval-public" / "corpus-synthetic-g6" / "contract.pdf", folder / "d.pdf")
+    shutil.copy(REPO.parent / "evals" / "suites" / "corpus-synthetic-g6" / "contract.pdf", folder / "d.pdf")
     for name in ("a.docx", "b.xlsx", "c.txt", "d.pdf"):
         assert _tier1(pipeline, source, folder / name).status == "ingested"
     assert set(_statuses(sf).values()) == {VersionStatus.TEXT_READY}
@@ -421,9 +421,9 @@ def _snapshot(sf, corpus):
 def test_tiered_end_state_equals_one_pass_on_synthetic_corpora(tmp_path):
     corpus = tmp_path / "corpus"
     for src in ("corpus-synthetic", "corpus-synthetic-g1", "corpus-synthetic-g4"):
-        for f in (REPO / "eval-public" / src).rglob("*"):
+        for f in (REPO.parent / "evals" / "suites" / src).rglob("*"):
             if f.is_file() and f.suffix.lower() in {".docx", ".xlsx", ".pptx", ".txt", ".html", ".csv"}:
-                dest = corpus / src / f.relative_to(REPO / "eval-public" / src)
+                dest = corpus / src / f.relative_to(REPO.parent / "evals" / "suites" / src)
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(f, dest)
     files = sorted(p for p in corpus.rglob("*") if p.is_file())

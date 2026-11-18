@@ -1,0 +1,793 @@
+--- C2/ui.rs
++++ C3/ui.rs
+@@ -11,7 +11,6 @@
+ use std::path::PathBuf;
+ use std::time::Instant;
+ 
+-const SPACE: f32 = 16.0;
+ const SCOPE_UNAVAILABLE: &str =
+     "Selected source unavailable. Choose another source or All sources in Library.";
+ 
+@@ -39,6 +38,9 @@
+     messages: Vec<Message>,
+     asking: Option<(Pending, Instant)>,
+     last_latency: Option<f64>,
++    /// Capability captured for the submitted request, independent of later polls.
++    active_tasks: bool,
++    stop_error: Option<String>,
+     /// (message index, position in that answer's citation numbering)
+     open_cite: Option<(usize, usize)>,
+     focus_input: bool,
+@@ -148,6 +150,8 @@
+             messages: Vec::new(),
+             asking: None,
+             last_latency: None,
++            active_tasks: false,
++            stop_error: None,
+             open_cite: None,
+             focus_input: true,
+             auto_ask: std::env::var("DOCKET_APP_AUTOASK")
+@@ -207,18 +211,27 @@
+                 }
+             }
+             Event::Answer(r, wall) => {
+-                self.asking = None;
+-                self.last_latency = Some(wall);
+-                self.messages.push(Message::Answer {
+-                    result: *r,
+-                    wall_s: wall,
+-                });
+-                self.focus_input = true;
++                // A result already accepted before Stop is immutable. If Stop
++                // won locally, discard this result without inventing a confirmed
++                // server cancellation (the server may already have completed).
++                if let Some((pending, _)) = self.asking.take() {
++                    self.last_latency = Some(wall);
++                    self.messages.push(if pending.stop_requested {
++                        Message::Discarded
++                    } else {
++                        Message::Answer {
++                            result: *r,
++                            wall_s: wall,
++                        }
++                    });
++                    self.stop_error = None;
++                }
+             }
+             Event::AskFailed(e) => {
+-                self.asking = None;
+-                self.messages.push(Message::Error(e));
+-                self.focus_input = true;
++                if self.asking.take().is_some() {
++                    self.messages.push(Message::Error(e));
++                    self.stop_error = None;
++                }
+             }
+             Event::TaskStarted(id) => {
+                 if let Some((cur, _)) = &mut self.asking {
+@@ -228,15 +241,20 @@
+                 }
+             }
+             Event::Cancelled => {
+-                self.asking = None;
+-                self.messages.push(Message::Cancelled);
+-                self.focus_input = true;
+-            }
+-            Event::StopFailed(e) => {
++                if self.asking.take().is_some() {
++                    self.messages.push(Message::Cancelled);
++                    self.stop_error = None;
++                }
++            }
++            Event::StopFailed { task_id, message } => {
+                 if let Some((cur, _)) = &mut self.asking {
+-                    cur.stop_failed();
+-                }
+-                self.conn.note = e;
++                    // Cancel replies run on another thread: a late failure from
++                    // the previous task must never reset this task's Stop intent.
++                    if cur.task_id.as_deref() == Some(task_id.as_str()) && cur.stop_requested {
++                        cur.stop_failed();
++                        self.stop_error = Some(message);
++                    }
++                }
+             }
+             Event::DaemonStarted(Err(e)) => self.conn.note = e,
+             Event::DaemonStarted(Ok(())) => {}
+@@ -262,13 +280,15 @@
+         self.input.clear();
+         self.messages.push(Message::User(q.clone()));
+         self.asking = Some((Pending::new(), Instant::now()));
++        self.active_tasks = self.conn.tasks_v1;
++        self.stop_error = None;
+         self.open_cite = None;
+         Some((q, source_id))
+     }
+ 
+     fn submit(&mut self) {
+         if let Some((question, scope)) = self.begin_question() {
+-            self.backend.ask(question, scope, self.conn.tasks_v1);
++            self.backend.ask(question, scope, self.active_tasks);
+         }
+     }
+ 
+@@ -329,6 +349,10 @@
+     }
+ 
+     fn stop(&mut self) {
++        if !self.active_tasks || self.shell.modal_open() {
++            return;
++        }
++        self.stop_error = None;
+         if let Some((cur, _)) = &mut self.asking {
+             if let Some(target) = cur.request_stop() {
+                 self.backend.cancel(target);
+@@ -587,236 +611,426 @@
+         }
+     }
+ 
+-    fn answer_card(&mut self, ui: &mut egui::Ui, idx: usize, result: &AskResult, wall_s: f64) {
+-        let t = self.shell.theme.tokens();
+-        let (segs, order) = model::layout(&result.answer, &result.citations);
+-        // Metadata fields exist only with a status.v2 daemon; nothing is guessed.
+-        let meta = self.view.v2.then(|| status_view::answer_meta(result));
+-        if result.abstained {
+-            egui::Frame::group(ui.style())
++    fn scope_name(&self) -> String {
++        if self.scope_unavailable() {
++            return "Selected source unavailable".into();
++        }
++        self.scope
++            .as_ref()
++            .and_then(|id| self.src.list.iter().find(|s| &s.id == id))
++            .map(|s| s.display_name.clone())
++            .unwrap_or_else(|| "All sources".into())
++    }
++
++    fn question_view(&self, ui: &mut egui::Ui, index: usize, question: &str, t: Tokens) {
++        let width = (ui.available_width() * 0.92).min(660.0);
++        ui.horizontal_top(|ui| {
++            ui.add_space((ui.available_width() - width).max(0.0));
++            egui::Frame::new()
+                 .fill(t.surface_secondary)
+-                .stroke(egui::Stroke::new(1.5, t.warning))
++                .corner_radius(10)
++                .inner_margin(16)
+                 .show(ui, |ui| {
+-                    ui.set_width(ui.available_width());
+-                    ui.label(
+-                        RichText::new("I don't know based on the available evidence.")
+-                            .heading()
+-                            .color(t.warning),
+-                    );
+-                    let detail = result.answer.trim();
+-                    if !detail.is_empty() {
+-                        ui.label(RichText::new(detail).weak());
+-                    }
+-                    if let Some(m) = &meta {
+-                        if let Some(r) = &m.abstention {
+-                            ui.label(RichText::new(format!("Reason: {r}")).small());
+-                        }
+-                        answer_meta_lines(ui, m, t);
+-                    }
++                    ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
++                        ui.set_width((width - 32.0).max(100.0));
++                        ui.horizontal_wrapped(|ui| {
++                            ui.label(RichText::new("You").size(13.0).strong());
++                            if let Some(scope) = self.submitted_scopes.get(&index) {
++                                shell::caption(
++                                    ui,
++                                    format!("Scope at submission: {}", scope.label),
++                                    t,
++                                );
++                            }
++                        });
++                        ui.add_space(4.0);
++                        ui.add(
++                            egui::Label::new(
++                                RichText::new(question).size(18.0).line_height(Some(25.0)),
++                            )
++                            .selectable(true)
++                            .wrap(),
++                        );
++                    });
+                 });
++        });
++    }
++
++    fn citation_control(
++        &mut self,
++        ui: &mut egui::Ui,
++        idx: usize,
++        n: usize,
++        title: &str,
++        inline: bool,
++        t: Tokens,
++    ) {
++        let open = self.open_cite == Some((idx, n));
++        let response = if inline {
++            ui.add(
++                egui::Button::new(
++                    RichText::new(format!("[{}]", n + 1))
++                        .size(13.0)
++                        .color(t.accent),
++                )
++                .fill(t.selection)
++                .selected(open),
++            )
+         } else {
+-            egui::Frame::group(ui.style()).show(ui, |ui| {
+-                ui.set_width(ui.available_width());
++            shell::citation_link(ui, n + 1, title, open, t)
++        };
++        if response
++            .on_hover_text(format!("Show answer-time excerpt: {title}"))
++            .clicked()
++        {
++            self.open_cite = if open { None } else { Some((idx, n)) };
++        }
++    }
++
++    fn cited_prose(
++        &mut self,
++        ui: &mut egui::Ui,
++        idx: usize,
++        result: &AskResult,
++        order: &[usize],
++        t: Tokens,
++    ) {
++        for (pi, paragraph) in result.answer.split("\n\n").enumerate() {
++            let (segments, paragraph_order) = model::layout(paragraph, &result.citations);
++            ui.push_id(("paragraph", idx, pi), |ui| {
+                 ui.horizontal_wrapped(|ui| {
+-                    ui.spacing_mut().item_spacing.x = 3.0;
+-                    for seg in &segs {
+-                        match seg {
+-                            Segment::Text(t) => {
+-                                ui.label(*t);
++                    ui.spacing_mut().item_spacing = egui::vec2(4.0, 2.0);
++                    ui.spacing_mut().interact_size.y = 28.0;
++                    for (si, segment) in segments.iter().enumerate() {
++                        match segment {
++                            Segment::Text(text) => {
++                                ui.add(
++                                    egui::Label::new(
++                                        RichText::new(*text).size(16.0).line_height(Some(24.0)),
++                                    )
++                                    .selectable(true)
++                                    .wrap(),
++                                );
+                             }
+                             Segment::Cite(n) => {
+-                                let c = &result.citations[order[*n]];
+-                                let open = self.open_cite == Some((idx, *n));
+-                                let text = format!("{} {}", n + 1, c.source_display_name);
+-                                let btn =
+-                                    egui::Button::new(RichText::new(text).small().color(if open {
+-                                        t.on_accent
+-                                    } else {
+-                                        t.accent
+-                                    }))
+-                                    .fill(if open {
+-                                        t.accent
+-                                    } else {
+-                                        t.accent.gamma_multiply(0.14)
+-                                    })
+-                                    .corner_radius(10.0);
+-                                if ui.add(btn).on_hover_text("Show the passage").clicked() {
+-                                    self.open_cite = if open { None } else { Some((idx, *n)) };
+-                                }
++                                let ci = paragraph_order[*n];
++                                let n = order.iter().position(|i| *i == ci).unwrap_or(*n);
++                                ui.push_id(si, |ui| {
++                                    self.citation_control(
++                                        ui,
++                                        idx,
++                                        n,
++                                        &result.citations[ci].source_display_name,
++                                        true,
++                                        t,
++                                    )
++                                });
+                             }
+                         }
+                     }
+                 });
+             });
+-        }
+-        if let (Some(m), false) = (&meta, result.abstained) {
+-            answer_meta_lines(ui, m, t);
++            ui.add_space(10.0);
++        }
++    }
++
++    fn copy_answer(result: &AskResult) -> String {
++        let references = result
++            .citations
++            .iter()
++            .map(|c| format!("{} {} · {}", c.label, c.source_display_name, c.chunk_id))
++            .collect::<Vec<_>>()
++            .join("\n");
++        if references.is_empty() {
++            result.answer.clone()
++        } else {
++            format!(
++                "{}\n\nSources (passage identifiers):\n{references}",
++                result.answer
++            )
++        }
++    }
++
++    fn answer_card(&mut self, ui: &mut egui::Ui, idx: usize, result: &AskResult, wall_s: f64) {
++        let t = self.shell.theme.tokens();
++        shell::response_heading(
++            ui,
++            if result.abstained {
++                "Insufficient evidence"
++            } else {
++                "Library response"
++            },
++            t,
++        );
++        ui.add_space(12.0);
++        let (_, order) = model::layout(&result.answer, &result.citations);
++        if result.abstained {
++            ui.label(
++                RichText::new("I don't know based on the available evidence.").color(t.warning),
++            );
++            shell::prose(ui, &result.answer, t);
++        } else {
++            self.cited_prose(ui, idx, result, &order, t);
++        }
++        // Render only closed labels supplied by the existing R2a metadata model.
++        if self.view.v2 {
++            let meta = status_view::answer_meta(result);
++            if let Some(reason) = &meta.abstention {
++                shell::caption(ui, format!("Reason: {reason}"), t);
++            }
++            answer_meta_lines(ui, &meta, t);
++        }
++        if !order.is_empty() {
++            ui.add_space(8.0);
++            shell::caption(
++                ui,
++                format!(
++                    "Sources · {} · Select to show the answer-time excerpt",
++                    order.len()
++                ),
++                t,
++            );
++            for (n, ci) in order.iter().enumerate() {
++                ui.push_id(("source", idx, n), |ui| {
++                    self.citation_control(
++                        ui,
++                        idx,
++                        n,
++                        &result.citations[*ci].source_display_name,
++                        false,
++                        t,
++                    )
++                });
++            }
+         }
+         if let Some((mi, n)) = self.open_cite {
+-            if mi == idx {
+-                if let Some(&ci) = order.get(n) {
+-                    let c = &result.citations[ci];
+-                    egui::Frame::group(ui.style())
+-                        .fill(t.evidence)
+-                        .show(ui, |ui| {
+-                            ui.set_width(ui.available_width());
+-                            ui.label(
+-                                RichText::new(format!("{} · {}", n + 1, c.source_display_name))
+-                                    .strong(),
+-                            );
+-                            if c.excerpt.is_empty() {
+-                                ui.label(
+-                                    RichText::new("The passage is no longer available.").weak(),
+-                                );
+-                            } else {
+-                                ui.label(&c.excerpt);
+-                            }
+-                        });
+-                }
+-            }
+-        }
+-        ui.label(RichText::new(format!("{wall_s:.1} s")).small().weak());
++            if let Some(&ci) = order.get(n).filter(|_| mi == idx) {
++                let c = &result.citations[ci];
++                // Keep the existing inline excerpt here; the contextual Inspector
++                // layout, resizing and focus restoration belong to C4.
++                egui::Frame::new().fill(t.evidence).inner_margin(12).corner_radius(6).show(ui, |ui| {
++                    ui.set_width(ui.available_width());
++                    ui.horizontal_wrapped(|ui| {
++                        ui.label(RichText::new(&c.source_display_name).strong());
++                        if ui.small_button("Close excerpt").clicked() { self.open_cite = None; }
++                    });
++                    shell::caption(ui, format!("Passage ID: {}", c.chunk_id), t);
++                    shell::caption(ui, "Excerpt returned with this answer; up to 400 characters. Current access has not been rechecked.", t);
++                    shell::prose(ui, if c.excerpt.is_empty() { "Passage not available in this answer" } else { &c.excerpt }, t);
++                });
++            }
++        }
++        ui.add_space(8.0);
++        if ui.button("Copy answer with sources").clicked() {
++            ui.ctx().copy_text(Self::copy_answer(result));
++        }
++        egui::CollapsingHeader::new("Answer details")
++            .id_salt(("answer-details", idx))
++            .show(ui, |ui| {
++                shell::caption(ui, format!("Completed in {wall_s:.1} s"), t);
++                shell::caption(
++                    ui,
++                    "Citation resolution at answer time does not independently verify every claim.",
++                    t,
++                );
++                for (phase, seconds) in &result.timings.by_phase {
++                    shell::caption(ui, format!("{phase}: {seconds:.2} s"), t);
++                }
++            });
++    }
++
++    fn composer(&mut self, ui: &mut egui::Ui) {
++        let t = self.shell.theme.tokens();
++        let pending = self.asking.is_some();
++        let stopping = self.asking.as_ref().is_some_and(|(p, _)| p.stop_requested);
++        let reason = self
++            .stop_error
++            .clone()
++            .or_else(|| self.ask_off_reason())
++            .or_else(|| self.scope_unavailable().then(|| SCOPE_UNAVAILABLE.into()));
++        egui::Panel::bottom("composer")
++            .exact_size(if reason.is_some() { 180.0 } else { 150.0 })
++            .resizable(false)
++            .frame(
++                egui::Frame::new()
++                    .fill(t.canvas)
++                    .inner_margin(egui::Margin::symmetric(16, 8)),
++            )
++            .show(ui, |ui| {
++                let width = ui.available_width().min(800.0);
++                ui.horizontal_top(|ui| {
++                    ui.add_space(((ui.available_width() - width) / 2.0).max(0.0));
++                    ui.vertical(|ui| {
++                        ui.set_width(width);
++                        ui.spacing_mut().item_spacing.y = 4.0;
++                        ui.spacing_mut().interact_size.y = 28.0;
++                        ui.spacing_mut().button_padding.y = 5.0;
++                        if let Some(reason) = reason {
++                            egui::ScrollArea::vertical()
++                                .id_salt("composer-reason")
++                                .max_height(28.0)
++                                .show(ui, |ui| {
++                                    ui.add(
++                                        egui::Label::new(
++                                            RichText::new(reason).small().color(t.warning),
++                                        )
++                                        .wrap(),
++                                    );
++                                });
++                        }
++                        let focused = ui
++                            .ctx()
++                            .memory(|m| m.has_focus(egui::Id::unique("question-input")));
++                        shell::input_frame(t)
++                            .stroke(egui::Stroke::new(
++                                if focused { 2.0 } else { 1.0 },
++                                if focused { t.focus } else { t.control },
++                            ))
++                            .corner_radius(12)
++                            .inner_margin(10)
++                            .show(ui, |ui| {
++                                let send_shortcut = !self.shell.modal_open()
++                                    && ui.ctx().memory(|m| {
++                                        m.has_focus(egui::Id::unique("question-input"))
++                                    })
++                                    && ui.input_mut(|i| {
++                                        i.consume_key(egui::Modifiers::CTRL, egui::Key::Enter)
++                                    });
++                                let response = egui::ScrollArea::vertical()
++                                    .id_salt("composer-draft-scroll")
++                                    .max_height(40.0)
++                                    .min_scrolled_height(40.0)
++                                    .auto_shrink([false, false])
++                                    .show(ui, |ui| {
++                                        ui.add(
++                                            egui::TextEdit::multiline(&mut self.input)
++                                                .id(egui::Id::unique("question-input"))
++                                                .hint_text(if pending {
++                                                    "Draft your next question…"
++                                                } else {
++                                                    "Ask about your library…"
++                                                })
++                                                .frame(egui::Frame::NONE)
++                                                .desired_rows(2)
++                                                .margin(0),
++                                        )
++                                    })
++                                    .inner;
++                                if self.focus_input && !self.shell.modal_open() {
++                                    response.request_focus();
++                                    self.focus_input = false;
++                                }
++                                ui.horizontal(|ui| {
++                                    let scope = format!("Next scope: {}", self.scope_name());
++                                    let label = ui.add_sized(
++                                        [(ui.available_width() - 80.0).max(40.0), 20.0],
++                                        egui::Label::new(
++                                            RichText::new(&scope).small().color(t.secondary),
++                                        )
++                                        .truncate(),
++                                    );
++                                    label.on_hover_text(scope);
++                                    if ui.small_button("Change").clicked() {
++                                        self.shell_command(Command::Library, ui.ctx());
++                                    }
++                                });
++                                ui.horizontal(|ui| {
++                                    let label = if pending && !self.active_tasks {
++                                        "Answering · Stop unavailable on this daemon"
++                                    } else if stopping {
++                                        "Stopping · partial text discarded"
++                                    } else if pending {
++                                        "Answering · next draft stays editable"
++                                    } else {
++                                        "Enter for a new line"
++                                    };
++                                    ui.add(
++                                        egui::Label::new(
++                                            RichText::new(label).size(12.0).color(t.secondary),
++                                        )
++                                        .wrap(),
++                                    );
++                                    ui.with_layout(
++                                        egui::Layout::right_to_left(egui::Align::Center),
++                                        |ui| {
++                                            if pending && self.active_tasks {
++                                                if ui
++                                                    .add_enabled(
++                                                        !stopping,
++                                                        egui::Button::new(
++                                                            RichText::new(if stopping {
++                                                                "Stopping…"
++                                                            } else {
++                                                                "Stop · Ctrl Shift X"
++                                                            })
++                                                            .color(t.danger),
++                                                        )
++                                                        .fill(t.surface_secondary),
++                                                    )
++                                                    .clicked()
++                                                {
++                                                    self.stop();
++                                                }
++                                            } else if shell::primary(
++                                                ui,
++                                                "Ask · Ctrl Enter",
++                                                self.can_ask() && !self.input.trim().is_empty(),
++                                                t,
++                                            )
++                                            .clicked()
++                                            {
++                                                self.submit();
++                                            }
++                                        },
++                                    );
++                                });
++                                if send_shortcut && !self.shell.modal_open() {
++                                    self.submit();
++                                }
++                            });
++                    });
++                });
++            });
+     }
+ 
+     fn chat(&mut self, ui: &mut egui::Ui) {
+         let t = self.shell.theme.tokens();
+-        egui::Panel::bottom("composer")
+-            .min_size(
+-                if self.ask_off_reason().is_some() || self.scope_unavailable() {
+-                    112.0
+-                } else {
+-                    64.0
+-                },
+-            )
+-            .resizable(false)
+-            .show(ui, |ui| {
+-                ui.add_space(8.0);
+-                if let Some(why) = self.ask_off_reason() {
+-                    ui.label(RichText::new(why).color(t.warning));
+-                }
+-                if self.scope_unavailable()
+-                    && self.ask_off_reason().as_deref() != Some(SCOPE_UNAVAILABLE)
+-                {
+-                    ui.add(
+-                        egui::Label::new(RichText::new(SCOPE_UNAVAILABLE).color(t.warning)).wrap(),
+-                    );
+-                }
+-                ui.horizontal(|ui| {
+-                    let enabled = self.can_ask();
+-                    let w = (ui.available_width() - 110.0).max(80.0);
+-                    let hint = if self.scope_unavailable() {
+-                        "Selected source unavailable".to_string()
+-                    } else {
+-                        match &self.scope {
+-                            Some(id) => {
+-                                let name = self
+-                                    .src
+-                                    .list
+-                                    .iter()
+-                                    .find(|s| &s.id == id)
+-                                    .map(|s| s.display_name.as_str())
+-                                    .unwrap_or("source");
+-                                format!("Ask about {name}...")
+-                            }
+-                            None => "Ask about your documents...".to_string(),
++        self.composer(ui);
++        egui::CentralPanel::default().frame(egui::Frame::new().fill(t.canvas).inner_margin(16)).show(ui, |ui| {
++            egui::ScrollArea::vertical().id_salt("conversation").stick_to_bottom(true).auto_shrink([false, false]).show(ui, |ui| {
++                let width = ui.available_width().min(800.0);
++                ui.horizontal_top(|ui| {
++                    ui.add_space(((ui.available_width() - width) / 2.0).max(0.0));
++                    ui.vertical(|ui| {
++                        ui.set_width(width);
++                        if self.messages.is_empty() && self.asking.is_none() {
++                            ui.add_space(24.0);
++                            ui.heading("A question is a good place to start.");
++                            ui.add_space(8.0);
++                            shell::prose(ui, "Ask across your sources, then follow the citations to the excerpts returned with your answer.", t);
++                            if ui.button("Browse Library").clicked() { self.shell_command(Command::Library, ui.ctx()); }
+                         }
+-                    };
+-                    let edit = egui::TextEdit::singleline(&mut self.input)
+-                        .hint_text(hint)
+-                        .desired_width(w)
+-                        .margin(egui::vec2(10.0, 8.0))
+-                        .frame(shell::input_frame(t));
+-                    let resp = ui.add_enabled(enabled, edit);
+-                    if self.focus_input && enabled {
+-                        resp.request_focus();
+-                        self.focus_input = false;
+-                    }
+-                    let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+-                    let stopping = self.asking.as_ref().is_some_and(|(p, _)| p.stop_requested);
+-                    if self.asking.is_some() && self.conn.tasks_v1 {
+-                        // A question is running: the button becomes Stop.
+-                        let label = if stopping { "Stopping..." } else { "Stop" };
+-                        let stop = ui.add_enabled(
+-                            !stopping,
+-                            egui::Button::new(RichText::new(label).color(t.on_accent))
+-                                .fill(t.accent),
+-                        );
+-                        if stop.clicked() {
+-                            self.stop();
++                        let msgs = std::mem::take(&mut self.messages);
++                        for (i, message) in msgs.iter().enumerate() {
++                            ui.push_id(("message", i), |ui| match message {
++                                Message::User(q) => self.question_view(ui, i, q, t),
++                                Message::Answer { result, wall_s } => self.answer_card(ui, i, result, *wall_s),
++                                Message::Cancelled => { shell::response_heading(ui, "Stopped", t); shell::caption(ui, model::STOPPED_TITLE, t); shell::caption(ui, model::STOPPED_NOTE, t); }
++                                Message::Discarded => { shell::response_heading(ui, "Response discarded after Stop", t); shell::caption(ui, "The answer completed before cancellation was confirmed. Its text was discarded. Docket cannot confirm that the language model stopped generating.", t); }
++                                Message::Error(error) => { shell::response_heading(ui, "Answer unavailable", t); ui.add(egui::Label::new(RichText::new(error).color(t.danger)).wrap()); shell::caption(ui, "Your next draft is kept. Review the local service or edit your question, then try again.", t); }
++                            });
++                            ui.add_space(24.0);
+                         }
+-                    } else {
+-                        let send =
+-                            shell::primary(ui, "Ask", enabled && !self.input.trim().is_empty(), t);
+-                        if (send.clicked() || (enter && enabled)) && !self.shell.modal_open() {
+-                            self.submit();
++                        self.messages = msgs;
++                        if let Some((pending, since)) = &self.asking {
++                            shell::response_heading(ui, if pending.stop_requested { "Stopping · partial text discarded" } else if pending.is_validating() { "Draft · checking citations" } else { "Draft · citations not checked" }, t);
++                            ui.add_space(8.0);
++                            ui.horizontal(|ui| { ui.spinner(); shell::caption(ui, format!("{} · {:.0} s", if pending.stop_requested { "Stopping…" } else { pending.phase.label() }, since.elapsed().as_secs_f32()), t); });
++                            if pending.is_draft() && !pending.stop_requested { ui.scope(|ui| { ui.visuals_mut().override_text_color = Some(t.secondary); shell::prose(ui, &pending.text, Tokens { text: t.secondary, ..t }); }); }
++                            ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
+                         }
+-                    }
++                    });
+                 });
+-                ui.add_space(8.0);
+-            });
+-        egui::CentralPanel::default().frame(egui::Frame::new().fill(t.canvas).inner_margin(16)).show(ui, |ui| {
+-            egui::ScrollArea::vertical().stick_to_bottom(true).auto_shrink([false, false]).show(ui, |ui| {
+-                if self.messages.is_empty() && self.asking.is_none() {
+-                    ui.add_space(SPACE * 2.0);
+-                    ui.vertical_centered(|ui| {
+-                        ui.heading("Ask a question about your documents");
+-                        ui.label(RichText::new("Answers cite the passages they come from. If the evidence is not there, Docket says so.").weak());
+-                    });
+-                }
+-                let msgs = std::mem::take(&mut self.messages);
+-                for (i, m) in msgs.iter().enumerate() {
+-                    match m {
+-                        Message::User(q) => {
+-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+-                                egui::Frame::group(ui.style()).fill(ui.visuals().faint_bg_color).show(ui, |ui| {
+-                                    ui.set_max_width(ui.available_width() * 0.8);
+-                                    ui.label(q);
+-                                    if let Some(submitted) = self.submitted_scopes.get(&i) {
+-                                        ui.label(RichText::new(format!("Scope at submission: {}", submitted.label)).small().weak());
+-                                    }
+-                                });
+-                            });
+-                        }
+-                        Message::Answer { result, wall_s } => self.answer_card(ui, i, result, *wall_s),
+-                        Message::Cancelled => {
+-                            egui::Frame::group(ui.style()).show(ui, |ui| {
+-                                ui.set_width(ui.available_width());
+-                                ui.label(RichText::new(model::STOPPED_TITLE).strong());
+-                                ui.label(RichText::new(model::STOPPED_NOTE).small().weak());
+-                            });
+-                        }
+-                        Message::Error(e) => {
+-                            egui::Frame::group(ui.style()).stroke(egui::Stroke::new(1.5, t.danger)).show(ui, |ui| {
+-                                ui.set_width(ui.available_width());
+-                                ui.label(RichText::new(e).color(t.danger));
+-                            });
+-                        }
+-                    }
+-                    ui.add_space(SPACE / 2.0);
+-                }
+-                self.messages = msgs;
+-                if let Some((pending, since)) = &self.asking {
+-                    if pending.is_draft() && !pending.stop_requested {
+-                        // Streamed text is a draft: dim, plain (no citation
+-                        // chips) and labelled until the daemon has validated it.
+-                        egui::Frame::group(ui.style()).show(ui, |ui| {
+-                            ui.set_width(ui.available_width());
+-                            ui.label(RichText::new(pending.text.trim_start()).weak());
+-                        });
+-                    }
+-                    ui.horizontal(|ui| {
+-                        ui.spinner();
+-                        let label = if pending.stop_requested {
+-                            "Stopping... the partial answer is discarded".to_string()
+-                        } else if pending.is_validating() {
+-                            "Validating citations... (draft above is not yet verified)".to_string()
+-                        } else {
+-                            pending.phase.label().to_string()
+-                        };
+-                        ui.label(format!("{label} {:.0} s", since.elapsed().as_secs_f32()));
+-                    });
+-                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
+-                }
+             });
+         });
+     }
+@@ -827,7 +1041,7 @@
+         self.shell.apply(command, ctx);
+         match command {
+             Command::FocusQuestion => self.focus_input = true,
+-            Command::Stop if self.asking.is_some() && self.conn.tasks_v1 => self.stop(),
++            Command::Stop if self.asking.is_some() && self.active_tasks => self.stop(),
+             _ => {}
+         }
+     }
+@@ -837,7 +1051,7 @@
+         let now = self.now_ms();
+         self.view = self.status.view(now, self.asking.is_some());
+         let can_stop =
+-            self.asking.as_ref().is_some_and(|(p, _)| !p.stop_requested) && self.conn.tasks_v1;
++            self.asking.as_ref().is_some_and(|(p, _)| !p.stop_requested) && self.active_tasks;
+         if let Some(command) = self.shell.shortcuts(&ctx, can_stop) {
+             self.shell_command(command, &ctx);
+         }
+@@ -964,6 +1178,8 @@
+             messages: vec![Message::User("Keep my conversation".into())],
+             asking: None,
+             last_latency: None,
++            active_tasks: false,
++            stop_error: None,
+             open_cite: None,
+             focus_input: false,
+             auto_ask: None,
+@@ -1098,3 +1314,6 @@
+ 
+ #[cfg(test)]
+ mod state_bridge_tests;
++
++#[cfg(test)]
++mod assistant_tests;

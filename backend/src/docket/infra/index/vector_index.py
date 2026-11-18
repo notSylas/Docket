@@ -3,7 +3,7 @@
 Table schema: ``chunk_id: str, source_id: str, text: str, vector: list[float],
 evidence_version_id: str``. Tables written before `evidence_version_id` existed
 are upgraded in place on first open (see `LanceIndexWriter._open_table`).
-Unlike `spike/ingest.py`, which nuked and fully re-created the table on every
+Unlike `archive/spike/ingest.py`, which nuked and fully re-created the table on every
 run (``mode="overwrite"``), this writer does true incremental upsert via
 LanceDB's ``merge_insert`` (match-and-update-or-insert keyed by `chunk_id`),
 so re-ingesting unchanged content never touches rows that are already

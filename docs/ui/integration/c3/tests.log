@@ -1,0 +1,186 @@
+   Compiling docket-app v0.1.0 (/home/pc/Desktop/Rajdeep_Dev/Local_Agent/.worktrees/ui-integration/app/docket-app)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.86s
+     Running unittests src/main.rs (/tmp/docket-c0-target/debug/deps/docket_app-0d4345e110447b7f)
+
+running 66 tests
+test model::tests::longest_label_wins_at_same_position ... ok
+test model::tests::multibyte_deltas_concatenate_losslessly ... ok
+test model::tests::no_citations_is_plain_text ... ok
+test model::tests::numbers_by_first_appearance_and_keeps_unreferenced ... ok
+test model::tests::pending_accumulates_deltas_and_tracks_validation ... ok
+test model::tests::stop_discards_the_draft_and_cancels_once ... ok
+test model::tests::stopped_wording_never_claims_the_model_stopped ... ok
+test model::tests::task_events_reduce_to_ui_steps ... ok
+test shell::tests::appearance_and_modal_transitions_preserve_destination_and_focus_origin ... ok
+test shell::tests::commands_only_offer_stop_when_supported_and_filter_locally ... ok
+test status_view::tests::a_section_with_no_age_or_stale_flag_is_never_current ... ok
+test status_view::tests::abstention_reason_absent_is_not_recorded ... ok
+test status_view::tests::connected_healthy_has_separate_chips_not_one_ok ... ok
+test status_view::tests::database_states ... ok
+test status_view::tests::degraded_when_a_section_is_degraded_or_unavailable ... ok
+test status_view::tests::empty_ready_is_never_shown_as_ready_even_if_the_daemon_says_ready ... ok
+test status_view::tests::fmt_age_boundaries ... ok
+test status_view::tests::hostile_codes_and_paths_never_reach_rendered_strings ... ok
+test status_view::tests::index_dead_letters_interrupted_failed_and_unknown ... ok
+test status_view::tests::index_empty_ready_is_never_idle_fine ... ok
+test status_view::tests::index_zero_result_indexing_shows_progress_not_ready ... ok
+test status_view::tests::loading_before_first_status ... ok
+test status_view::tests::missing_sections_are_unknown_not_healthy ... ok
+test status_view::tests::model_states_installed_reachable_resident_are_separate_and_can_be_unknown ... ok
+test status_view::tests::no_poll_for_a_long_time_is_unavailable_even_without_an_error ... ok
+test status_view::tests::nothing_claims_read_only_enforcement ... ok
+test status_view::tests::old_daemon_without_status_v2_gets_the_legacy_ui ... ok
+test status_view::tests::partial_ingestion_and_skipped_by_code_breakdown ... ok
+test status_view::tests::reconciles_false_never_claims_reconciliation ... ok
+test status_view::tests::revoked_and_tombstoned_sources_are_not_ready_and_have_no_equation ... ok
+test status_view::tests::section_ages_grow_locally_between_polls ... ok
+test status_view::tests::source_list_keeps_last_good_and_shows_its_age ... ok
+test status_view::tests::source_ready_line_with_unknown_skipped_and_superseded_apart ... ok
+test status_view::tests::stale_sections_are_dimmed_with_age_and_make_it_degraded ... ok
+test status_view::tests::typed_failure_is_failed_and_never_shows_the_message ... ok
+test status_view::tests::unknown_counts_are_unknown_never_zero ... ok
+test status_view::tests::unreachable_keeps_last_good_forced_stale_with_age ... ok
+test status_view::tests::unsupported_formats_only_source_is_not_ready ... ok
+test status_view::tests::warnings_coverage_and_scope_come_only_from_fields ... ok
+test status_view::tests::worker_crash_and_restart_display ... ok
+test status_view::tests::worker_states_and_why_asking_is_off ... ok
+test status_view::tests::zero_result_indexing_is_not_ready ... ok
+test theme::tests::reading_status_and_focus_tokens_meet_contrast_targets ... ok
+test ui::assistant_tests::completed_answer_is_not_relabelled_by_later_stop_or_terminal_events ... ok
+test ui::assistant_tests::composer_stays_editable_during_streaming_in_both_themes_and_all_sizes ... ok
+test ui::assistant_tests::confirmed_cancel_timeout_and_recovery_preserve_next_draft_and_scope ... ok
+test ui::assistant_tests::early_stop_discards_late_result_without_claiming_worker_termination ... ok
+test ui::assistant_tests::empty_cached_excerpt_never_diagnoses_deletion_or_claims_rechecked_access ... ok
+test ui::assistant_tests::late_cancel_failure_cannot_reset_a_new_tasks_stop_intent ... ok
+test ui::assistant_tests::long_next_draft_scrolls_without_hiding_stop_or_losing_text ... ok
+test ui::assistant_tests::provisional_output_has_no_citation_actions_and_final_result_preserves_metadata ... ok
+test ui::assistant_tests::request_transport_capability_does_not_follow_later_status_polls ... ok
+test ui::assistant_tests::shortcuts_do_not_submit_from_noncomposer_or_through_modal_and_escape_never_stops ... ok
+test ui::assistant_tests::stop_failed_keeps_task_retry_and_legitimate_result_path ... ok
+test ui::state_bridge_tests::confirmed_empty_loading_failure_and_offline_are_distinct ... ok
+test ui::state_bridge_tests::disappeared_source_never_widens_and_reappearance_requires_explicit_selection ... ok
+test ui::state_bridge_tests::failed_refresh_keeps_last_good_source_data_and_receipt_age_even_on_legacy ... ok
+test ui::state_bridge_tests::hostile_source_diagnostics_and_abstention_codes_use_existing_closed_label_models ... ok
+test ui::state_bridge_tests::inactive_lifecycle_is_unavailable_but_unknown_or_partial_readiness_is_allowed ... ok
+test ui::state_bridge_tests::legacy_daemons_keep_fallback_and_apply_only_local_scope_and_empty_guards ... ok
+test ui::state_bridge_tests::navigation_and_theme_rendering_do_not_open_backend_connections ... ok
+test ui::state_bridge_tests::queued_autoask_does_not_consume_input_after_an_empty_snapshot ... ok
+test ui::state_bridge_tests::r2a_ask_reasons_and_locally_elapsed_status_staleness_remain_authoritative ... ok
+test ui::state_bridge_tests::submitted_scope_is_captured_for_dispatch_and_conversation_not_next_selection ... ok
+test ui::tests::both_themes_and_sizes_keep_real_status_library_and_draft ... ok
+test ui::tests::palette_navigation_theme_and_escape_do_not_submit_or_cancel ... ok
+
+test result: ok. 66 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.83s
+
+     Running unittests src/lib.rs (/tmp/docket-c0-target/debug/deps/docket_proto-d22de0bebf5e6fbc)
+
+running 24 tests
+test api::tests::ask_result_round_trip ... ok
+test api::tests::new_ask_and_source_fields_round_trip ... ok
+test api::tests::old_documents_are_byte_identical_when_new_fields_are_absent ... ok
+test api::tests::parses_ask_events ... ok
+test api::tests::scope_and_phase_wire_names ... ok
+test api::tests::status_round_trip ... ok
+test api::tests::stream_flag_is_omitted_unless_set ... ok
+test api::tests::worker_shape_deserializes_with_defaults ... ok
+test client::tests::sse_parser_groups_events ... ok
+test rpc::tests::classifies_lines ... ok
+test rpc::tests::request_round_trip ... ok
+test rpc::tests::request_without_params_omits_field ... ok
+test status::tests::counts_sanitize_drops_non_codes ... ok
+test status::tests::sanitize_code_is_a_closed_shape ... ok
+test status::tests::section_round_trips_and_flattens ... ok
+test status::tests::unknown_counts_are_absent_not_zero ... ok
+test status::tests::unknown_enum_values_degrade_to_unknown ... ok
+test task::tests::cancel_body_may_be_empty_object ... ok
+test task::tests::create_request_accepts_only_ask_and_defaults ... ok
+test task::tests::event_wire_shape_is_flat_and_tagged ... ok
+test task::tests::every_event_round_trips ... ok
+test task::tests::failure_reason_codes_match_wire_names ... ok
+test task::tests::state_names_and_terminality ... ok
+test task::tests::unknown_event_types_and_garbage_are_skipped ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/tmp/docket-c0-target/debug/deps/docketd-6fa680efb8e9457d)
+
+running 10 tests
+test socket::tests::bind_sets_modes_and_replaces_stale_socket ... ok
+test socket::tests::refuses_non_socket_and_symlinked_dir ... ok
+test tasks::tests::deltas_are_dropped_once_cancel_is_accepted ... ok
+test tasks::tests::finished_tasks_are_evicted_beyond_the_limit ... ok
+test tasks::tests::live_subscriber_is_woken_by_publish ... ok
+test tasks::tests::queued_task_can_be_cancelled_and_start_is_refused ... ok
+test tasks::tests::replay_from_last_event_id_has_no_gaps_or_duplicates ... ok
+test tasks::tests::seq_is_monotonic_and_terminal_closes_the_channel ... ok
+test tasks::tests::tail_is_bounded_and_a_lagging_reader_sees_a_gap ... ok
+test tasks::tests::wait_queue_is_bounded ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running unittests src/main.rs (/tmp/docket-c0-target/debug/deps/docketd-b6bf024730ec2038)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/api.rs (/tmp/docket-c0-target/debug/deps/api-13d1823d86cdb8a1)
+
+running 42 tests
+test a_worker_that_stops_answering_health_leaves_stale_sections_with_age ... ok
+test answer_metadata_passes_through_and_old_documents_stay_identical ... ok
+test cancel_and_timeout_kill_the_whole_process_group_no_orphans ... ok
+test cancel_mid_stream_discards_later_output_and_leaves_no_result ... ok
+test cancel_of_finished_unknown_and_double_cancel_is_idempotent ... ok
+test cancel_stalled_worker_is_bounded_kills_worker_and_next_question_works ... ok
+test capable_worker_advertises_status_v2_and_serves_fresh_sections ... ok
+test clean_shutdown_removes_socket_and_kills_worker ... ok
+test client_disconnect_mid_stream_cancels_with_client_gone_and_frees_the_worker ... ok
+test crash_is_reported_and_worker_restarts ... ok
+test deadline_gives_timed_out_not_failed ... ok
+test hostile_worker_text_never_reaches_status_sources_or_events ... ok
+test hung_worker_times_out_is_killed_and_replaced ... ok
+test missing_worker_binary_is_unavailable_not_fatal ... ok
+test never_answering_health_is_not_a_kill_reason_by_itself ... ok
+test normal_task_streams_in_order_with_replay_and_capability ... ok
+test old_ask_clients_see_exactly_the_old_vocabulary ... ok
+test old_worker_gets_no_status_v2_no_health_calls_and_the_old_status_document ... ok
+test only_one_question_in_flight ... ok
+test question_during_a_slow_health_call_is_bounded_and_the_worker_survives ... ok
+test queued_task_cancel_never_touches_the_worker_and_the_queue_is_bounded ... ok
+test scenarios_are_reported_with_states_codes_and_source_readiness ... ok
+test second_daemon_refused_and_stale_socket_replaced ... ok
+test shutdown_during_a_task_cancels_cleanly_and_leaves_no_orphan ... ok
+test slow_health_marks_stale_but_never_replaces_the_worker ... ok
+test socket_and_directory_permissions ... ok
+test sse_stream_emits_ordered_phases_then_result_with_request_id ... ok
+test sse_stream_true_forwards_deltas_between_phases_and_result ... ok
+test stale_late_result_after_cancel_is_never_published ... ok
+test status_never_blocks_during_a_slow_question_and_refresh_pauses_then_resumes ... ok
+test status_sources_and_ask_with_startup_noise ... ok
+test stdout_noise_and_malformed_lines_are_ignored ... ok
+test stream_flag_is_ignored_for_plain_json_and_absent_on_old_clients ... ok
+test task_routes_enforce_the_same_input_limits ... ok
+test tasks_off_hides_routes_and_capability_but_ask_still_works ... ok
+test tasks_off_still_serves_status_v2_alone ... ok
+test user_cancel_is_a_relaunch_but_not_a_crash ... ok
+test worker_crash_fails_the_task_with_a_typed_reason_and_the_worker_restarts ... ok
+test worker_crash_marks_process_down_counts_restarts_and_stales_the_rest ... ok
+test worker_errors_and_bad_input_map_to_clean_http_errors ... ok
+test worker_exiting_at_startup_does_not_wedge_the_daemon ... ok
+test worker_that_ignores_sigterm_is_killed_after_the_grace_period ... ok
+
+test result: ok. 42 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 45.15s
+
+   Doc-tests docket_proto
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests docketd
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

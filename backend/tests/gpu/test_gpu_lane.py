@@ -1,4 +1,4 @@
-"""GPU lane (marker `gpu`): read-only residency check, run via `./ci-local.sh --gpu`.
+"""GPU lane (marker `gpu`): read-only residency check, run via `scripts/ci-local.sh --gpu`.
 
 Skipped unless DOCKET_GPU_LANE=1. It only reads `ollama ps` / `rocm-smi`; it
 starts no model. The mandatory CPU CI deselects it with `-m "not gpu"`.

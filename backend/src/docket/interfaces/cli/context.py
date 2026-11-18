@@ -64,7 +64,7 @@ if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
     # sidecar's `.spec` bundles `alembic.ini` and the migrations folder at
     # the same relative paths this module expects from REPO_ROOT in dev
     # (REPO_ROOT/alembic.ini, REPO_ROOT/src/docket/db/migrations) -- see
-    # desktop/sidecar/app-sidecar-*.spec's `datas`.
+    # archive/desktop-tauri/sidecar/app-sidecar-*.spec's `datas`.
     REPO_ROOT: Path | None = Path(sys._MEIPASS)  # type: ignore[attr-defined]
 else:
     # Not a frozen build. `__file__`-based ancestor-climbing (e.g.
@@ -84,7 +84,7 @@ else:
 def _alembic_config(sqlite_path: Path) -> Config:
     if REPO_ROOT is not None:
         # Frozen (PyInstaller) case: alembic.ini/migrations are bundled at
-        # sys._MEIPASS-relative paths by desktop/sidecar/app-sidecar-*.spec's
+        # sys._MEIPASS-relative paths by archive/desktop-tauri/sidecar/app-sidecar-*.spec's
         # `datas` -- see that file.
         config = Config(str(REPO_ROOT / "alembic.ini"))
         config.set_main_option(

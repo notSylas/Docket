@@ -1,5 +1,5 @@
 # Mandatory CPU-only CI (lane A). No GPU, no Ollama, no model calls, no secrets.
-# The GPU lane (marker `gpu`) is run locally: `./ci-local.sh --gpu`.
+# The GPU lane (marker `gpu`) is run locally: `scripts/ci-local.sh --gpu`.
 name: ci
 
 on:

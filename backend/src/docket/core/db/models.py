@@ -246,7 +246,7 @@ class EvidenceVersion(Base):
     # `settings.formula_transcription_enabled` is True, never retroactively
     # for rows written before this column existed unless that source is
     # re-ingested. These transcriptions are NOT searchable/citable evidence
-    # -- see Docs/accuracy-evaluation.md's "Formula evidence and
+    # -- see docs/architecture/accuracy-evaluation.md's "Formula evidence and
     # experiments" section; promoting them requires a separate, later,
     # manually verified decision this checkpoint does not make.
     formula_transcriptions_json: Mapped[str | None] = mapped_column(Text, nullable=True)

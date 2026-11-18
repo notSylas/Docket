@@ -1,0 +1,8 @@
+commit 3a6a4ca2d9e809c15551623428626c724283c810
+Merge: 25d5f1d 6868dc1
+Author:     notSylas <notSylas@users.noreply.github.com>
+AuthorDate: Wed Nov 18 22:35:08 2026 +0530
+Commit:     notSylas <notSylas@users.noreply.github.com>
+CommitDate: Wed Nov 18 22:35:08 2026 +0530
+
+    Merge M3-1: orphan KAG entity lifecycle and retention fix

@@ -6,7 +6,7 @@ from docket.infra.parsing.normalize import unescape_markdown
 
 
 def test_unescapes_snake_case_identifier() -> None:
-    # The exact finding from spike/RESULTS.md's Tier 2 section.
+    # The exact finding from archive/spike/RESULTS.md's Tier 2 section.
     assert unescape_markdown("evidence\\_version\\_id") == "evidence_version_id"
 
 

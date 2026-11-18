@@ -1,0 +1,10 @@
+Prototype preserved: 680 tracked/nonignored untracked files have identical SHA-256 hashes; Git status unchanged.
+Approved theme: byte-identical to prototype theme.rs.
+Integration branch/base: codex/ui-integration at 3a6a4ca2d9e809c15551623428626c724283c810.
+Authoritative rust-app: 47d427736c5f56049fb6828eea1586cd0a9c9841, working tree clean.
+App committed delta between integration base and current rust-app: none.
+Tracked application changes: main.rs and ui.rs only; new Rust modules: shell.rs and theme.rs.
+Protected desktop backend.rs/model.rs/status_view.rs/status_view/tests.rs: byte-identical to HEAD.
+Preserved UI method bodies (whitespace ignored): now_ms/pump/submit/stop/can_ask/ask_off_reason.
+No Python, daemon, protocol, migration/schema or dependency changes relative to integration HEAD.
+No source worktree, M3 worktree, prototype screenshot or existing C0 evidence modification.

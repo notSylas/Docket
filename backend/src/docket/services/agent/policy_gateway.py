@@ -1,8 +1,8 @@
 """The Agent Policy Gateway: fail-closed enforcement between the LLM's
 tool-call requests and real tool execution.
 
-Generalizes `spike/test_agent_policy_gateway.py`'s `policy_gateway()`
-almost exactly as-is -- see `spike/RESULTS.md`'s "Tier 3 — Agent Policy
+Generalizes `archive/spike/test_agent_policy_gateway.py`'s `policy_gateway()`
+almost exactly as-is -- see `archive/spike/RESULTS.md`'s "Tier 3 — Agent Policy
 Gateway" section: that enforcement logic was already proven correct,
 including the most important case (Case 3), which forges an out-of-policy
 tool call and invokes the gateway directly, bypassing the LLM's own

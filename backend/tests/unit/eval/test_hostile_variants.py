@@ -8,7 +8,7 @@ from docket.eval.schema import QuestionType, load_gold_set
 from docket.eval.benchmark import freeze_benchmark
 from docket.infra.parsing.text_family import TextFamilyParser, chunk_text
 
-PUBLIC = Path(__file__).resolve().parents[3] / "eval-public"
+PUBLIC = Path(__file__).resolve().parents[4] / "evals" / "suites"
 CORPUS = PUBLIC / "corpus-synthetic-g4-hostile"
 GOLD = PUBLIC / "gold-g4-hostile.yaml"
 

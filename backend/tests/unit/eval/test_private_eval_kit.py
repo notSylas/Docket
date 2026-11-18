@@ -1,4 +1,4 @@
-"""Private eval kit (backend/eval-private): fakes only, no Ollama/GPU."""
+"""Private eval kit (evals/private-kit): fakes only, no Ollama/GPU."""
 from __future__ import annotations
 
 import json
@@ -11,7 +11,7 @@ from conftest import PlainTextParser, ScriptedGateway
 from docket.infra.inference.gateway import FakeInferenceGateway
 from docket.services.query.prompts import ABSTENTION_PHRASE
 
-KIT = Path(__file__).resolve().parents[3] / "eval-private"
+KIT = Path(__file__).resolve().parents[4] / "evals" / "private-kit"
 sys.path.insert(0, str(KIT))
 import ingest_folder  # noqa: E402
 import kit_common  # noqa: E402

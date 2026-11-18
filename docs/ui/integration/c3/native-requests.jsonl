@@ -1,0 +1,13 @@
+{"mode":"answer","params":{"question":"compare the synthetic rates","stream":true}}
+{"mode":"hang","params":{"question":"check the comparison","stream":true}}
+{"mode":"error","params":{"question":"review synthetic fault","stream":true}}
+{"mode":"abstain","params":{"question":"compare unsupported details","stream":true}}
+{"mode":"hang","params":{"question":"wait for timeout","stream":true}}
+{"mode":"hang","params":{"question":"check the comparison","scope":{"source_id":"synthetic-a"},"stream":true}}
+{"mode":"answer","params":{"question":"follow up on the earlier rate","scope":{"source_id":"synthetic-a"},"stream":true}}
+{"mode":"error","params":{"question":"review synthetic fault","scope":{"source_id":"synthetic-a"},"stream":true}}
+{"mode":"abstain","params":{"question":"compare unsupported details","scope":{"source_id":"synthetic-a"},"stream":true}}
+{"mode":"hang","params":{"question":"wait for timeout","scope":{"source_id":"synthetic-a"},"stream":true}}
+{"mode":"answer","params":{"question":"compare the synthetic rates","stream":true}}
+{"mode":"hang","params":{"question":"synthetic legacy request","stream":true}}
+{"mode":"answer","params":{"question":"compare the synthetic rates","stream":true}}

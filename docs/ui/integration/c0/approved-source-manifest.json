@@ -1,0 +1,13 @@
+{
+  "prototype_head": "599748ae40d438a7186a7437a8e7d16e073dee05",
+  "integration_head": "3a6a4ca2d9e809c15551623428626c724283c810",
+  "approved_source_sha256": {
+    "main.rs": "dac76a0d5a6e974e7346c4918fee943d460994173ad7f87cafb244b20cc5eaca",
+    "model.rs": "a22362fe4593e50b45cd8abd57831043ec92c6511db1b585675689a4f7835722",
+    "ui.rs": "35e0e447ce5d508de27a03e7a87875acba09c38cba9caa4407e84f23b46f4a8a",
+    "theme.rs": "4864e0bed4fbf43c7a100ab1faec4f73bad19a3f3120af8fe01e75a75f7225ac",
+    "shell.rs": "9f65a6c76ed6763869413982b70db1ac5b7f6325095f8e9be04cf471072c6a30",
+    "demo.rs": "f3689cfdc5db65b8c6ff8435172e157aba761ff8d47b219720c937d88127f858",
+    "backend.rs": "d0bc0c0c52302776889806c3fc1884708efac6ed97cffe74154c3d15155e937c"
+  }
+}

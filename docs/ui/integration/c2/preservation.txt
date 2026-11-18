@@ -1,0 +1,16 @@
+PASS: 27 c1-evidence files retain their pre-C2 SHA-256 hashes.
+PASS: 680 prototype files retain their pre-C2 SHA-256 hashes.
+PASS: desktop main.rs unchanged from C1.
+PASS: desktop shell.rs unchanged from C1.
+PASS: desktop theme.rs unchanged from C1.
+PASS: app/docket-app/src/backend.rs byte-identical to integration HEAD.
+PASS: app/docket-app/src/model.rs byte-identical to integration HEAD.
+PASS: app/docket-app/src/status_view.rs byte-identical to integration HEAD.
+PASS: app/docket-app/src/status_view/tests.rs byte-identical to integration HEAD.
+PASS: R1 event branches Phase through DaemonStarted unchanged apart from indentation.
+PASS: tracked diff contains only C1 main.rs and C1+C2 ui.rs; no protected-area diff.
+Integration HEAD: 3a6a4ca2d9e809c15551623428626c724283c810
+rust-app ref: b4cd9cb6bbe0d6a48f3c22591de09baade69a84b
+PASS: no committed app/ delta between integration HEAD and rust-app.
+Authoritative rust worktree status: clean
+PASS: normal review-window shutdown; zero owned native review processes and no review socket remain.

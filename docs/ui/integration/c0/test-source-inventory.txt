@@ -1,0 +1,121 @@
+app/docket-app/src/model.rs:147:    fn take_cancel_target(&mut self) -> Option<String> {
+app/docket-app/src/model.rs:178:    fn default() -> Self {
+app/docket-app/src/model.rs:250:    fn c(label: &str) -> Citation {
+app/docket-app/src/model.rs:260:    fn pending_accumulates_deltas_and_tracks_validation() {
+app/docket-app/src/model.rs:273:    fn stop_discards_the_draft_and_cancels_once() {
+app/docket-app/src/model.rs:293:    fn task_events_reduce_to_ui_steps() {
+app/docket-app/src/model.rs:338:    fn stopped_wording_never_claims_the_model_stopped() {
+app/docket-app/src/model.rs:344:    fn multibyte_deltas_concatenate_losslessly() {
+app/docket-app/src/model.rs:353:    fn numbers_by_first_appearance_and_keeps_unreferenced() {
+app/docket-app/src/model.rs:372:    fn longest_label_wins_at_same_position() {
+app/docket-app/src/model.rs:379:    fn no_citations_is_plain_text() {
+app/docketd/tests/api.rs:26:fn fake_cmd(dir: &Path, extra: &[&str]) -> Vec<String> {
+app/docketd/tests/api.rs:37:fn base_config(dir: &Path, cmd: Vec<String>) -> Config {
+app/docketd/tests/api.rs:181:    fn pid(&self) -> i32 {
+app/docketd/tests/api.rs:189:    fn starts(&self) -> usize {
+app/docketd/tests/api.rs:204:    fn into_status_body(self) -> (u16, String) {
+app/docketd/tests/api.rs:209:fn err_code(body: &str) -> String {
+app/docketd/tests/api.rs:213:fn alive(pid: i32) -> bool {
+app/docketd/tests/api.rs:218:async fn status_sources_and_ask_with_startup_noise() {
+app/docketd/tests/api.rs:239:async fn sse_stream_emits_ordered_phases_then_result_with_request_id() {
+app/docketd/tests/api.rs:268:async fn sse_stream_true_forwards_deltas_between_phases_and_result() {
+app/docketd/tests/api.rs:313:async fn stream_flag_is_ignored_for_plain_json_and_absent_on_old_clients() {
+app/docketd/tests/api.rs:330:async fn stdout_noise_and_malformed_lines_are_ignored() {
+app/docketd/tests/api.rs:343:async fn crash_is_reported_and_worker_restarts() {
+app/docketd/tests/api.rs:364:async fn hung_worker_times_out_is_killed_and_replaced() {
+app/docketd/tests/api.rs:381:async fn only_one_question_in_flight() {
+app/docketd/tests/api.rs:404:async fn worker_errors_and_bad_input_map_to_clean_http_errors() {
+app/docketd/tests/api.rs:421:async fn socket_and_directory_permissions() {
+app/docketd/tests/api.rs:431:async fn clean_shutdown_removes_socket_and_kills_worker() {
+app/docketd/tests/api.rs:448:async fn second_daemon_refused_and_stale_socket_replaced() {
+app/docketd/tests/api.rs:476:async fn missing_worker_binary_is_unavailable_not_fatal() {
+app/docketd/tests/api.rs:503:async fn worker_exiting_at_startup_does_not_wedge_the_daemon() {
+app/docketd/tests/api.rs:617:    fn collect_events(
+app/docketd/tests/api.rs:644:fn states(evs: &[TaskEvent]) -> Vec<TaskState> {
+app/docketd/tests/api.rs:653:fn assert_contiguous(evs: &[TaskEvent]) {
+app/docketd/tests/api.rs:659:fn pos(evs: &[TaskEvent], f: impl Fn(&TaskEventBody) -> bool) -> Option<usize> {
+app/docketd/tests/api.rs:663:async fn wait_dead(pid: i32, what: &str) {
+app/docketd/tests/api.rs:676:fn long_backoff(c: &mut Config) {
+app/docketd/tests/api.rs:681:fn assert_cancel_semantics(evs: &[TaskEvent], by: CancelSource) {
+app/docketd/tests/api.rs:715:async fn cancel_stalled_worker_is_bounded_kills_worker_and_next_question_works() {
+app/docketd/tests/api.rs:767:async fn cancel_mid_stream_discards_later_output_and_leaves_no_result() {
+app/docketd/tests/api.rs:785:async fn stale_late_result_after_cancel_is_never_published() {
+app/docketd/tests/api.rs:834:async fn worker_that_ignores_sigterm_is_killed_after_the_grace_period() {
+app/docketd/tests/api.rs:860:fn child_pid(d: &Daemon) -> i32 {
+app/docketd/tests/api.rs:874:async fn cancel_and_timeout_kill_the_whole_process_group_no_orphans() {
+app/docketd/tests/api.rs:919:async fn client_disconnect_mid_stream_cancels_with_client_gone_and_frees_the_worker() {
+app/docketd/tests/api.rs:983:async fn deadline_gives_timed_out_not_failed() {
+app/docketd/tests/api.rs:1018:async fn worker_crash_fails_the_task_with_a_typed_reason_and_the_worker_restarts() {
+app/docketd/tests/api.rs:1045:async fn normal_task_streams_in_order_with_replay_and_capability() {
+app/docketd/tests/api.rs:1104:async fn old_ask_clients_see_exactly_the_old_vocabulary() {
+app/docketd/tests/api.rs:1143:async fn cancel_of_finished_unknown_and_double_cancel_is_idempotent() {
+app/docketd/tests/api.rs:1191:async fn queued_task_cancel_never_touches_the_worker_and_the_queue_is_bounded() {
+app/docketd/tests/api.rs:1238:async fn shutdown_during_a_task_cancels_cleanly_and_leaves_no_orphan() {
+app/docketd/tests/api.rs:1259:async fn tasks_off_hides_routes_and_capability_but_ask_still_works() {
+app/docketd/tests/api.rs:1275:async fn task_routes_enforce_the_same_input_limits() {
+app/docketd/tests/api.rs:1331:fn assert_no_leak(what: &str, body: &str) {
+app/docketd/tests/api.rs:1337:fn health_cfg(c: &mut Config) {
+app/docketd/tests/api.rs:1344:    fn healthlog_path(&self) -> PathBuf {
+app/docketd/tests/api.rs:1348:    fn health_calls(&self) -> usize {
+app/docketd/tests/api.rs:1381:async fn start_health(extra: &[&str], tweak: impl FnOnce(&mut Config)) -> Daemon {
+app/docketd/tests/api.rs:1393:async fn old_worker_gets_no_status_v2_no_health_calls_and_the_old_status_document() {
+app/docketd/tests/api.rs:1416:async fn capable_worker_advertises_status_v2_and_serves_fresh_sections() {
+app/docketd/tests/api.rs:1439:async fn scenarios_are_reported_with_states_codes_and_source_readiness() {
+app/docketd/tests/api.rs:1490:async fn status_never_blocks_during_a_slow_question_and_refresh_pauses_then_resumes() {
+app/docketd/tests/api.rs:1546:async fn a_worker_that_stops_answering_health_leaves_stale_sections_with_age() {
+app/docketd/tests/api.rs:1586:fn start_count(d: &Daemon) -> usize {
+app/docketd/tests/api.rs:1593:async fn slow_health_marks_stale_but_never_replaces_the_worker() {
+app/docketd/tests/api.rs:1632:async fn question_during_a_slow_health_call_is_bounded_and_the_worker_survives() {
+app/docketd/tests/api.rs:1670:async fn never_answering_health_is_not_a_kill_reason_by_itself() {
+app/docketd/tests/api.rs:1710:async fn worker_crash_marks_process_down_counts_restarts_and_stales_the_rest() {
+app/docketd/tests/api.rs:1759:async fn user_cancel_is_a_relaunch_but_not_a_crash() {
+app/docketd/tests/api.rs:1776:async fn answer_metadata_passes_through_and_old_documents_stay_identical() {
+app/docketd/tests/api.rs:1809:async fn hostile_worker_text_never_reaches_status_sources_or_events() {
+app/docketd/tests/api.rs:1829:async fn tasks_off_still_serves_status_v2_alone() {
+app/docket-app/src/status_view/tests.rs:8:fn sec(state: &str, code: &str, age: u64, stale: bool, extra: Value) -> Value {
+app/docket-app/src/status_view/tests.rs:17:fn vc(ready: u64, kw: u64, empty: u64, pending: u64, failed: u64) -> Value {
+app/docket-app/src/status_view/tests.rs:23:fn good_sections() -> Value {
+app/docket-app/src/status_view/tests.rs:35:fn status_with(
+app/docket-app/src/status_view/tests.rs:58:fn healthy() -> StatusResponse {
+app/docket-app/src/status_view/tests.rs:62:fn model_with(s: StatusResponse) -> StatusModel {
+app/docket-app/src/status_view/tests.rs:68:fn chip(v: &StatusView, k: ChipKind) -> &Chip {
+app/docket-app/src/status_view/tests.rs:72:fn all_text(v: &StatusView) -> String {
+app/docket-app/src/status_view/tests.rs:87:fn no_leak(t: &str) {
+app/docket-app/src/status_view/tests.rs:94:fn loading_before_first_status() {
+app/docket-app/src/status_view/tests.rs:103:fn connected_healthy_has_separate_chips_not_one_ok() {
+app/docket-app/src/status_view/tests.rs:118:fn degraded_when_a_section_is_degraded_or_unavailable() {
+app/docket-app/src/status_view/tests.rs:136:fn stale_sections_are_dimmed_with_age_and_make_it_degraded() {
+app/docket-app/src/status_view/tests.rs:163:fn a_section_with_no_age_or_stale_flag_is_never_current() {
+app/docket-app/src/status_view/tests.rs:174:fn section_ages_grow_locally_between_polls() {
+app/docket-app/src/status_view/tests.rs:190:fn unreachable_keeps_last_good_forced_stale_with_age() {
+app/docket-app/src/status_view/tests.rs:213:fn no_poll_for_a_long_time_is_unavailable_even_without_an_error() {
+app/docket-app/src/status_view/tests.rs:221:fn typed_failure_is_failed_and_never_shows_the_message() {
+app/docket-app/src/status_view/tests.rs:240:fn worker_states_and_why_asking_is_off() {
+app/docket-app/src/status_view/tests.rs:269:fn worker_crash_and_restart_display() {
+app/docket-app/src/status_view/tests.rs:304:fn model_states_installed_reachable_resident_are_separate_and_can_be_unknown() {
+app/docket-app/src/status_view/tests.rs:355:    fn max_info(self) -> Tone;
+app/docket-app/src/status_view/tests.rs:359:    fn max_info(self) -> Tone {
+app/docket-app/src/status_view/tests.rs:365:fn missing_sections_are_unknown_not_healthy() {
+app/docket-app/src/status_view/tests.rs:375:fn index_zero_result_indexing_shows_progress_not_ready() {
+app/docket-app/src/status_view/tests.rs:408:fn index_dead_letters_interrupted_failed_and_unknown() {
+app/docket-app/src/status_view/tests.rs:455:fn index_empty_ready_is_never_idle_fine() {
+app/docket-app/src/status_view/tests.rs:474:fn database_states() {
+app/docket-app/src/status_view/tests.rs:493:fn old_daemon_without_status_v2_gets_the_legacy_ui() {
+app/docket-app/src/status_view/tests.rs:521:fn src(readiness: &str, anomalies: Vec<&str>, counts: Value, status: &str) -> SourceInfo {
+app/docket-app/src/status_view/tests.rs:529:fn counts(versions: Value, job: Value, history: Value) -> Value {
+app/docket-app/src/status_view/tests.rs:535:fn no_job() -> Value {
+app/docket-app/src/status_view/tests.rs:540:fn source_ready_line_with_unknown_skipped_and_superseded_apart() {
+app/docket-app/src/status_view/tests.rs:568:fn unknown_counts_are_unknown_never_zero() {
+app/docket-app/src/status_view/tests.rs:588:fn reconciles_false_never_claims_reconciliation() {
+app/docket-app/src/status_view/tests.rs:600:fn zero_result_indexing_is_not_ready() {
+app/docket-app/src/status_view/tests.rs:613:fn partial_ingestion_and_skipped_by_code_breakdown() {
+app/docket-app/src/status_view/tests.rs:647:fn unsupported_formats_only_source_is_not_ready() {
+app/docket-app/src/status_view/tests.rs:665:fn empty_ready_is_never_shown_as_ready_even_if_the_daemon_says_ready() {
+app/docket-app/src/status_view/tests.rs:695:fn revoked_and_tombstoned_sources_are_not_ready_and_have_no_equation() {
+app/docket-app/src/status_view/tests.rs:719:fn source_list_keeps_last_good_and_shows_its_age() {
+app/docket-app/src/status_view/tests.rs:736:fn result(extra: Value) -> AskResult {
+app/docket-app/src/status_view/tests.rs:745:fn abstention_reason_absent_is_not_recorded() {
+app/docket-app/src/status_view/tests.rs:764:fn warnings_coverage_and_scope_come_only_from_fields() {
+app/docket-app/src/status_view/tests.rs:796:fn hostile_codes_and_paths_never_reach_rendered_strings() {
+app/docket-app/src/status_view/tests.rs:883:fn nothing_claims_read_only_enforcement() {
+app/docket-app/src/status_view/tests.rs:890:fn fmt_age_boundaries() {

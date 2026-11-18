@@ -16,7 +16,7 @@ import pytest
 from docket.infra.parsing.docling_wrapper import DoclingParser, ParseError, ParsedDocument
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-DOCS_DIR = REPO_ROOT / "Docs"
+DOCS_DIR = REPO_ROOT / "docs" / "product"
 SAMPLE_DOCX = DOCS_DIR / "01_Work_Intelligence_PRD_v1.0.docx"
 
 
@@ -24,7 +24,7 @@ SAMPLE_DOCX = DOCS_DIR / "01_Work_Intelligence_PRD_v1.0.docx"
 def parser() -> DoclingParser:
     # Constructed once per test module: Docling loads its models on
     # DocumentConverter() construction, which is expensive the first time
-    # (see spike/RESULTS.md's first-call-latency finding).
+    # (see archive/spike/RESULTS.md's first-call-latency finding).
     return DoclingParser()
 
 
@@ -73,7 +73,7 @@ def test_parse_nonexistent_file_raises_parse_error(
     assert exc_info.value.path == missing
 
 
-@pytest.mark.skipif(not SAMPLE_DOCX.exists(), reason="sample docx not present in Docs/")
+@pytest.mark.skipif(not SAMPLE_DOCX.exists(), reason="sample docx not present in docs/product/")
 def test_parse_real_docx_smoke_test(parser: DoclingParser) -> None:
     result = parser.parse("src-real", SAMPLE_DOCX)
 

@@ -3,7 +3,7 @@ investigation agent, then answers it with citation validation either way.
 
 This used to be single-path only (see git history / the previous version of
 this docstring): always direct retrieve->generate, the spike's validated
-"fast path" (`spike/query.py`, see `spike/RESULTS.md` "Retrieval Quality" --
+"fast path" (`archive/spike/query.py`, see `archive/spike/RESULTS.md` "Retrieval Quality" --
 12/12 correct on the eval set). That routing decision depended on the Agent
 Runtime Manager / Policy Gateway pattern (CP9), which is now done
 (`docket.services.agent.graph.build_investigation_agent`) -- so `ask()` now classifies

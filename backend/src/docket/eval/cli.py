@@ -6,6 +6,7 @@ docling) are deferred into the commands so `docket --help` stays fast.
 
 from __future__ import annotations
 
+import os
 import json
 import time
 from pathlib import Path
@@ -386,7 +387,7 @@ def calibrate_score_cmd(
 def calibrate_sheet_export_cmd(
     results_dir: Path = typer.Option(..., "--results-dir", help="Folder of saved runs (*.jsonl) and judged files (*.j14.jsonl)."),
     out_dir: Path = typer.Option(None, "--out-dir", help="Default: <results-dir>/labels (created 0700, files 0600)."),
-    gold_dir: Path = typer.Option(None, "--gold-dir", help="Folder of gold*.yaml (default backend/eval-public)."),
+    gold_dir: Path = typer.Option(None, "--gold-dir", help="Folder of gold*.yaml (default: evals/suites of the checkout, or $DOCKET_EVAL_SUITES)."),
     n: int = typer.Option(80, "--n", min=2, help="Total items including seeded ones."),
     seeded: int = typer.Option(12, "--seeded", min=0, help="Seeded mutated answers (wrong number/entity, unsupported sentence)."),
     seed: int = typer.Option(0, "--seed"),
@@ -394,7 +395,7 @@ def calibrate_sheet_export_cmd(
     """Export a blind, stratified human-label sheet (CSV+JSONL), instructions and a separate key."""
     from docket.eval.calibration_sheet import discover_sources, export_label_sheet
 
-    gold_dir = gold_dir or Path(__file__).resolve().parents[3] / "eval-public"
+    gold_dir = gold_dir or _suites_dir()
     try:
         sources = discover_sources(results_dir, gold_dir)
         summary = export_label_sheet(sources, out_dir or results_dir / "labels", n=n, seeded=seeded, seed=seed)
@@ -439,14 +440,31 @@ def freeze_cmd(
     typer.echo(f"Froze {len(manifest.files)} documents to {out}")
 
 
+def _suites_dir() -> Path:
+    """Folder of eval suites (gold*.yaml, kag/, corpora): ``$DOCKET_EVAL_SUITES``, else ``evals/suites`` of the source
+    checkout this package runs from, else ``evals/suites`` found from the working directory upward. An installed
+    wheel does not ship the suites, so outside a checkout pass the folder explicitly."""
+    env = os.environ.get("DOCKET_EVAL_SUITES")
+    if env:
+        return Path(env).expanduser().resolve()
+    here = Path(__file__).resolve()
+    candidates = [here.parents[4] / "evals" / "suites"] if len(here.parents) > 4 else []
+    cwd = Path.cwd().resolve()
+    candidates += [d / "evals" / "suites" for d in (cwd, *cwd.parents)]
+    for c in candidates:
+        if c.is_dir():
+            return c
+    raise _fail("eval suites not found: pass the folder explicitly or set DOCKET_EVAL_SUITES (an installed package does not ship them; run from a Docket checkout)")
+
+
 def _default_kag_gold() -> Path:
-    return Path(__file__).resolve().parents[3] / "eval-public" / "kag" / "kag-gold-cuad12.silver.yaml"
+    return _suites_dir() / "kag" / "kag-gold-cuad12.silver.yaml"
 
 
 @kag_app.command("run")
 def kag_run_cmd(
     db: Path = typer.Option(..., "--db", help="Scratch library docket.sqlite3 with the KAG tables built (never the real data dir)."),
-    gold: Path = typer.Option(None, "--gold", help="KAG gold YAML (default eval-public/kag/kag-gold-cuad12.silver.yaml)."),
+    gold: Path = typer.Option(None, "--gold", help="KAG gold YAML (default evals/suites/kag/kag-gold-cuad12.silver.yaml)."),
     ks: str = typer.Option("3,6,12", "--ks", help="Comma-separated k values for clause recall@k."),
     human_only: bool = typer.Option(False, "--human-only", help="Only count human_reviewed items (silver excluded)."),
     n_boot: int = typer.Option(2000, "--n-boot", min=100, help="Bootstrap resamples per metric."),
@@ -477,12 +495,12 @@ def kag_run_cmd(
 @kag_app.command("silver")
 def kag_silver_cmd(
     gold: list[Path] = typer.Option(None, "--gold", help="gold-cuad*.yaml to derive from (repeatable; default gold-cuad.yaml + gold-cuad-scale.yaml)."),
-    out: Path = typer.Option(None, "--out", help="Output YAML (default eval-public/kag/kag-gold-cuad12.silver.yaml)."),
+    out: Path = typer.Option(None, "--out", help="Output YAML (default evals/suites/kag/kag-gold-cuad12.silver.yaml)."),
 ) -> None:
     """Derive SILVER (unreviewed) KAG labels mechanically from existing gold; never marks anything human-reviewed."""
     from docket.eval.kag.silver import build_silver, write_gold_yaml
 
-    base = Path(__file__).resolve().parents[3] / "eval-public"
+    base = _suites_dir()
     paths = gold or [base / "gold-cuad.yaml", base / "gold-cuad-scale.yaml"]
     try:
         built = build_silver(paths, corpus="CUAD v1 12-contract slice")

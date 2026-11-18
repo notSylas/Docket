@@ -1,0 +1,10 @@
+integration: checked 706 pre-C3 file hashes; changed files: ['app/docket-app/src/backend.rs', 'app/docket-app/src/model.rs', 'app/docket-app/src/shell.rs', 'app/docket-app/src/ui.rs']
+prototype: checked 680 pre-C3 file hashes; changed files: none
+PASS: app/docket-app/src/status_view.rs byte-identical to HEAD.
+PASS: app/docket-app/src/status_view/tests.rs byte-identical to HEAD.
+PASS: C0/C1/C2 reports, evidence, screenshots, C2 tests, approved prototype, theme tokens and main.rs preserved.
+Integration branch: codex/ui-integration
+Integration HEAD: 3a6a4ca2d9e809c15551623428626c724283c810
+Final rust-app ref: 8356eebce87477834a1bf2fed9dd8f5b70ec463c
+PASS: no committed app/ delta between integration HEAD and current rust-app.
+PASS: normal review shutdown; no owned C3 native processes or temporary sockets remain.

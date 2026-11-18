@@ -2,7 +2,7 @@
 citation-ready evidence.
 
 This is the ONE place in the codebase that builds citation tags. The
-validation spike (see `spike/RESULTS.md`, "Known rough edges") let the
+validation spike (see `archive/spike/RESULTS.md`, "Known rough edges") let the
 generation prompt construct citation tags ad hoc from parts (e.g.
 `[source_file#chunk_id]`), and the model sometimes mangled the format --
 emitting malformed tags like `[source_file#chunk_id: file.docx#chunk_id]`.

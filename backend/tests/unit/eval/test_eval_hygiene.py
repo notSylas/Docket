@@ -23,7 +23,7 @@ from docket.eval.report import build_report, format_report, report_to_dict
 from docket.eval.schema import GoldSet, GoldSetError, Question, fingerprint
 
 BACKEND = Path(__file__).resolve().parents[3]
-SCALE = BACKEND / "eval-public" / "scale"
+SCALE = BACKEND.parent / "evals" / "suites" / "scale"
 
 
 def _load_guard():

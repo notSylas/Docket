@@ -1,7 +1,7 @@
 """Hybrid retrieval: lexical (FTS5) + semantic (LanceDB) search fused via
 Reciprocal Rank Fusion (RRF).
 
-This replaces `spike/query.py`'s CLI-only, hardcoded-path version with a
+This replaces `archive/spike/query.py`'s CLI-only, hardcoded-path version with a
 library-shaped one: callers pass in an already-open SQLAlchemy `Engine`
 (pointed at the `fts_chunks` FTS5 table), an already-open LanceDB `table`
 (the `chunks` vector table -- see `docket.infra.index.vector_index`), and an

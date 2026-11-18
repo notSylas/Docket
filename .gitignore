@@ -4,24 +4,24 @@ venv/
 .worktrees/
 __pycache__/
 *.pyc
-spike/.lancedb/
-spike/*.sqlite3
-spike/*.db
-spike/.docling_cache/
-spike/test_pdfs/
-desktop/sidecar/build/
-desktop/sidecar/dist/
-desktop/sidecar/_pyinstaller_spike*
-desktop/sidecar/.build-venv/
-desktop/node_modules/
-desktop/dist/
-desktop/src-tauri/target/
-desktop/src-tauri/binaries/
+archive/spike/.lancedb/
+archive/spike/*.sqlite3
+archive/spike/*.db
+archive/spike/.docling_cache/
+archive/spike/test_pdfs/
+archive/desktop-tauri/sidecar/build/
+archive/desktop-tauri/sidecar/dist/
+archive/desktop-tauri/sidecar/_pyinstaller_spike*
+archive/desktop-tauri/sidecar/.build-venv/
+archive/desktop-tauri/node_modules/
+archive/desktop-tauri/dist/
+archive/desktop-tauri/src-tauri/target/
+archive/desktop-tauri/src-tauri/binaries/
 backend/src/docket.egg-info/
 .pytest_cache/
 .coverage
 htmlcov/
 
-# Private gold sets, run outputs and labels for real documents
+# Private gold sets, run outputs and labels for real documents (any local folder with this name; the tracked kit is evals/private-kit/)
 eval-private/
 Reference_Books/

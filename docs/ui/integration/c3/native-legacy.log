@@ -1,0 +1,44 @@
+2026-11-18T18:36:45.814849Z  INFO docketd: listening socket=/tmp/docket-c3-legacy/docketd.sock
+2026-11-18T18:36:45.814875Z  INFO docketd::worker: worker launched starts=1 generation=1
+2026-11-18T18:36:45.963862Z  INFO docketd::http: request request_id=6afdf03d-000001 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:36:45.964254Z  INFO docketd::http: request request_id=6afdf03d-000002 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:36:45.964872Z  INFO docketd::http: request request_id=6afdf03d-000003 method=GET path=/v1/sources status=200 ms=0
+2026-11-18T18:36:45.966995Z  INFO docketd::http: request request_id=6afdf03d-000004 method=POST path=/v1/ask status=200 ms=0
+2026-11-18T18:36:47.964937Z  INFO docketd::http: request request_id=6afdf03d-000005 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:36:49.965674Z  INFO docketd::http: request request_id=6afdf03d-000006 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:36:51.966387Z  INFO docketd::http: request request_id=6afdf03d-000007 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:36:53.967124Z  INFO docketd::http: request request_id=6afdf03d-000008 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:36:55.967954Z  INFO docketd::http: request request_id=6afdf03d-000009 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:36:57.968328Z  WARN docketd::worker: worker call failed; restarting worker method="query.ask" task=Some("t-6afdf03d-1") generation=1
+2026-11-18T18:36:57.968663Z  INFO docketd::http: request request_id=6afdf03d-00000a method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:36:59.969236Z  INFO docketd::tasks: task finished task="t-6afdf03d-1" state=TimedOut events=8
+2026-11-18T18:36:59.969349Z  INFO docketd::http: request request_id=6afdf03d-00000b method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:37:01.970001Z  INFO docketd::http: request request_id=6afdf03d-00000c method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:37:01.970739Z  INFO docketd::worker: worker launched starts=2 generation=2
+2026-11-18T18:37:01.971375Z  INFO docketd::http: request request_id=6afdf03d-00000d method=GET path=/v1/sources status=200 ms=0
+2026-11-18T18:37:03.970811Z  INFO docketd::http: request request_id=6afdf03d-00000e method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:37:05.971731Z  INFO docketd::http: request request_id=6afdf03d-00000f method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:37:07.972607Z  INFO docketd::http: request request_id=6afdf03d-000010 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:37:09.973439Z  INFO docketd::http: request request_id=6afdf03d-000011 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:37:11.974205Z  INFO docketd::http: request request_id=6afdf03d-000012 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:37:11.974984Z  INFO docketd::http: request request_id=6afdf03d-000013 method=GET path=/v1/sources status=200 ms=0
+2026-11-18T18:37:13.975166Z  INFO docketd::http: request request_id=6afdf03d-000014 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:37:15.976096Z  INFO docketd::http: request request_id=6afdf03d-000015 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:37:17.976942Z  INFO docketd::http: request request_id=6afdf03d-000016 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:37:19.977797Z  INFO docketd::http: request request_id=6afdf03d-000017 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:37:21.978648Z  INFO docketd::http: request request_id=6afdf03d-000018 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:37:21.979996Z  INFO docketd::http: request request_id=6afdf03d-000019 method=GET path=/v1/sources status=200 ms=0
+2026-11-18T18:37:23.979680Z  INFO docketd::http: request request_id=6afdf03d-00001a method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:37:25.980548Z  INFO docketd::http: request request_id=6afdf03d-00001b method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:37:27.981548Z  INFO docketd::http: request request_id=6afdf03d-00001c method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:37:29.982662Z  INFO docketd::http: request request_id=6afdf03d-00001d method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:37:31.983635Z  INFO docketd::http: request request_id=6afdf03d-00001e method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:37:31.984411Z  INFO docketd::http: request request_id=6afdf03d-00001f method=GET path=/v1/sources status=200 ms=0
+2026-11-18T18:37:33.984381Z  INFO docketd::http: request request_id=6afdf03d-000020 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:37:35.985230Z  INFO docketd::http: request request_id=6afdf03d-000021 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:37:37.986083Z  INFO docketd::http: request request_id=6afdf03d-000022 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:37:39.986865Z  INFO docketd::http: request request_id=6afdf03d-000023 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:37:41.987730Z  INFO docketd::http: request request_id=6afdf03d-000024 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:37:41.988714Z  INFO docketd::http: request request_id=6afdf03d-000025 method=GET path=/v1/sources status=200 ms=0
+2026-11-18T18:37:43.988619Z  INFO docketd::http: request request_id=6afdf03d-000026 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:37:45.862808Z  INFO docketd: stopped

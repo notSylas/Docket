@@ -1,8 +1,8 @@
 """Bounded LangGraph agent loop: the Agent Policy Gateway wired into an
 actual `agent` <-> `gateway` graph.
 
-`build_agent()` reproduces `spike/test_agent_policy_gateway.py`'s
-`build_agent()` structure exactly (see that file, and `spike/RESULTS.md`'s
+`build_agent()` reproduces `archive/spike/test_agent_policy_gateway.py`'s
+`build_agent()` structure exactly (see that file, and `archive/spike/RESULTS.md`'s
 "Tier 3 — Agent Policy Gateway" section, which validated this shape end to
 end: bounded iteration, fail-closed tool enforcement, correct cited
 answers), just parameterized instead of hardcoded:
