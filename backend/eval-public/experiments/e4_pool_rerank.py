@@ -11,7 +11,7 @@ docket.eval.scoring.span_hits. follow_up questions are skipped (they need the LL
 """
 from __future__ import annotations
 
-import argparse, json, math, os, sys, time
+import argparse, json, math, os, sys, tempfile, time
 from pathlib import Path
 
 import httpx
@@ -201,7 +201,7 @@ def main():
         return
     scratch = Path(a.scratch).resolve()
     dd = os.environ.get("DOCKET_DATA_DIR", "")
-    if not dd or not dd.startswith(str(scratch)) and "/tmp/claude-1000" not in dd:
+    if not dd or (not dd.startswith(str(scratch)) and not dd.startswith(tempfile.gettempdir())):
         sys.exit("refusing: DOCKET_DATA_DIR must be a scratch dir")
     results = {}
     for s in a.sets.split(","):

@@ -182,7 +182,7 @@ def main():
         out[str(n)] = R
         a.out.write_text(json.dumps(out, indent=2))
         print(json.dumps(R, indent=2), flush=True)
-    base = Path(os.environ.get("STEP0_RESULTS", "/home/pc/Desktop/Rajdeep_Dev/Local_Agent/backend/eval-public/scale/RESULTS.json"))
+    base = Path(os.environ.get("STEP0_RESULTS", str(Path(__file__).resolve().parent / "RESULTS.json")))
     if base.exists():
         print("Step 0 baseline file present:", base, "(compare manually)")
 
