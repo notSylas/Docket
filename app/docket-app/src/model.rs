@@ -187,8 +187,13 @@ pub const STOPPED_NOTE: &str = "Docket ended its answering process. It cannot co
 
 pub enum Message {
     Cancelled,
+    /// Local Stop intent won presentation, but server cancellation was not confirmed.
+    Discarded,
     User(String),
-    Answer { result: AskResult, wall_s: f64 },
+    Answer {
+        result: AskResult,
+        wall_s: f64,
+    },
     Error(String),
 }
 

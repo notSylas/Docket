@@ -10,13 +10,15 @@
 
 mod backend;
 mod model;
+mod shell;
 mod status_view;
+mod theme;
 mod ui;
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([1040.0, 720.0])
+            .with_inner_size([1440.0, 900.0])
             .with_min_inner_size([640.0, 420.0])
             .with_app_id("docket")
             .with_title("Docket"),
