@@ -223,16 +223,109 @@ def classify_chunk(chunk_text: str, heading: str | None = None) -> list[tuple[st
 
 # --- build ---------------------------------------------------------------
 
+# Provenance kinds. NULL (legacy) is deliberately NOT one of them: rows written before migration 0019
+# carry no verdict and must never be reported as spans.
+EVIDENCE_SPAN = "span"      # entity edge: chunk + code-point span, validated against the persisted text
+EVIDENCE_NONE = "none"      # entity edge: no textual mention found (e.g. file-name-only company)
+EVIDENCE_CHUNK = "chunk"    # clause edge: chunk-level only; the keyword classifier does not expose a span
+KIND_LEGACY = "legacy"      # reported for rows whose columns are NULL (pre-0019): unverified
+
+MAX_SEARCH_CHUNKS = 64      # entity mentions are searched in the first N chunks (by ordinal)
+
+_ALNUM = frozenset("abcdefghijklmnopqrstuvwxyz0123456789")
+
+
+def _tokens_with_spans(text_: str) -> list[tuple[str, int, int]]:
+    """Name-normalisation tokens of `text_` (the same folding as `_clean`: lower case, '&' -> 'and',
+    apostrophes dropped, [a-z0-9]+ runs) with their [start, end) code-point offsets in `text_`."""
+    out: list[tuple[str, int, int]] = []
+    cur: list[str] = []
+    cs = ce = 0
+    for i, ch in enumerate(text_):
+        if ch in "\u2019'`":
+            continue  # transparent inside a word: "Reed's" -> "reeds"
+        if ch == "&":
+            if cur:
+                out.append(("".join(cur), cs, ce))
+                cur = []
+            out.append(("and", i, i + 1))
+            continue
+        lc = ch.lower()
+        if lc and all(c in _ALNUM for c in lc):
+            if not cur:
+                cs = i
+            cur.append(lc)
+            ce = i + 1
+        elif cur:
+            out.append(("".join(cur), cs, ce))
+            cur = []
+    if cur:
+        out.append(("".join(cur), cs, ce))
+    return out
+
+
+def _candidate_keys(display: str) -> list[str]:
+    """Lookup keys for one entity in a FIXED preference order: full normalised name, core name, then the
+    remaining recorded variants alphabetically."""
+    full, core = normalize_name(display), core_name(display)
+    ordered = [full, core] + sorted(name_variants(display) - {full, core})
+    seen: set[str] = set()
+    return [k for k in ordered if k and usable_variant(k) and not (k in seen or seen.add(k))]
+
+
+def _span_valid(chunk_text: str, start: int | None, end: int | None, allowed: set[str]) -> bool:
+    """True when chunk_text[start:end] is a real, non-empty slice whose name-normalisation is one of the
+    recorded variants. Used both when writing and when auditing."""
+    if start is None or end is None or not (0 <= start < end <= len(chunk_text)):
+        return False
+    return normalize_name(chunk_text[start:end]) in allowed
+
+
+def find_mention(chunks, display: str) -> tuple[str, int, int] | None:
+    """Deterministic REPRESENTATIVE mention of `display`: (chunk_id, start, end) or None.
+
+    Chunks are searched in ordinal order (first MAX_SEARCH_CHUNKS); the first chunk with any match wins;
+    inside it the earliest occurrence wins, ties going to the earlier key in `_candidate_keys`. Matching is
+    case-, punctuation- and whitespace-insensitive, but the result is a real slice of the persisted chunk
+    text (end exclusive, Python code-point indices) and is re-validated before being returned. This is ONE
+    mention, not proof that every mention was found."""
+    keys = _candidate_keys(display)
+    if not keys:
+        return None
+    allowed = set(name_variants(display)) | set(keys)
+    seqs = [(k, tuple(k.split())) for k in keys]
+    for ch in sorted(chunks, key=lambda c: (c.ordinal, c.id))[:MAX_SEARCH_CHUNKS]:
+        toks = _tokens_with_spans(ch.text)
+        words = [t for t, _s, _e in toks]
+        best: tuple[int, int, int, int] | None = None  # (start, key_rank, end, _)
+        for rank, (_k, seq) in enumerate(seqs):
+            n = len(seq)
+            for j in range(len(words) - n + 1):
+                if tuple(words[j:j + n]) == seq:
+                    cand = (toks[j][1], rank, toks[j + n - 1][2], 0)
+                    if best is None or cand[:2] < best[:2]:
+                        best = cand
+                    break  # earliest occurrence of this key
+        if best is not None and _span_valid(ch.text, best[0], best[2], allowed):
+            return ch.id, best[0], best[2]
+    return None
+
+
 def write_graph(session, document_id: int, chunks, parties: list[str], preamble: str, file_name: str | None = None) -> tuple[int, int]:
     """Replace this document's graph rows (caller commits). `chunks`: objects with id/text/heading/ordinal.
-    Returns (entity_edges, clause_links)."""
+    Returns (entity_edges, clause_links).
+
+    Provenance: each entity edge stores ONE deterministic representative mention (see `find_mention`):
+    chunk_id + chunk-relative [span_start, span_end) with evidence_kind='span', or, when the name has no
+    validated textual mention (file-name-only company), NULL chunk/span with evidence_kind='none'. Clause
+    edges are chunk-level only (evidence_kind='chunk', no span): the classifier does not expose its match.
+    Rows from before migration 0019 keep NULL evidence_kind (legacy, unverified)."""
     from sqlalchemy import delete, select
 
     from docket.core.db.models import KagDocumentClause, KagDocumentEntity, KagEntity, KagEntityVariant
 
     session.execute(delete(KagDocumentEntity).where(KagDocumentEntity.document_id == document_id))
     session.execute(delete(KagDocumentClause).where(KagDocumentClause.document_id == document_id))
-    first_chunk = chunks[0].id if chunks else None
     edges = 0
     for display, role in preamble_entities(parties, preamble, file_name):
         key = core_name(display)
@@ -247,14 +340,145 @@ def write_graph(session, document_id: int, chunks, parties: list[str], preamble:
             if usable_variant(v) and session.get(KagEntityVariant, (ent.id, v)) is None:
                 session.add(KagEntityVariant(entity_id=ent.id, variant=v))
         if session.get(KagDocumentEntity, (document_id, ent.id, role)) is None:
-            session.add(KagDocumentEntity(document_id=document_id, entity_id=ent.id, role=role, chunk_id=first_chunk))
+            hit = find_mention(chunks, display)
+            if hit is None:
+                session.add(KagDocumentEntity(document_id=document_id, entity_id=ent.id, role=role, chunk_id=None,
+                                              span_start=None, span_end=None, evidence_kind=EVIDENCE_NONE))
+            else:
+                session.add(KagDocumentEntity(document_id=document_id, entity_id=ent.id, role=role, chunk_id=hit[0],
+                                              span_start=hit[1], span_end=hit[2], evidence_kind=EVIDENCE_SPAN))
             edges += 1
     links = 0
     for ch in chunks:
         for ctype, conf in classify_chunk(ch.text, getattr(ch, "heading", None)):
-            session.add(KagDocumentClause(document_id=document_id, clause_type=ctype, chunk_id=ch.id, confidence=conf))
+            session.add(KagDocumentClause(document_id=document_id, clause_type=ctype, chunk_id=ch.id,
+                                          confidence=conf, evidence_kind=EVIDENCE_CHUNK))
             links += 1
     return edges, links
+
+
+# --- provenance read helper + integrity ---------------------------------
+
+def _provenance(chunk_id, start, end, kind) -> dict:
+    """The R2b contract: {chunk_id, span_start, span_end, kind}. A span is only ever reported for kind
+    'span' with a complete, ordered span; 'none' reports no chunk; 'chunk' (clause) reports the chunk only.
+    Legacy rows (NULL kind, written before 0019) report NO chunk id and no span: their old chunk id was
+    always the document's first chunk, so it must not be presented as evidence. A 'span' row with
+    inconsistent columns, or an unknown kind, is 'stale', never promoted to 'span' or 'legacy' evidence."""
+    empty = {"chunk_id": None, "span_start": None, "span_end": None}
+    if kind == EVIDENCE_SPAN:
+        if chunk_id and start is not None and end is not None and 0 <= start < end:
+            return {"chunk_id": chunk_id, "span_start": start, "span_end": end, "kind": EVIDENCE_SPAN}
+        return {**empty, "kind": "stale"}
+    if kind == EVIDENCE_NONE:
+        return {**empty, "kind": EVIDENCE_NONE}
+    if kind == EVIDENCE_CHUNK:
+        return {"chunk_id": chunk_id, "span_start": None, "span_end": None, "kind": EVIDENCE_CHUNK}
+    if kind is None:
+        return {**empty, "kind": KIND_LEGACY}
+    return {**empty, "kind": "stale"}
+
+
+def entity_edge_provenance(session, document_id: int, entity_id: int, role: str = "party", *, verify: bool = True) -> dict | None:
+    """Provenance of one document->entity edge, or None when the edge does not exist. With `verify`, a
+    'span' edge whose chunk is gone, belongs to another version, or no longer slice-matches a recorded
+    variant is reported as kind 'stale' with no span."""
+    row = session.execute(text(
+        "SELECT chunk_id, span_start, span_end, evidence_kind FROM kag_document_entities "
+        "WHERE document_id = :d AND entity_id = :e AND role = :r"), {"d": document_id, "e": entity_id, "r": role}).first()
+    if row is None:
+        return None
+    prov = _provenance(*row)
+    if verify and prov["kind"] == EVIDENCE_SPAN:
+        chunk = session.execute(text(
+            "SELECT c.text, c.evidence_version_id = d.evidence_version_id FROM chunks c, documents d "
+            "WHERE c.id = :c AND d.id = :d"), {"c": prov["chunk_id"], "d": document_id}).first()
+        variants = set(session.execute(text(
+            "SELECT variant FROM kag_entity_variants WHERE entity_id = :e"), {"e": entity_id}).scalars())
+        if chunk is None or not chunk[1] or not _span_valid(chunk[0], prov["span_start"], prov["span_end"], variants):
+            return {"chunk_id": None, "span_start": None, "span_end": None, "kind": "stale"}
+    return prov
+
+
+def clause_edge_provenance(session, clause_row_id: int, *, verify: bool = True) -> dict | None:
+    """Provenance of one kag_document_clauses row (chunk-level; never a span). With `verify`, a 'chunk' row
+    whose chunk is gone or belongs to another evidence version than its document is reported 'stale'."""
+    row = session.execute(text(
+        "SELECT chunk_id, span_start, span_end, evidence_kind, document_id FROM kag_document_clauses WHERE id = :i"),
+        {"i": clause_row_id}).first()
+    if row is None:
+        return None
+    prov = _provenance(*row[:4])
+    if verify and prov["kind"] == EVIDENCE_CHUNK:
+        ok = session.execute(text(
+            "SELECT c.evidence_version_id = d.evidence_version_id FROM chunks c, documents d "
+            "WHERE c.id = :c AND d.id = :d"), {"c": prov["chunk_id"], "d": row[4]}).first()
+        if ok is None or not ok[0]:
+            return {"chunk_id": None, "span_start": None, "span_end": None, "kind": "stale"}
+    return prov
+
+
+@dataclass(frozen=True)
+class IntegrityReport:
+    """Counts only (no names, no text). `dangling` = chunk id with no chunks row; `version_mismatch` =
+    chunk belongs to a different evidence version than the edge's document; `span_mismatch` = 'span'
+    edge that no longer slices to a recorded variant (or has inconsistent columns)."""
+    entity_edges: int = 0
+    entity_span: int = 0
+    entity_none: int = 0
+    entity_legacy: int = 0
+    clause_edges: int = 0
+    clause_chunk: int = 0
+    clause_legacy: int = 0
+    dangling: int = 0
+    version_mismatch: int = 0
+    span_mismatch: int = 0
+
+    @property
+    def problems(self) -> int:
+        return self.dangling + self.version_mismatch + self.span_mismatch
+
+    @property
+    def legacy_edges(self) -> int:
+        return self.entity_legacy + self.clause_legacy
+
+
+def check_graph_integrity(session) -> IntegrityReport:
+    """Read-only audit of graph provenance. Never writes."""
+    def one(sql: str) -> int:
+        return int(session.execute(text(sql)).scalar_one())
+
+    ent = "kag_document_entities"
+    cl = "kag_document_clauses"
+    dangling = one(f"SELECT COUNT(*) FROM {ent} x WHERE x.chunk_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM chunks c WHERE c.id = x.chunk_id)") \
+        + one(f"SELECT COUNT(*) FROM {cl} x WHERE NOT EXISTS (SELECT 1 FROM chunks c WHERE c.id = x.chunk_id)")
+    mismatch = one(
+        f"SELECT COUNT(*) FROM {ent} x JOIN chunks c ON c.id = x.chunk_id JOIN documents d ON d.id = x.document_id "
+        "WHERE c.evidence_version_id <> d.evidence_version_id") + one(
+        f"SELECT COUNT(*) FROM {cl} x JOIN chunks c ON c.id = x.chunk_id JOIN documents d ON d.id = x.document_id "
+        "WHERE c.evidence_version_id <> d.evidence_version_id")
+    bad_span = one(  # internally inconsistent provenance columns
+        f"SELECT COUNT(*) FROM {ent} WHERE (evidence_kind = 'span' AND (chunk_id IS NULL OR span_start IS NULL OR span_end IS NULL)) "
+        "OR (evidence_kind = 'none' AND (chunk_id IS NOT NULL OR span_start IS NOT NULL OR span_end IS NOT NULL))") + one(
+        f"SELECT COUNT(*) FROM {cl} WHERE span_start IS NOT NULL OR span_end IS NOT NULL")
+    variants: dict[int, set[str]] = {}
+    for eid, v in session.execute(text("SELECT entity_id, variant FROM kag_entity_variants")):
+        variants.setdefault(eid, set()).add(v)
+    for eid, s, e, ctext in session.execute(text(
+            f"SELECT x.entity_id, x.span_start, x.span_end, c.text FROM {ent} x JOIN chunks c ON c.id = x.chunk_id "
+            "WHERE x.evidence_kind = 'span' AND x.span_start IS NOT NULL AND x.span_end IS NOT NULL")):
+        if not _span_valid(ctext, s, e, variants.get(eid, set())):
+            bad_span += 1
+    return IntegrityReport(
+        entity_edges=one(f"SELECT COUNT(*) FROM {ent}"),
+        entity_span=one(f"SELECT COUNT(*) FROM {ent} WHERE evidence_kind = 'span'"),
+        entity_none=one(f"SELECT COUNT(*) FROM {ent} WHERE evidence_kind = 'none'"),
+        entity_legacy=one(f"SELECT COUNT(*) FROM {ent} WHERE evidence_kind IS NULL"),
+        clause_edges=one(f"SELECT COUNT(*) FROM {cl}"),
+        clause_chunk=one(f"SELECT COUNT(*) FROM {cl} WHERE evidence_kind = 'chunk'"),
+        clause_legacy=one(f"SELECT COUNT(*) FROM {cl} WHERE evidence_kind IS NULL"),
+        dangling=dangling, version_mismatch=mismatch, span_mismatch=bad_span,
+    )
 
 
 @dataclass(frozen=True)

@@ -465,6 +465,28 @@ def library_gc_graph(
         typer.echo("Nothing was deleted. Run docket library gc-graph --apply to remove them (not reversible without a backup).")
 
 
+@library_app.command("graph-integrity")
+def library_graph_integrity() -> None:
+    """Report-only audit of entity-graph provenance (counts only, never changes anything)."""
+    from docket.services.documents.kag import check_graph_integrity
+
+    context = build_context()
+    try:
+        with context.session_factory() as session:
+            r = check_graph_integrity(session)
+    except Exception:
+        typer.echo("Graph integrity check could not finish; nothing was changed.", err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"Entity edges: {r.entity_edges} (exact span {r.entity_span}, no text mention {r.entity_none}, "
+               f"legacy/unverified {r.entity_legacy}).")
+    typer.echo(f"Clause edges: {r.clause_edges} (chunk-level {r.clause_chunk}, legacy/unverified {r.clause_legacy}).")
+    typer.echo(f"Problems: {r.dangling} dangling chunk references, {r.version_mismatch} chunk/document version "
+               f"mismatches, {r.span_mismatch} spans that no longer match.")
+    if r.legacy_edges:
+        typer.echo("Legacy edges were written before span provenance existed. To recompute them, run "
+                   "docket documents build --force (explicit; nothing is rewritten automatically).")
+
+
 @app.command("backup")
 def backup_command(
     destination: Path | None = typer.Argument(None, help="New backup directory or .zip archive."),
