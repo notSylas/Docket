@@ -83,7 +83,7 @@ def test_single_alembic_head():
     cfg.set_main_option("script_location", str(__import__("pathlib").Path(kag.__file__).resolve().parents[2] / "core" / "db" / "migrations"))
     script = ScriptDirectory.from_config(cfg)
     heads = script.get_heads()
-    assert heads == ["f6c9e3a18e36"]
+    assert heads == ["f6c9e3a18f47"]
     assert script.get_revision("f6c9e3a18e36").down_revision == "f6c9e3a18d25"
 
 
