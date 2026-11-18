@@ -1,6 +1,9 @@
 use crate::backend::{Backend, Event};
 use crate::model::{self, Connection, Message, Pending, Segment};
-use docket_proto::api::{AskResult, SourceInfo, WorkerState};
+use crate::status_view::{
+    self, AskGate, Chip, SourceView, SourcesState, StatusModel, StatusView, Tone,
+};
+use docket_proto::api::{AskResult, WorkerState};
 use eframe::egui::{self, Color32, RichText};
 use std::path::PathBuf;
 use std::time::Instant;
@@ -13,8 +16,12 @@ const SPACE: f32 = 16.0;
 pub struct DocketApp {
     backend: Backend,
     conn: Connection,
-    sources: Vec<SourceInfo>,
+    src: SourcesState,
     sources_note: String,
+    status: StatusModel,
+    /// Recomputed every frame from `status`.
+    view: StatusView,
+    epoch: Instant,
     scope: Option<String>,
     input: String,
     messages: Vec<Message>,
@@ -30,6 +37,89 @@ pub struct DocketApp {
 fn dot(ui: &mut egui::Ui, color: Color32) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
     ui.painter().circle_filled(rect.center(), 4.5, color);
+}
+
+fn tone_color(t: Tone) -> Color32 {
+    match t {
+        Tone::Good => ACCENT,
+        Tone::Info => Color32::from_rgb(0x25, 0x63, 0xEB),
+        Tone::Warn => WARN,
+        Tone::Bad => BAD,
+        Tone::Unknown => Color32::GRAY,
+    }
+}
+
+fn draw_chip(ui: &mut egui::Ui, chip: &Chip) {
+    let resp = ui
+        .scope(|ui| {
+            ui.horizontal(|ui| {
+                // Old data is dimmed: never drawn like current data.
+                let c = tone_color(chip.tone);
+                dot(ui, if chip.stale { c.gamma_multiply(0.4) } else { c });
+                let text = RichText::new(chip.display());
+                ui.label(if chip.stale {
+                    text.weak().italics()
+                } else {
+                    text
+                });
+            });
+        })
+        .response;
+    resp.on_hover_ui(|ui| {
+        for l in &chip.tooltip {
+            ui.label(l);
+        }
+    });
+}
+
+fn source_details(ui: &mut egui::Ui, sv: &SourceView, old: bool) {
+    let label = |t: &str| {
+        let r = RichText::new(t).small();
+        if old {
+            r.weak()
+        } else {
+            r
+        }
+    };
+    ui.label(label(&sv.readiness).color(tone_color(sv.tone)));
+    for a in &sv.anomalies {
+        ui.add(egui::Label::new(RichText::new(a).small().color(WARN)).wrap());
+    }
+    match (&sv.counts_line, &sv.legacy_detail) {
+        (Some(c), _) => {
+            ui.add(egui::Label::new(label(c).weak()).wrap());
+        }
+        (None, Some(d)) => {
+            ui.label(label(d).weak());
+        }
+        _ => {}
+    }
+    if let Some(sup) = &sv.superseded {
+        ui.add(egui::Label::new(RichText::new(sup).small().weak().italics()).wrap());
+    }
+    for (title, rows) in [
+        ("Skipped by reason", &sv.skipped),
+        ("Failed by reason", &sv.failed),
+    ] {
+        if !rows.is_empty() {
+            egui::CollapsingHeader::new(RichText::new(title).small())
+                .id_salt((title, &sv.readiness, rows.len()))
+                .show(ui, |ui| {
+                    for (l, n) in rows {
+                        ui.label(RichText::new(format!("{n} · {l}")).small());
+                    }
+                });
+        }
+    }
+}
+
+fn answer_meta_lines(ui: &mut egui::Ui, m: &status_view::AnswerMeta) {
+    for w in &m.warnings {
+        ui.label(RichText::new(format!("Note: {w}")).small().color(WARN));
+    }
+    for t in [&m.coverage, &m.scope_files].into_iter().flatten() {
+        ui.label(RichText::new(t).small().weak());
+    }
 }
 
 fn setup_style(ctx: &egui::Context) {
@@ -70,8 +160,11 @@ impl DocketApp {
         Self {
             backend,
             conn: Connection::default(),
-            sources: Vec::new(),
+            src: SourcesState::default(),
             sources_note: "Connecting...".into(),
+            status: StatusModel::default(),
+            view: StatusModel::default().view(0, false),
+            epoch: Instant::now(),
             scope: None,
             input: String::new(),
             messages: Vec::new(),
@@ -85,15 +178,24 @@ impl DocketApp {
         }
     }
 
+    fn now_ms(&self) -> u64 {
+        self.epoch.elapsed().as_millis() as u64
+    }
+
     fn pump(&mut self) {
+        let now = self.now_ms();
         if self.auto_ask.is_some() && self.can_ask() {
             self.input = self.auto_ask.take().unwrap_or_default();
             self.submit();
         }
         while let Ok(ev) = self.backend.rx.try_recv() {
             match ev {
-                Event::Status(s) => self.conn.apply_status(s),
+                Event::Status(s) => {
+                    self.conn.apply_status(s.clone().map_err(|e| e.to_string()));
+                    self.status.apply(s, now);
+                }
                 Event::Sources(Ok(s)) => {
+                    self.src.apply(Ok(s.clone()), now);
                     self.sources_note = if s.is_empty() {
                         "No folders yet. Add one with the docket command line.".into()
                     } else {
@@ -104,9 +206,12 @@ impl DocketApp {
                             self.scope = None;
                         }
                     }
-                    self.sources = s;
+                    self.src.list = s;
                 }
-                Event::Sources(Err(e)) => self.sources_note = e,
+                Event::Sources(Err(e)) => {
+                    self.src.apply(Err(()), now);
+                    self.sources_note = e;
+                }
                 Event::Phase(p) => {
                     if let Some((cur, _)) = &mut self.asking {
                         cur.set_phase(p);
@@ -176,7 +281,28 @@ impl DocketApp {
     }
 
     fn can_ask(&self) -> bool {
-        self.conn.service_up && self.conn.worker == Some(WorkerState::Up) && self.asking.is_none()
+        if self.asking.is_some() {
+            return false;
+        }
+        if self.view.v2 {
+            // The status model says why when it is off; see `ask_off_reason`.
+            return self.view.ask == AskGate::Enabled;
+        }
+        self.conn.service_up && self.conn.worker == Some(WorkerState::Up)
+    }
+
+    /// Why asking is off, shown instead of a silently disabled input.
+    fn ask_off_reason(&self) -> Option<String> {
+        if self.asking.is_some() {
+            return None;
+        }
+        if self.view.v2 {
+            return match &self.view.ask {
+                AskGate::Disabled(t) => Some(t.clone()),
+                AskGate::Enabled => None,
+            };
+        }
+        None // old daemon: today's UI, unchanged
     }
 
     fn library(&mut self, ui: &mut egui::Ui) {
@@ -192,25 +318,52 @@ impl DocketApp {
             self.scope = None;
         }
         ui.separator();
+        let now = self.now_ms();
+        let v2 = self.view.v2;
         if !self.sources_note.is_empty() {
             ui.label(RichText::new(&self.sources_note).small().weak());
         }
+        if v2 {
+            if let Some(n) = self.src.note(now, self.asking.is_some()) {
+                ui.label(RichText::new(n).small().color(WARN));
+            }
+        }
+        let old = v2 && self.src.is_old(now);
+        let sources = self.src.list.clone();
         egui::ScrollArea::vertical().show(ui, |ui| {
-            for s in &self.sources {
+            for s in &sources {
                 let selected = self.scope.as_deref() == Some(s.id.as_str());
-                let ready = model::source_ready(s);
+                let sv = status_view::source_view(s, v2);
+                let ready = if v2 {
+                    sv.tone == Tone::Good
+                } else {
+                    model::source_ready(s)
+                };
                 let resp = ui
                     .scope(|ui| {
                         ui.horizontal(|ui| {
-                            dot(ui, if ready { ACCENT } else { WARN });
+                            dot(
+                                ui,
+                                if v2 {
+                                    tone_color(sv.tone)
+                                } else if ready {
+                                    ACCENT
+                                } else {
+                                    WARN
+                                },
+                            );
                             ui.vertical(|ui| {
                                 ui.label(RichText::new(&s.display_name).strong());
-                                let detail = format!(
-                                    "{} · {} files",
-                                    model::status_label(&s.status),
-                                    s.files
-                                );
-                                ui.label(RichText::new(detail).small().weak());
+                                if v2 {
+                                    source_details(ui, &sv, old);
+                                } else {
+                                    let detail = format!(
+                                        "{} · {} files",
+                                        model::status_label(&s.status),
+                                        s.files
+                                    );
+                                    ui.label(RichText::new(detail).small().weak());
+                                }
                             });
                         });
                     })
@@ -224,7 +377,21 @@ impl DocketApp {
                         egui::StrokeKind::Outside,
                     );
                 }
-                if resp.on_hover_text(&s.path).clicked() {
+                // With status.v2 the tooltip carries the counting basis; an
+                // absolute path never appears in status UI.
+                let resp = if v2 {
+                    resp.on_hover_ui(|ui| {
+                        for l in &sv.tooltip {
+                            ui.label(l);
+                        }
+                        if sv.tooltip.is_empty() {
+                            ui.label("No counts reported.");
+                        }
+                    })
+                } else {
+                    resp.on_hover_text(&s.path)
+                };
+                if resp.clicked() {
                     self.scope = if selected { None } else { Some(s.id.clone()) };
                 }
                 ui.add_space(2.0);
@@ -233,6 +400,9 @@ impl DocketApp {
     }
 
     fn status_line(&self, ui: &mut egui::Ui) {
+        if self.view.v2 {
+            return self.status_bar(ui);
+        }
         ui.horizontal(|ui| {
             let tone = |ok: bool| if ok { ACCENT } else { BAD };
             dot(ui, tone(self.conn.service_up));
@@ -269,8 +439,41 @@ impl DocketApp {
         });
     }
 
+    /// Chips with tooltips: one per fact, never one constant "ok".
+    fn status_bar(&self, ui: &mut egui::Ui) {
+        ui.horizontal_wrapped(|ui| {
+            for chip in &self.view.chips {
+                draw_chip(ui, chip);
+                ui.separator();
+            }
+            match self.last_latency {
+                Some(s) => ui.label(format!("Last answer: {s:.1} s")),
+                None => ui.label("Last answer: -"),
+            };
+            if !self.conn.note.is_empty() && self.conn.note.starts_with("could not stop") {
+                ui.separator();
+                ui.label(RichText::new(&self.conn.note).color(WARN));
+            }
+        });
+    }
+
+    fn banners(&self, ui: &mut egui::Ui) {
+        for b in &self.view.banners {
+            let c = tone_color(b.tone);
+            egui::Frame::group(ui.style())
+                .fill(c.gamma_multiply(0.10))
+                .stroke(egui::Stroke::new(1.0, c))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(RichText::new(&b.text).color(c));
+                });
+        }
+    }
+
     fn answer_card(&mut self, ui: &mut egui::Ui, idx: usize, result: &AskResult, wall_s: f64) {
         let (segs, order) = model::layout(&result.answer, &result.citations);
+        // Metadata fields exist only with a status.v2 daemon; nothing is guessed.
+        let meta = self.view.v2.then(|| status_view::answer_meta(result));
         if result.abstained {
             egui::Frame::group(ui.style())
                 .fill(WARN.gamma_multiply(0.12))
@@ -285,6 +488,12 @@ impl DocketApp {
                     let detail = result.answer.trim();
                     if !detail.is_empty() {
                         ui.label(RichText::new(detail).weak());
+                    }
+                    if let Some(m) = &meta {
+                        if let Some(r) = &m.abstention {
+                            ui.label(RichText::new(format!("Reason: {r}")).small());
+                        }
+                        answer_meta_lines(ui, m);
                     }
                 });
         } else {
@@ -322,6 +531,9 @@ impl DocketApp {
                 });
             });
         }
+        if let (Some(m), false) = (&meta, result.abstained) {
+            answer_meta_lines(ui, m);
+        }
         if let Some((mi, n)) = self.open_cite {
             if mi == idx {
                 if let Some(&ci) = order.get(n) {
@@ -351,13 +563,17 @@ impl DocketApp {
     fn chat(&mut self, ui: &mut egui::Ui) {
         egui::Panel::bottom("composer").show(ui, |ui| {
             ui.add_space(8.0);
+            if let Some(why) = self.ask_off_reason() {
+                ui.label(RichText::new(why).color(WARN));
+            }
             ui.horizontal(|ui| {
                 let enabled = self.can_ask();
                 let w = ui.available_width() - 90.0;
                 let hint = match &self.scope {
                     Some(id) => {
                         let name = self
-                            .sources
+                            .src
+                            .list
                             .iter()
                             .find(|s| &s.id == id)
                             .map(|s| s.display_name.as_str())
@@ -467,6 +683,14 @@ impl DocketApp {
 impl eframe::App for DocketApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.pump();
+        let now = self.now_ms();
+        self.view = self.status.view(now, self.asking.is_some());
+        if !self.view.banners.is_empty() {
+            egui::Panel::top("banners").show(ui, |ui| {
+                ui.add_space(4.0);
+                self.banners(ui);
+            });
+        }
         egui::Panel::bottom("status").show(ui, |ui| {
             ui.add_space(4.0);
             self.status_line(ui);
@@ -476,6 +700,10 @@ impl eframe::App for DocketApp {
             .resizable(true)
             .default_size(240.0)
             .show(ui, |ui| self.library(ui));
+        self.backend.set_asking(self.asking.is_some());
+        // Ages tick on screen even when nothing else repaints.
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_secs(1));
         self.chat(ui);
     }
 }

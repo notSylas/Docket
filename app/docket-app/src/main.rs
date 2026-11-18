@@ -10,6 +10,7 @@
 
 mod backend;
 mod model;
+mod status_view;
 mod ui;
 
 fn main() -> eframe::Result {

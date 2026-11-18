@@ -1,6 +1,7 @@
 //! Talks to `docketd` from background threads so the UI never blocks.
 
 use crate::model::{task_step, TaskStep};
+use crate::status_view::FetchError;
 use docket_proto::api::{
     parse_ask_event, ApiError, AskEvent, AskRequest, AskResult, Phase, Scope, SourceInfo,
     SourcesResponse, StatusResponse,
@@ -9,14 +10,21 @@ use docket_proto::client::{self, sse_events};
 use docket_proto::task::{parse_task_event, CreateTaskRequest, CreateTaskResponse, TaskKind};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const SHORT: Duration = Duration::from_secs(5);
 const ASK_READ: Duration = Duration::from_secs(600);
+/// Status is polled this often (the daemon answers from a cache, never the worker).
+const STATUS_EVERY: Duration = Duration::from_secs(2);
+/// `/v1/sources` asks the worker, so it is refreshed this often, and only while
+/// no question runs (last good list is kept meanwhile).
+const SOURCES_EVERY: Duration = Duration::from_secs(10);
 
 pub enum Event {
-    Status(Result<StatusResponse, String>),
+    Status(Result<StatusResponse, FetchError>),
     Sources(Result<Vec<SourceInfo>, String>),
     Phase(Phase),
     /// A piece of the streamed answer: shown as unverified until `Answer`.
@@ -38,6 +46,8 @@ pub struct Backend {
     pub rx: Receiver<Event>,
     ctx: eframe::egui::Context,
     daemon: Option<Child>,
+    /// A question is running: do not refresh sources (it would queue behind it).
+    asking: Arc<AtomicBool>,
 }
 
 fn send(tx: &Sender<Event>, ctx: &eframe::egui::Context, ev: Event) -> bool {
@@ -60,14 +70,15 @@ fn http_error(body: &str, status: u16) -> String {
     }
 }
 
-pub fn fetch_status(socket: &Path) -> Result<StatusResponse, String> {
-    let r = client::get(socket, "/v1/status", SHORT).map_err(|e| e.to_string())?;
+/// Errors are typed, never carry message text (it could contain paths).
+pub fn fetch_status(socket: &Path) -> Result<StatusResponse, FetchError> {
+    let r = client::get(socket, "/v1/status", SHORT).map_err(|_| FetchError::Unreachable)?;
     let code = r.status;
-    let body = r.text().map_err(|e| e.to_string())?;
+    let body = r.text().map_err(|_| FetchError::Unreachable)?;
     if code != 200 {
-        return Err(http_error(&body, code));
+        return Err(FetchError::Http(code));
     }
-    serde_json::from_str(&body).map_err(|e| e.to_string())
+    serde_json::from_str(&body).map_err(|_| FetchError::Protocol)
 }
 
 fn fetch_sources(socket: &Path) -> Result<Vec<SourceInfo>, String> {
@@ -108,13 +119,20 @@ impl Backend {
             rx,
             ctx,
             daemon: None,
+            asking: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Tell the poller whether a question is running.
+    pub fn set_asking(&self, on: bool) {
+        self.asking.store(on, Ordering::Relaxed);
     }
 
     /// Connect to a running daemon or launch one, then keep polling it.
     pub fn start(&mut self) {
         let socket = self.socket.clone();
         let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
+        let asking = self.asking.clone();
         if fetch_status(&socket).is_err() {
             match Command::new(daemon_binary())
                 .stdin(Stdio::null())
@@ -146,21 +164,48 @@ impl Backend {
                 send(&tx, &ctx, Event::DaemonStarted(Ok(())));
             }
             let mut have_sources = false;
+            let in_flight = Arc::new(AtomicBool::new(false));
+            let failed = Arc::new(AtomicBool::new(false));
+            let mut last_sources = Instant::now();
             loop {
                 let st = fetch_status(&socket);
                 let up = st.is_ok();
+                // Periodic refresh only against a daemon with `status.v2`
+                // (an old daemon keeps today's load-once behaviour).
+                let v2 = st
+                    .as_ref()
+                    .is_ok_and(|s| s.health.is_some() && s.has_capability("status.v2"));
                 if !send(&tx, &ctx, Event::Status(st)) {
                     return;
                 }
-                if up && !have_sources {
-                    let s = fetch_sources(&socket);
-                    have_sources = s.is_ok();
-                    send(&tx, &ctx, Event::Sources(s));
+                if failed.swap(false, Ordering::AcqRel) {
+                    have_sources = false; // retry soon, as before
+                }
+                let asking = asking.load(Ordering::Relaxed);
+                let due =
+                    !have_sources || (v2 && !asking && last_sources.elapsed() >= SOURCES_EVERY);
+                if up && due && !in_flight.swap(true, Ordering::AcqRel) {
+                    // Own thread: a slow worker never delays the status poll.
+                    last_sources = Instant::now();
+                    have_sources = true;
+                    let (socket, tx, ctx, flag, failed) = (
+                        socket.clone(),
+                        tx.clone(),
+                        ctx.clone(),
+                        in_flight.clone(),
+                        failed.clone(),
+                    );
+                    std::thread::spawn(move || {
+                        let r = fetch_sources(&socket);
+                        failed.store(r.is_err(), Ordering::Release);
+                        send(&tx, &ctx, Event::Sources(r));
+                        flag.store(false, Ordering::Release);
+                    });
                 }
                 if !up {
                     have_sources = false;
                 }
-                std::thread::sleep(Duration::from_secs(2));
+                std::thread::sleep(STATUS_EVERY);
             }
         });
     }

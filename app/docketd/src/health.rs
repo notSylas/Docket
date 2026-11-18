@@ -5,7 +5,13 @@
 //! worker is up, with a short call timeout. A question is never refused or
 //! cancelled for a refresh (the refresh does not take the ask permit); the only
 //! interaction is that a question arriving during a refresh queues behind that
-//! one call on the supervisor channel for at most its (short) duration.
+//! one call on the supervisor channel for at most its (short) duration:
+//! the health timeout (default 2 s). That bound is the whole cost to a
+//! question, because the health call uses a SOFT timeout: missing it does not
+//! kill or replace the worker (see `CallOpts::soft`), it only marks the
+//! worker-derived sections stale with `refresh_error_code = health_timeout`.
+//! `responsiveness` becomes `unresponsive` only through the existing ping
+//! hang detection (no successful exchange within the stale window).
 //!
 //! Freshness: every section carries the producer's `checked_at_ms`; the daemon
 //! computes `age_ms` and `stale` when the response is built. A section is
@@ -86,6 +92,9 @@ impl HealthCache {
         let g = self.lock();
         let producer_gone = info.state != WorkerState::Up || g.generation != meta.generation;
         let mut sections = g.health.clone().unwrap_or_default();
+        // A failed refresh (e.g. `health_timeout`) means what we hold is not
+        // current, whatever its timestamp says.
+        let producer_gone = producer_gone || g.error_code.is_some();
         fn mark<T>(s: &mut Option<Section<T>>, now: u64, stale_after: u64, gone: bool) {
             if let Some(s) = s {
                 let age = s.checked_at_ms.map(|t| now.saturating_sub(t));
@@ -131,7 +140,7 @@ impl HealthCache {
 
 fn error_code(e: &CallError) -> &'static str {
     match e {
-        CallError::Timeout => "worker_timeout",
+        CallError::Timeout => "health_timeout",
         CallError::Crashed => "worker_crashed",
         CallError::Unavailable(_) => "worker_unavailable",
         CallError::Rpc(_) => "worker_error",
@@ -176,7 +185,7 @@ pub async fn refresh_loop(
         }
         last_attempt = Some(Instant::now());
         match worker
-            .call("health", Value::Null, CallOpts::timeout(cfg.health_timeout))
+            .call("health", Value::Null, CallOpts::soft(cfg.health_timeout))
             .await
         {
             Ok(v) => match serde_json::from_value::<WorkerHealth>(v) {

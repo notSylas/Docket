@@ -1565,12 +1565,144 @@ async fn a_worker_that_stops_answering_health_leaves_stale_sections_with_age() {
     let h = s.health.unwrap();
     let m = h.sections.models.unwrap();
     assert!(m.age_ms.unwrap() > 0, "age is reported, section not erased");
-    assert_eq!(h.refresh_error_code.as_deref(), Some("worker_timeout"));
-    assert!(h.worker_process.crashes >= 1);
+    // R2a-3: the health timeout has its own code and does not by itself
+    // replace the worker. The (existing) idle ping hang detection still does,
+    // once the ping times out.
+    assert_eq!(h.refresh_error_code.as_deref(), Some("health_timeout"));
+    let s = d
+        .wait_status("ping hang detection replaced the hung worker", |s| {
+            s.health
+                .as_ref()
+                .is_some_and(|h| h.worker_process.crashes >= 1)
+        })
+        .await;
     assert_eq!(
-        h.worker_process.last_error_code.as_deref(),
+        s.health.unwrap().worker_process.last_error_code.as_deref(),
         Some("worker_timeout")
     );
+    d.stop().await;
+}
+
+fn start_count(d: &Daemon) -> usize {
+    std::fs::read_to_string(d.dir.path().join("starts"))
+        .map(|s| s.lines().count())
+        .unwrap_or(0)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn slow_health_marks_stale_but_never_replaces_the_worker() {
+    // Health takes 900 ms, the limit is 300 ms: every refresh times out, yet
+    // the worker still answers pings, so it must stay.
+    let mut d = start_health(&["--health-delay", "0.9"], |c| {
+        c.health_timeout = Duration::from_millis(300);
+        c.call_timeout = Duration::from_secs(5);
+    })
+    .await;
+    let s = d
+        .wait_status("health_timeout reported", |s| {
+            s.health
+                .as_ref()
+                .is_some_and(|h| h.refresh_error_code.as_deref() == Some("health_timeout"))
+        })
+        .await;
+    assert_eq!(s.worker.state, WorkerState::Up);
+    // Let several refresh cycles pass.
+    tokio::time::sleep(Duration::from_millis(3500)).await;
+    let s = d.status().await;
+    let h = s.health.unwrap();
+    assert_eq!(
+        h.worker_process.crashes, 0,
+        "a health timeout is not a crash"
+    );
+    assert_eq!(h.worker_process.restarts, 0);
+    assert_eq!(start_count(&d), 1, "worker was never relaunched");
+    assert_eq!(
+        h.worker_process.responsiveness,
+        docket_proto::status::Responsiveness::Responsive,
+        "pings keep succeeding, so it is not unresponsive"
+    );
+    // The next question is served by the same worker.
+    let (code, _) = d.ask("hello").await;
+    assert_eq!(code, 200);
+    assert_eq!(start_count(&d), 1);
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn question_during_a_slow_health_call_is_bounded_and_the_worker_survives() {
+    let mut d = start_health(&["--health-delay", "1.0"], |c| {
+        c.health_timeout = Duration::from_millis(300);
+        c.health_interval = Duration::from_millis(100);
+    })
+    .await;
+    // Wait until a health call is in flight.
+    let t0 = Instant::now();
+    while d.health_calls() == 0 {
+        assert!(t0.elapsed() < T);
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let t = Instant::now();
+    let (code, _) = d.ask("hello").await;
+    let waited = t.elapsed();
+    assert_eq!(code, 200);
+    // The daemon dispatches the question after at most the health timeout
+    // (300 ms); this single-threaded fake worker then finishes its 1.0 s health
+    // sleep before reading it, so the end-to-end time is bounded by that
+    // sleep, not by anything the daemon adds.
+    assert!(
+        waited < Duration::from_millis(2500),
+        "question took {waited:?}"
+    );
+    assert_eq!(start_count(&d), 1, "worker not replaced");
+    // And the next one is served promptly.
+    let t = Instant::now();
+    let (code, _) = d.ask("hello again").await;
+    assert_eq!(code, 200);
+    assert!(
+        t.elapsed() < Duration::from_millis(2500),
+        "next question served promptly"
+    );
+    assert_eq!(start_count(&d), 1);
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn never_answering_health_is_not_a_kill_reason_by_itself() {
+    let mut d = start_health(&["--health-never-after", "1"], |c| {
+        c.health_timeout = Duration::from_millis(300);
+        c.call_timeout = Duration::from_secs(8);
+    })
+    .await;
+    let _ = d.healthy().await;
+    let s = d
+        .wait_status("health_timeout and stale", |s| {
+            s.health.as_ref().is_some_and(|h| {
+                h.refresh_error_code.as_deref() == Some("health_timeout")
+                    && h.sections
+                        .models
+                        .as_ref()
+                        .is_some_and(|m| m.stale == Some(true))
+            })
+        })
+        .await;
+    // Right after the timeout the worker has not been touched (the ping
+    // limit is 8 s, far away).
+    assert_eq!(s.health.unwrap().worker_process.crashes, 0);
+    assert_eq!(start_count(&d), 1);
+    // The hung worker is eventually replaced by ping hang detection, not by
+    // the health call, and then serves a question.
+    d.wait_status("hang detection", |s| {
+        s.health
+            .as_ref()
+            .is_some_and(|h| h.worker_process.crashes >= 1)
+    })
+    .await;
+    d.wait_status("relaunched", |s| {
+        s.worker.state == WorkerState::Up && s.worker.restarts >= 1
+    })
+    .await;
+    let (code, _) = d.ask("hello").await;
+    assert_eq!(code, 200);
     d.stop().await;
 }
 

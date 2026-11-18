@@ -85,12 +85,26 @@ pub struct CallOpts {
     pub progress: Option<mpsc::UnboundedSender<Progress>>,
     pub cancel: Option<CancelToken>,
     pub task: Option<String>,
+    /// A timeout is reported to the caller but does NOT discard the worker.
+    /// Only for advisory calls (`health`): a slow refresh is not proof of a
+    /// hung worker. Real hang detection stays with the idle `ping` and with
+    /// the ask timeout; crash/EOF handling is unchanged.
+    pub soft_timeout: bool,
 }
 
 impl CallOpts {
     pub fn timeout(timeout: Duration) -> Self {
         Self {
             timeout,
+            ..Self::default()
+        }
+    }
+
+    /// Like [`CallOpts::timeout`], but a timeout leaves the worker running.
+    pub fn soft(timeout: Duration) -> Self {
+        Self {
+            timeout,
+            soft_timeout: true,
             ..Self::default()
         }
     }
@@ -479,6 +493,7 @@ impl Supervisor {
         let deadline = Instant::now() + opts.timeout;
         let generation = self.generation;
         let cancel = opts.cancel.clone();
+        let soft = opts.soft_timeout;
         let progress = opts.progress;
         let outcome = {
             let Some(run) = self.child.as_mut() else {
@@ -534,6 +549,13 @@ impl Supervisor {
                     by,
                     worker: Some(how),
                 })
+            }
+            // Advisory call timed out: the worker is neither killed nor counted
+            // as crashed. A late reply is dropped by id in the next exchange.
+            Err(CallError::Timeout) if soft => {
+                debug!(target: "docketd::worker", method, generation,
+                    "advisory call timed out; worker kept");
+                Err(CallError::Timeout)
             }
             Err(e) => {
                 warn!(target: "docketd::worker", method, task = ?opts.task, generation,
