@@ -1,0 +1,2 @@
+NAME          ID              SIZE      PROCESSOR    CONTEXT    UNTIL              
+gemma3:12b    f4031aab637d    8.0 GB    100% GPU     4096       4 minutes from now    

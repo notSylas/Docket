@@ -61,9 +61,11 @@ def run_cmd(
     ids: list[str] = typer.Option(None, "--id", help="Only these question ids (repeatable)."),
     mode: str = typer.Option("auto", "--mode", help="auto | fast | agent; use forced modes for paired routing comparisons."),
     manifest: Path | None = typer.Option(None, "--manifest", help="Frozen benchmark manifest; verify inputs before running."),
-    lane: str = typer.Option("cpu", "--lane", help="cpu | gpu: recorded in the run manifest."),
+    lane: str = typer.Option("cpu", "--lane", help="cpu | gpu: recorded in the run manifest; gpu also samples rocm-smi/ollama ps and fails on CPU fallback."),
+    allow_cpu_fallback: bool = typer.Option(False, "--allow-cpu-fallback", help="Escape hatch: with --lane gpu, do not fail when a model is offloaded to CPU (still recorded)."),
 ) -> None:
     """Ingest the corpus into a temp dir and record answers for the gold questions."""
+    from docket.eval.gpu_metrics import CpuFallbackError
     from docket.eval.report import build_report, format_report
     from docket.eval.runner import EvalSetupError, run_eval
     from docket.eval.schema import Split, load_gold_set
@@ -98,8 +100,9 @@ def run_cmd(
             progress=progress,
             lane=lane,
             gold_path=gold,
+            allow_cpu_fallback=allow_cpu_fallback,
         )
-    except (GoldSetError, EvalSetupError) as exc:
+    except (GoldSetError, EvalSetupError, CpuFallbackError) as exc:
         raise _fail(str(exc)) from exc
     typer.echo(f"\nWrote {len(records)} runs to {out_path}\n")
     typer.echo(format_report(build_report(gold_set, records)))
@@ -120,6 +123,8 @@ def judge_cmd(
     ),
     cross_check: bool = typer.Option(False, "--cross-check", help="Also judge with a second model and record disagreements."),
     cross_model: str = typer.Option(None, "--cross-model", help="Cross-check model (default gemma3:12b)."),
+    lane: str = typer.Option("cpu", "--lane", help="cpu | gpu: gpu samples GPU metrics (<out>.gpu.json) and fails on CPU fallback."),
+    allow_cpu_fallback: bool = typer.Option(False, "--allow-cpu-fallback", help="Escape hatch for --lane gpu."),
 ) -> None:
     """Judge paraphrased facts and every candidate answer's citation support."""
     from docket.eval.judge import (
@@ -162,7 +167,15 @@ def judge_cmd(
     def progress(name: str, done: int, total: int) -> None:
         typer.echo(f"[{name}] claim {done}/{total}")
 
-    judged = judge_runs(gold_set, records, primary, cross, out_path=out_path, progress=progress)
+    if lane not in ("cpu", "gpu"):
+        raise _fail("--lane must be cpu or gpu")
+    from docket.eval.gpu_metrics import CpuFallbackError, gpu_lane_guard
+
+    try:
+        with gpu_lane_guard(lane, out_path.with_name(out_path.name + ".gpu.json"), allow_cpu_fallback=allow_cpu_fallback):
+            judged = judge_runs(gold_set, records, primary, cross, out_path=out_path, progress=progress)
+    except CpuFallbackError as exc:
+        raise _fail(str(exc)) from exc
     by_source = {"judge": 0, "deterministic": 0}
     for run in judged:
         by_source[run.source] += 1

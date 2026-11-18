@@ -1,0 +1,30 @@
+
+
+============================ ROCm System Management Interface ============================
+================================== Memory Usage (Bytes) ==================================
+GPU[0]		: VRAM Total Memory (B): 17095983104
+GPU[0]		: VRAM Total Used Memory (B): 13823840256
+GPU[1]		: VRAM Total Memory (B): 536870912
+GPU[1]		: VRAM Total Used Memory (B): 26230784
+==========================================================================================
+====================================== Product Info ======================================
+GPU[0]		: Card Series: 		AMD Radeon RX 9070 XT
+GPU[0]		: Card Model: 		0x7550
+GPU[0]		: Card Vendor: 		Advanced Micro Devices, Inc. [AMD/ATI]
+GPU[0]		: Card SKU: 		1E490TX
+GPU[0]		: Subsystem ID: 	-0x1b70
+GPU[0]		: Device Rev: 		0xc0
+GPU[0]		: Node ID: 		1
+GPU[0]		: GUID: 		22577
+GPU[0]		: GFX Version: 		gfx1201
+GPU[1]		: Card Series: 		AMD Radeon Graphics
+GPU[1]		: Card Model: 		0x13c0
+GPU[1]		: Card Vendor: 		Advanced Micro Devices, Inc. [AMD/ATI]
+GPU[1]		: Card SKU: 		RAPHAEL
+GPU[1]		: Subsystem ID: 	-0x3000
+GPU[1]		: Device Rev: 		0xc9
+GPU[1]		: Node ID: 		2
+GPU[1]		: GUID: 		57566
+GPU[1]		: GFX Version: 		gfx1036
+==========================================================================================
+================================== End of ROCm SMI Log ===================================

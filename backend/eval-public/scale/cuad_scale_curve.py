@@ -28,6 +28,8 @@ def main():
     ap.add_argument("--allow-duplicate-sources", action="store_true",
                     help="record (not fail on) contracts presented by several sources; this driver adds one source "
                          "per stage, so use cuad_query_clean.py for clean-library measurements")
+    ap.add_argument("--allow-cpu-fallback", action="store_true",
+                    help="escape hatch: do not fail when a model is offloaded to CPU (still recorded in <out>.gpu.json)")
     a = ap.parse_args()
     assert "/.local/share/docket" not in str(a.data.resolve())
     a.out.mkdir(parents=True, exist_ok=True)
@@ -63,11 +65,20 @@ def main():
             print(f"[{size}] ingest {ingest_s:.0f}s chunks={n_chunks} failures={runner.ingest_failures[:3]}", flush=True)
             from docket.eval.manifest import build_manifest, write_manifest
             baseline = build_manifest(runner._context.settings, gold, lane="gpu", gold_path=a.gold, library=library)
-            write_manifest(baseline, outp.with_name(outp.name + ".manifest.json"), overwrite=True)
-            runner.run(qs, repeats=reps, out_path=outp, gold_digest=fingerprint(gold),
-                       manifest=baseline.model_dump(mode="json"),
-                       progress=lambda d, t, r: print(f"[{size}] {d}/{t} {r.question_id}#{r.repeat} {r.latency_s:.1f}s"
-                                                      + (f" ERROR {r.error}" if r.error else ""), flush=True))
+            mpath = outp.with_name(outp.name + ".manifest.json")
+            write_manifest(baseline, mpath, overwrite=True)
+            from docket.eval.gpu_metrics import gpu_lane_guard
+
+            def record_gpu(summary):
+                baseline.gpu = summary.to_dict()
+                write_manifest(baseline, mpath, overwrite=True)
+
+            with gpu_lane_guard("gpu", outp.with_name(outp.name + ".gpu.json"),
+                                allow_cpu_fallback=a.allow_cpu_fallback, on_summary=record_gpu):
+                runner.run(qs, repeats=reps, out_path=outp, gold_digest=fingerprint(gold),
+                           manifest=baseline.model_dump(mode="json"),
+                           progress=lambda d, t, r: print(f"[{size}] {d}/{t} {r.question_id}#{r.repeat} {r.latency_s:.1f}s"
+                                                          + (f" ERROR {r.error}" if r.error else ""), flush=True))
         stages[str(size)] = {"ingest_wall_s_incremental": round(ingest_s, 1), "chunks_in_library": n_chunks,
                              "repeats": reps, "questions": len(qs), "ingest_failures": runner.ingest_failures[:5], "library": library}
         (a.out / "stages.json").write_text(json.dumps(stages, indent=1))

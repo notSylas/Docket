@@ -1,0 +1,10 @@
+
+
+============================ ROCm System Management Interface ============================
+===================================== KFD Processes ======================================
+KFD process information:
+PID   	PROCESS NAME	GPU(s)	VRAM USED  	SDMA USED	CU OCCUPANCY	
+110347	llama-server	1     	2649985024 	0        	UNKNOWN     	
+110213	llama-server	1     	10050809856	0        	UNKNOWN     	
+==========================================================================================
+================================== End of ROCm SMI Log ===================================

@@ -515,6 +515,7 @@ def run_eval(
     lane: str = "cpu",
     judges: list[str] | None = None,
     gold_path: Path | None = None,
+    allow_cpu_fallback: bool = False,
 ) -> list[RunRecord]:
     """Ingest `corpus_dir` into a temp data dir, run the selected questions
     `repeats` times each, write JSONL to `out_path`, and clean up the temp dir."""
@@ -529,6 +530,9 @@ def run_eval(
     from docket.eval.benchmark import corpus_hashes
     from docket.eval.manifest import build_manifest, write_manifest
 
+    from docket.eval.gpu_metrics import gpu_lane_guard
+
+    manifest_file = out_path.with_name(out_path.name + ".manifest.json")
     with EvalRunner(corpus_dir, gateway=gateway, parser=parser, top_k=top_k, mode=mode) as runner:
         try:
             hashes = corpus_hashes(corpus_dir)
@@ -537,10 +541,19 @@ def run_eval(
         baseline = build_manifest(
             runner._context.settings, gold, lane=lane, judges=judges or [], gold_path=gold_path, corpus=hashes,
         )
-        write_manifest(baseline, out_path.with_name(out_path.name + ".manifest.json"), overwrite=True)
-        runner.ingest()
-        return runner.run(
-            questions, repeats=repeats, out_path=out_path, progress=progress,
-            gold_digest=fingerprint(gold), benchmark_digest=benchmark_digest,
-            manifest=baseline.model_dump(mode="json"),
-        )
+        write_manifest(baseline, manifest_file, overwrite=True)
+
+        def record_gpu(summary: Any) -> None:  # manifest sidecar gains the GPU summary (even if the guard then raises)
+            baseline.gpu = summary.to_dict()
+            write_manifest(baseline, manifest_file, overwrite=True)
+
+        with gpu_lane_guard(
+            lane, out_path.with_name(out_path.name + ".gpu.json"),
+            allow_cpu_fallback=allow_cpu_fallback, on_summary=record_gpu,
+        ):
+            runner.ingest()
+            return runner.run(
+                questions, repeats=repeats, out_path=out_path, progress=progress,
+                gold_digest=fingerprint(gold), benchmark_digest=benchmark_digest,
+                manifest=baseline.model_dump(mode="json"),
+            )
