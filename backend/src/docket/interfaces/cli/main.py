@@ -466,10 +466,18 @@ def library_gc_graph(
 
 
 @library_app.command("graph-integrity")
-def library_graph_integrity() -> None:
-    """Report-only audit of entity-graph provenance (counts only, never changes anything)."""
-    from docket.services.documents.kag import check_graph_integrity
+def library_graph_integrity(
+    repair: bool = typer.Option(False, "--repair", help="Plan (dry-run) a rebuild of only the affected documents' graph rows."),
+    apply: bool = typer.Option(False, "--apply", help="With --repair: actually rebuild (writes; takes the library writer lock)."),
+    max_documents: int = typer.Option(500, "--max-documents", min=1, help="With --repair --apply: at most this many documents per run."),
+) -> None:
+    """Audit entity-graph provenance (counts only). With --repair, plan or rebuild affected documents."""
+    from docket.core.writer_lock import lock_for_sessions
+    from docket.services.documents.kag import check_graph_integrity, repair_graph
 
+    if apply and not repair:
+        typer.echo("--apply only makes sense together with --repair.", err=True)
+        raise typer.Exit(2)
     context = build_context()
     try:
         with context.session_factory() as session:
@@ -482,9 +490,34 @@ def library_graph_integrity() -> None:
     typer.echo(f"Clause edges: {r.clause_edges} (chunk-level {r.clause_chunk}, legacy/unverified {r.clause_legacy}).")
     typer.echo(f"Problems: {r.dangling} dangling chunk references, {r.version_mismatch} chunk/document version "
                f"mismatches, {r.span_mismatch} spans that no longer match.")
-    if r.legacy_edges:
+    typer.echo(f"Documents: {r.documents} servable, {r.documents_no_graph} without graph rows (information only: "
+               f"expected when entity scoping is off, or after their content changed and the graph was not rebuilt), "
+               f"{r.documents_affected} with problem or legacy edges.")
+    if r.legacy_edges and not repair:
         typer.echo("Legacy edges were written before span provenance existed. To recompute them, run "
-                   "docket documents build --force (explicit; nothing is rewritten automatically).")
+                   "docket library graph-integrity --repair (plan) and --repair --apply (explicit; nothing is "
+                   "rewritten automatically).")
+    if not repair:
+        return
+    try:
+        rep = repair_graph(context.session_factory, lock_for_sessions(context.session_factory),
+                           apply=apply, max_documents=max_documents)
+    except (WriterLockBusyError, LibraryReplacedError):
+        raise
+    except Exception:
+        typer.echo("Graph repair could not finish; documents already rebuilt stay rebuilt, the rest are unchanged.", err=True)
+        raise typer.Exit(1) from None
+    typer.echo("Repair rebuilds graph rows from stored chunks only (no models, no network, original files not needed) "
+               "and runs even when entity scoping is off, because you asked for it.")
+    typer.echo(f"{'Rebuilt' if apply else 'Preview: would rebuild'} {rep.rebuilt if apply else rep.repairable} documents"
+               f"{f' ({rep.failed} failed)' if apply and rep.failed else ''}; "
+               f"{rep.unrepairable_not_current} cannot be repaired (version not current), "
+               f"{rep.unrepairable_no_chunks} cannot be repaired (no stored chunks)"
+               f"{f'; {rep.deferred} deferred to the next run (limit)' if rep.deferred else ''}.")
+    if apply:
+        typer.echo(f"Orphaned entities removed: {rep.orphan_entities_removed}.")
+    else:
+        typer.echo("Nothing was changed. Run docket library graph-integrity --repair --apply to rebuild.")
 
 
 @app.command("backup")

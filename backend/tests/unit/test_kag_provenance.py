@@ -236,7 +236,7 @@ def test_kag_disabled_writes_no_graph_and_gc_still_runs(migrated_sqlite_engine):
     builder.build_all(sf, force=True, kag=False)  # replaced row -> GC still runs with the flag off
     assert _n(e, "SELECT COUNT(*) FROM kag_entities") == 0
     with sf() as s:
-        assert kag.check_graph_integrity(s) == kag.IntegrityReport()
+        assert kag.check_graph_integrity(s) == kag.IntegrityReport(documents=1, documents_no_graph=1)  # info counts only
 
 
 def test_migration_0019_upgrade_keeps_legacy_rows_and_downgrades(tmp_path: Path):

@@ -433,6 +433,9 @@ class IntegrityReport:
     dangling: int = 0
     version_mismatch: int = 0
     span_mismatch: int = 0
+    documents: int = 0              # info: documents of servable (READY, ACTIVE) versions
+    documents_no_graph: int = 0     # info only, NOT a problem: no graph rows (KAG off, or invalidated and not rebuilt)
+    documents_affected: int = 0     # distinct documents with dangling/mismatched/stale-span/legacy edges (repair targets)
 
     @property
     def problems(self) -> int:
@@ -441,6 +444,43 @@ class IntegrityReport:
     @property
     def legacy_edges(self) -> int:
         return self.entity_legacy + self.clause_legacy
+
+
+_SERVABLE_DOCS = (
+    "SELECT COUNT(*) FROM documents d JOIN evidence_versions ev ON ev.id = d.evidence_version_id "
+    "JOIN sources s ON s.id = ev.source_id WHERE ev.status = 'READY' AND s.status = 'ACTIVE'{extra}")
+_NO_GRAPH = (" AND NOT EXISTS (SELECT 1 FROM kag_document_entities x WHERE x.document_id = d.id)"
+             " AND NOT EXISTS (SELECT 1 FROM kag_document_clauses c WHERE c.document_id = d.id)")
+
+
+def affected_document_ids(session) -> set[int]:
+    """Read-only: ids of documents that own at least one dangling, version-mismatched, span-stale,
+    inconsistent or legacy (unverified) graph edge. These are the only documents `repair_graph` touches."""
+    ids: set[int] = set()
+    for tbl in ("kag_document_entities", "kag_document_clauses"):
+        chunk_nullable = tbl == "kag_document_entities"
+        ids.update(session.execute(text(
+            f"SELECT DISTINCT x.document_id FROM {tbl} x JOIN documents d ON d.id = x.document_id "
+            f"WHERE x.evidence_kind IS NULL "
+            f"OR ({'x.chunk_id IS NOT NULL AND ' if chunk_nullable else ''}NOT EXISTS "
+            "(SELECT 1 FROM chunks c WHERE c.id = x.chunk_id AND c.evidence_version_id = d.evidence_version_id))"
+        )).scalars())
+    ids.update(session.execute(text(
+        "SELECT DISTINCT document_id FROM kag_document_entities "
+        "WHERE (evidence_kind = 'span' AND (chunk_id IS NULL OR span_start IS NULL OR span_end IS NULL)) "
+        "OR (evidence_kind = 'none' AND (chunk_id IS NOT NULL OR span_start IS NOT NULL OR span_end IS NOT NULL))")).scalars())
+    ids.update(session.execute(text(
+        "SELECT DISTINCT document_id FROM kag_document_clauses WHERE span_start IS NOT NULL OR span_end IS NOT NULL")).scalars())
+    variants: dict[int, set[str]] = {}
+    for eid, v in session.execute(text("SELECT entity_id, variant FROM kag_entity_variants")):
+        variants.setdefault(eid, set()).add(v)
+    for did, eid, s, e, ctext in session.execute(text(
+            "SELECT x.document_id, x.entity_id, x.span_start, x.span_end, c.text FROM kag_document_entities x "
+            "JOIN chunks c ON c.id = x.chunk_id WHERE x.evidence_kind = 'span' "
+            "AND x.span_start IS NOT NULL AND x.span_end IS NOT NULL")):
+        if did not in ids and not _span_valid(ctext, s, e, variants.get(eid, set())):
+            ids.add(did)
+    return ids
 
 
 def check_graph_integrity(session) -> IntegrityReport:
@@ -470,6 +510,9 @@ def check_graph_integrity(session) -> IntegrityReport:
         if not _span_valid(ctext, s, e, variants.get(eid, set())):
             bad_span += 1
     return IntegrityReport(
+        documents=one(_SERVABLE_DOCS.format(extra="")),
+        documents_no_graph=one(_SERVABLE_DOCS.format(extra=_NO_GRAPH)),
+        documents_affected=len(affected_document_ids(session)),
         entity_edges=one(f"SELECT COUNT(*) FROM {ent}"),
         entity_span=one(f"SELECT COUNT(*) FROM {ent} WHERE evidence_kind = 'span'"),
         entity_none=one(f"SELECT COUNT(*) FROM {ent} WHERE evidence_kind = 'none'"),
@@ -523,6 +566,86 @@ def gc_graph(session_factory, lock, *, apply: bool = False) -> GcReport:
             report = gc_orphan_entities(session)
             session.commit()  # an exception above leaves the session uncommitted -> rolled back
             return report
+
+
+def invalidate_graph_for_version(session, evidence_version_id: str) -> int:
+    """Drop the graph EDGES (kag_document_entities, kag_document_clauses) of the documents of ONE evidence
+    version, then orphan-GC entities no document references any more. Runs in the CALLER's session and
+    transaction (no commit), so it commits or rolls back together with the chunk replace/delete that
+    triggers it. Returns the number of edges removed.
+
+    Design: the `documents` row and its `document_fields` are deliberately KEPT (they carry their own
+    deterministic fields and document-level matching depends on them); only the graph derived from the
+    now-replaced chunks goes. A version with no graph rows is simply "no graph evidence": kag.plan() cannot
+    match it (matching starts from entity edges), so it degrades to the non-KAG path. Nothing is rebuilt here
+    (no flag lookup, no models); the ingest hook (when enabled) or `docket library graph-integrity --repair
+    --apply` / `docket documents build` rebuild it. Other versions' documents and shared entities are untouched
+    (an entity survives while any document references it). Harmless and cheap when KAG never wrote a graph."""
+    p = {"v": evidence_version_id}
+    n = 0
+    for tbl in ("kag_document_entities", "kag_document_clauses"):
+        n += session.execute(text(
+            f"DELETE FROM {tbl} WHERE document_id IN (SELECT id FROM documents WHERE evidence_version_id = :v)"), p).rowcount or 0
+    if n:
+        gc_orphan_entities(session)
+    return n
+
+
+@dataclass(frozen=True)
+class RepairReport:
+    """Counts only. `candidates` = documents with dangling/mismatched/stale/legacy edges. `repairable` = of
+    those, current (READY, ACTIVE) with stored chunks. Unrepairable ones are reported, never changed."""
+    candidates: int = 0
+    repairable: int = 0
+    rebuilt: int = 0
+    failed: int = 0
+    deferred: int = 0            # repairable but beyond the per-run bound
+    unrepairable_not_current: int = 0   # version not READY or source not ACTIVE
+    unrepairable_no_chunks: int = 0     # no stored chunks to rebuild from
+    orphan_entities_removed: int = 0
+
+
+def repair_graph(session_factory, lock, *, apply: bool = False, max_documents: int = 500) -> RepairReport:
+    """Rebuild the graph of ONLY the affected documents, from the stored chunks (no original files, models
+    or network). Dry-run (default) takes no lock and writes nothing. Apply runs under the library writer
+    lock, one transaction per document (`build_for_version`, kag=True: rebuilds regardless of the
+    kag_scoping setting because the user asked explicitly), then one orphan GC. Idempotent: rebuilt documents
+    are clean, so a second run has nothing repairable."""
+    from sqlalchemy import select
+
+    from docket.core.db.models import Chunk, Document, EvidenceVersion, Source
+
+    with session_factory() as session:
+        todo: list[str] = []
+        not_current = no_chunks = 0
+        for did in sorted(affected_document_ids(session)):
+            d = session.get(Document, did)
+            v = session.get(EvidenceVersion, d.evidence_version_id) if d else None
+            src = session.get(Source, v.source_id) if v else None
+            if v is None or src is None or v.status != VersionStatus.READY or src.status != SourceStatus.ACTIVE:
+                not_current += 1
+            elif session.execute(select(Chunk.id).where(Chunk.evidence_version_id == v.id).limit(1)).first() is None:
+                no_chunks += 1
+            else:
+                todo.append(v.id)
+    batch, deferred = todo[:max_documents], max(0, len(todo) - max_documents)
+    base = dict(candidates=len(todo) + not_current + no_chunks, repairable=len(todo), deferred=deferred,
+                unrepairable_not_current=not_current, unrepairable_no_chunks=no_chunks)
+    if not apply or not batch:
+        return RepairReport(**base)
+    from docket.services.documents.builder import build_for_version
+
+    rebuilt = failed = 0
+    with lock.hold("repairing the entity graph"):
+        for vid in batch:
+            if build_for_version(session_factory, vid, True):
+                rebuilt += 1
+            else:
+                failed += 1
+        with session_factory() as session:
+            gc = gc_orphan_entities(session)
+            session.commit()
+    return RepairReport(**base, rebuilt=rebuilt, failed=failed, orphan_entities_removed=gc.entities)
 
 
 # --- query ---------------------------------------------------------------
@@ -628,6 +751,25 @@ def plan(engine: Engine, question: str, scope_version_ids: list[str] | None = No
         return KagPlan(reason="error")
 
 
+def _graph_trustworthy(engine: Engine, document_ids: list[int]) -> bool:
+    """'No clause rows' only means 'clause absent' when the document's graph provably belongs to its current
+    chunks: its version has chunks and none of its edges is dangling or points at another version's chunk.
+    A stale/partial graph is UNKNOWN, never evidence of absence (fail safe: the caller falls back to normal
+    retrieval and abstention rules). Fully built documents are unaffected."""
+    ids = ",".join(str(int(d)) for d in document_ids)
+    with engine.connect() as conn:
+        no_chunks = conn.execute(text(
+            "SELECT COUNT(*) FROM documents d WHERE d.id IN (" + ids + ") AND NOT EXISTS "
+            "(SELECT 1 FROM chunks c WHERE c.evidence_version_id = d.evidence_version_id)")).scalar_one()
+        stale = 0
+        for tbl, nullable in (("kag_document_entities", True), ("kag_document_clauses", False)):
+            stale += conn.execute(text(
+                f"SELECT COUNT(*) FROM {tbl} x JOIN documents d ON d.id = x.document_id WHERE d.id IN ({ids}) "
+                f"AND {'x.chunk_id IS NOT NULL AND ' if nullable else ''}NOT EXISTS "
+                "(SELECT 1 FROM chunks c WHERE c.id = x.chunk_id AND c.evidence_version_id = d.evidence_version_id)")).scalar_one()
+    return not no_chunks and not stale
+
+
 def _plan(engine: Engine, question: str, scope_version_ids: list[str] | None) -> KagPlan:
     clause = detect_clause_type(question)
     hits = match_entities(engine, question)
@@ -701,7 +843,7 @@ def _plan(engine: Engine, question: str, scope_version_ids: list[str] | None) ->
                 text("SELECT chunk_id, confidence FROM kag_document_clauses WHERE clause_type = :t AND document_id IN ("
                      + ",".join(str(int(d)) for d in dids) + ")"), {"t": clause.name}).all()
         p.clause_chunk_ids = {c: float(cf) for c, cf in crow}
-        p.clause_absent = bool(mode == "unique" and clause.can_be_absent and not crow)
+        p.clause_absent = bool(mode == "unique" and clause.can_be_absent and not crow and _graph_trustworthy(engine, dids))
     return p
 
 
