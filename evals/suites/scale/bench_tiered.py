@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve()
-sys.path.insert(0, str(HERE.parents[2] / "tests" / "unit" / "ingestion"))
+sys.path.insert(0, str(HERE.parents[3] / "backend" / "tests" / "unit" / "ingestion"))
 
 from docket.infra.inference.gateway import FakeInferenceGateway  # noqa: E402
 from docket.infra.retrieval.hybrid import fts_search  # noqa: E402

@@ -4,10 +4,10 @@ Everything here is fictional: "Tarnwick Provisions Pvt Ltd" and its people do
 not exist. Values are literal numbers (no formulas) so ground truth is known by
 construction. Run from anywhere:
 
-    python eval-public/build_synthetic_corpus.py
+    python evals/suites/build_synthetic_corpus.py
 
-and commit the regenerated files under eval-public/corpus-synthetic/.
-Traps deliberately built in (see eval-public/README.md):
+and commit the regenerated files under evals/suites/corpus-synthetic/.
+Traps deliberately built in (see evals/suites/README.md):
   * three near-identical revenue workbooks (FY2024-25 actual in INR, FY2025-26
     actual in INR thousands, FY2025-26 budget in INR thousands);
   * quarter-subtotal and TOTAL rows (naive summing double counts), units note

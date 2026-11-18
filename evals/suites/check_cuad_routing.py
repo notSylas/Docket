@@ -5,7 +5,7 @@ Builds a scratch library from the CUAD full-text versions of the 12 gold contrac
 routing named the gold contract, and whether field lookup answered and matched the
 gold `must_contain`. Never touches the user's data dir.
 
-    backend/.venv/bin/python backend/eval-public/check_cuad_routing.py --cuad <dir with CUAD_v1/> --scratch <empty dir>
+    backend/.venv/bin/python evals/suites/check_cuad_routing.py --cuad <dir with CUAD_v1/> --scratch <empty dir>
 """
 from __future__ import annotations
 
@@ -49,8 +49,9 @@ def main() -> None:
     extra = [f"contracts/{p.stem}.pdf" for p in sorted(root.glob("*.txt")) if f"contracts/{p.stem}.pdf" not in set(docs)][: a.distractors]
     docs = docs + extra
     sqlite = scratch / "docket.sqlite3"
-    cfg = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-    cfg.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "src/docket/core/db/migrations"))
+    BACKEND = Path(__file__).resolve().parents[2] / "backend"
+    cfg = Config(str(BACKEND / "alembic.ini"))
+    cfg.set_main_option("script_location", str(BACKEND / "src/docket/core/db/migrations"))
     cfg.set_main_option("sqlalchemy.url", f"sqlite:///{sqlite}")
     command.upgrade(cfg, "head")
     engine = get_engine(sqlite)

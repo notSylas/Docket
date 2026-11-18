@@ -8,13 +8,13 @@ from pathlib import Path
 import pytest
 
 BACKEND = Path(__file__).resolve().parents[3]
-M0 = BACKEND / "eval-public" / "m0"
+M0 = BACKEND.parent / "evals" / "suites" / "m0"
 FIX = Path(__file__).parent / "fixtures"
 
 
 @pytest.fixture(scope="module")
 def lane_b():
-    sys.path[:0] = [str(M0), str(BACKEND / "eval-public" / "scale")]
+    sys.path[:0] = [str(M0), str(BACKEND.parent / "evals" / "suites" / "scale")]
     import lane_b as mod  # noqa: PLC0415
 
     return mod
@@ -88,7 +88,7 @@ def test_preflight_reports_held_vram_after_stop(lane_b, tmp_path, monkeypatch):
 
 
 def test_summary_statistics():
-    sys.path[:0] = [str(M0), str(BACKEND / "eval-public" / "scale")]
+    sys.path[:0] = [str(M0), str(BACKEND.parent / "evals" / "suites" / "scale")]
     import lane_b_summary as s  # noqa: PLC0415
 
     lo, hi = s.abstention_ci({"a": [False, False], "b": [True, False], "c": [False, False]})

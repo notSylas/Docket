@@ -2,7 +2,7 @@
 For factor F in (1, 3, 10): out/musF = the existing library (298 paragraph files in lib-0..5) plus (F-1)*298 EXTRA
 paragraphs taken from OTHER questions of the MuSiQue-Full dev file (deterministic sha256 order, skipping any
 paragraph whose title already occurs in the base library) in a new source folder `extra`.
-Usage: make_musique_scaled.py OUT_DIR   (needs eval-public/external/musique/{corpus,raw/full_dev.jsonl})"""
+Usage: make_musique_scaled.py OUT_DIR   (needs evals/suites/external/musique/{corpus,raw/full_dev.jsonl})"""
 import hashlib, json, re, shutil, sys, unicodedata
 from pathlib import Path
 

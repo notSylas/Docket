@@ -1,5 +1,5 @@
 Third-party public datasets used by the slices in this folder. The data itself is
-NOT committed (see .gitignore); only the builders and gold files in eval-public/ are.
+NOT committed (see .gitignore); only the builders and gold files in evals/suites/ are.
 
 FinQA  -  Chen et al., "FinQA: A Dataset of Numerical Reasoning over Financial Data",
           EMNLP 2021. https://github.com/czyssrs/FinQA  (test.json, MIT License,

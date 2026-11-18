@@ -160,7 +160,7 @@ All settings are environment variables with a `DOCKET_` prefix:
 
 ## Measuring accuracy
 
-`docket eval` runs a set of gold questions against a corpus and reports accuracy, retrieval recall and wrongful abstentions. Two public gold sets, a design-document set and a synthetic spreadsheet-heavy set, ship in [`backend/eval-public/`](backend/eval-public/README.md), together with the commands and the recorded results.
+`docket eval` runs a set of gold questions against a corpus and reports accuracy, retrieval recall and wrongful abstentions. Two public gold sets, a design-document set and a synthetic spreadsheet-heavy set, ship in [`evals/suites/`](evals/suites/README.md), together with the commands and the recorded results.
 
 ## Desktop app
 

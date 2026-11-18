@@ -1,6 +1,6 @@
 # Docket documentation
 
-One lowercase `docs/` tree. Application code lives in [`../app/`](../app/) (Rust) and [`../backend/`](../backend/) (Python); evaluation material in [`../backend/eval-public/`](../backend/eval-public/README.md); frozen history in [`../archive/`](../archive/README.md).
+One lowercase `docs/` tree. Application code lives in [`../app/`](../app/) (Rust) and [`../backend/`](../backend/) (Python); evaluation material in [`../evals/`](../evals/README.md); frozen history in [`../archive/`](../archive/README.md).
 
 | Folder | What is in it |
 | --- | --- |
@@ -23,6 +23,8 @@ Many documents were written when the repository had a different layout and descr
 | `Upgrade/` | `docs/research/upgrade/` |
 | `desktop/` (Tauri prototype) | `archive/desktop-tauri/` |
 | `spike/` | `archive/spike/` |
+| `backend/eval-public/` | `evals/suites/` |
+| `backend/eval-private/` | `evals/private-kit/` |
 | `docs/ui-prototype/` in the `ui-prototype` checkout (prototype reports and screenshots) | `docs/ui/prototype/` |
 | `docs/ui-prototype/` in the `ui-integration` checkout (C0–C3 reports, logs and screenshots) | `docs/ui/integration/` |
 | `docs/*.md` design and product documents in the main checkout | `docs/product/`, `docs/architecture/`, `docs/ui/` (same file names) |

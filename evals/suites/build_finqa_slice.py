@@ -3,10 +3,10 @@
 Source: FinQA (Chen et al., EMNLP 2021), test split, MIT licence
 (https://github.com/czyssrs/FinQA). Each example is one page of an S&P 500
 company's annual report (pre-text, a table, post-text) with a numeric question.
-The raw JSON is NOT committed: put test.json in eval-public/external/finqa/raw/
-(or set FINQA_RAW). See eval-public/external/README.
+The raw JSON is NOT committed: put test.json in evals/suites/external/finqa/raw/
+(or set FINQA_RAW). See evals/suites/external/README.
 
-For each selected page this writes eval-public/external/finqa/corpus/<id>/ with
+For each selected page this writes evals/suites/external/finqa/corpus/<id>/ with
   page.docx   pre-text paragraphs, a real Word table (table_ori), post-text paragraphs
   table.xlsx  sheet "Table" (numbers as numeric cells) + sheet "Notes" with the
               source page and any unit/period phrase found in the table header
@@ -21,7 +21,7 @@ that page.
 Needs python-docx, openpyxl, pyyaml (scratch venv; not backend/.venv). The
 chunk verification step shells out to backend/.venv/bin/python (DOCKET_PY).
 
-    <venv>/bin/python eval-public/build_finqa_slice.py
+    <venv>/bin/python evals/suites/build_finqa_slice.py
 """
 
 from __future__ import annotations

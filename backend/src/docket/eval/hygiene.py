@@ -7,7 +7,7 @@
   frozen benchmark) being reported on.
 
 The scale-driver import-path guard lives next to the drivers
-(`eval-public/scale/scale_guard.py`) because it must run before `docket` is
+(`evals/suites/scale/scale_guard.py`) because it must run before `docket` is
 imported from a possibly wrong checkout.
 """
 

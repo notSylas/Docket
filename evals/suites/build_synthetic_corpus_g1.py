@@ -6,9 +6,9 @@ numbers (no formulas) held in the data tables below; every derived gold answer
 (sums, differences, percentage change, averages, unit conversions) is computed
 from those tables in this file and never typed by hand. Run from anywhere:
 
-    python eval-public/build_synthetic_corpus_g1.py
+    python evals/suites/build_synthetic_corpus_g1.py
 
-It rewrites eval-public/corpus-synthetic-g1/ and eval-public/gold-g1.yaml.
+It rewrites evals/suites/corpus-synthetic-g1/ and evals/suites/gold-g1.yaml.
 See Upgrade/08-evaluation-and-benchmarks.md section 5.2 (G1) and 5.4.
 
 Structure is deliberately different from the Tarnwick corpus:

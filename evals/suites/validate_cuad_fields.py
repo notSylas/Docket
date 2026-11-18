@@ -1,7 +1,7 @@
 """CPU-only validation of the deterministic contract-field extractors against
 the CUAD v1 annotations (master_clauses.csv, CC BY 4.0, The Atticus Project).
 
-    backend/.venv/bin/python backend/eval-public/validate_cuad_fields.py \
+    backend/.venv/bin/python evals/suites/validate_cuad_fields.py \
         --cuad <dir containing CUAD_v1/> [--limit N] [--min-conf 0.8] [--json out.json]
 
 Contracts are the CUAD full-text files, chunked with the project's own chunker

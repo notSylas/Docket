@@ -20,7 +20,7 @@ def expected_src(here: Path | None = None) -> Path:
     override = os.environ.get("DOCKET_EXPECTED_SRC")
     if override:
         return Path(override).resolve()
-    return ((here or Path(__file__)).resolve().parent.parent.parent / "src").resolve()
+    return ((here or Path(__file__)).resolve().parents[3] / "backend" / "src").resolve()
 
 
 def check_docket_checkout(expected: Path | None = None, *, isolated: bool | None = None,

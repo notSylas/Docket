@@ -22,6 +22,6 @@ backend/src/docket.egg-info/
 .coverage
 htmlcov/
 
-# Private gold sets, run outputs and labels for real documents
+# Private gold sets, run outputs and labels for real documents (any local folder with this name; the tracked kit is evals/private-kit/)
 eval-private/
 Reference_Books/

@@ -30,7 +30,7 @@ from collections import defaultdict
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-REPO_BACKEND = HERE.parent.parent
+REPO_BACKEND = HERE.parents[2] / "backend"
 
 STAGES = ["discovery", "evidence_copy_hash", "parse", "formula_regions", "page_images_store", "chunk",
           "sqlite_chunks_write", "index_existing_check", "embed", "fts_write", "lance_write"]

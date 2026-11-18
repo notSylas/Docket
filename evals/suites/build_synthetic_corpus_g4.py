@@ -7,9 +7,9 @@ data tables below; every expected answer in the gold set is READ back from the
 generated files and computed in code (see `build_gold_g2.py` for the helpers).
 Run from anywhere:
 
-    python eval-public/build_synthetic_corpus_g4.py
+    python evals/suites/build_synthetic_corpus_g4.py
 
-It rewrites eval-public/corpus-synthetic-g4/ and eval-public/gold-g4-adversarial.yaml.
+It rewrites evals/suites/corpus-synthetic-g4/ and evals/suites/gold-g4-adversarial.yaml.
 See Upgrade/08-evaluation-and-benchmarks.md section 5.2 (G4) and
 Upgrade/06-reasoning-and-agent-orchestration.md section 10.3.
 

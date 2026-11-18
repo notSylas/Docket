@@ -22,9 +22,9 @@ verbatim substrings of that extracted text.
 Needs reportlab, pypdf, python-docx, python-pptx, openpyxl, pyyaml (a scratch
 venv; do NOT install into backend/.venv). Rebuild from anywhere:
 
-    <venv>/bin/python eval-public/build_synthetic_corpus_g6.py
+    <venv>/bin/python evals/suites/build_synthetic_corpus_g6.py
 
-It rewrites eval-public/corpus-synthetic-g6/ and eval-public/gold-g6.yaml and is
+It rewrites evals/suites/corpus-synthetic-g6/ and evals/suites/gold-g6.yaml and is
 byte-for-byte reproducible (fixed timestamps, reportlab invariant mode).
 """
 

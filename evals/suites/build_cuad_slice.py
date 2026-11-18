@@ -6,7 +6,7 @@ Chen, Ball, "CUAD: An Expert-Annotated NLP Dataset for Legal Contract Review",
 NeurIPS 2021 Datasets and Benchmarks (arXiv:2103.06268). Zenodo record 4595826,
 licensed Creative Commons Attribution 4.0 International. gold-cuad.yaml contains only
 short clause excerpts (<= 60 chars) and values derived from the CUAD annotations; the
-contract PDFs themselves are NOT committed (eval-public/external/ is git-ignored).
+contract PDFs themselves are NOT committed (evals/suites/external/ is git-ignored).
 
 Everything is derived from the annotations in master_clauses.csv: expected values come
 from the annotated answer/clause text, gold spans are short verbatim substrings of the
@@ -17,11 +17,11 @@ by hand except the list of 12 contracts to use.
 
 Run with the backend venv (needs docket, pyyaml):
 
-    backend/.venv/bin/python backend/eval-public/build_cuad_slice.py \
+    backend/.venv/bin/python evals/suites/build_cuad_slice.py \
         --cuad <dir containing CUAD_v1/> [--chunks <cache.json>]
 
-It copies the 12 PDFs to eval-public/external/cuad/corpus/contracts/, ingests them once
-(Docling + embeddings, temp dir; or reuses --chunks) and writes eval-public/gold-cuad.yaml.
+It copies the 12 PDFs to evals/suites/external/cuad/corpus/contracts/, ingests them once
+(Docling + embeddings, temp dir; or reuses --chunks) and writes evals/suites/gold-cuad.yaml.
 """
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
 """G5 routing: measure the current HeuristicQueryClassifier against routing-g5.yaml.
 
-    cd backend && .venv/bin/python eval-public/experiments/g5_route_accuracy.py [--json out.json]
+    cd backend && .venv/bin/python evals/suites/experiments/g5_route_accuracy.py [--json out.json]
 
 Deterministic and offline: no model call, no corpus ingestion, no GPU. It
 never touches the user's real data directory (DOCKET_DATA_DIR defaults to a

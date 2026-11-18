@@ -4,7 +4,7 @@ Source: MuSiQue-Full v1.0 dev (Trivedi et al., TACL 2022), CC BY 4.0
 (https://github.com/StonyBrookNLP/musique). Full pairs each answerable question
 with an unanswerable twin that has one supporting paragraph removed. The raw
 jsonl is NOT committed: put musique_full_v1.0_dev.jsonl at
-eval-public/external/musique/raw/full_dev.jsonl (or set MUSIQUE_RAW). Mirror used:
+evals/suites/external/musique/raw/full_dev.jsonl (or set MUSIQUE_RAW). Mirror used:
 huggingface.co/datasets/bdsaglam/musique.
 
 Library: one .txt file per distinct paragraph ("<title>" heading line + text),
@@ -21,7 +21,7 @@ verbatim 20-60 char gold span per supporting paragraph, verified to sit inside a
 single indexed chunk (backend venv ingest with fake embeddings). Unanswerable
 questions come from the dataset's own unanswerable variant (answerable: false).
 
-    <venv>/bin/python eval-public/build_musique_slice.py     (needs pyyaml)
+    <venv>/bin/python evals/suites/build_musique_slice.py     (needs pyyaml)
 """
 
 from __future__ import annotations

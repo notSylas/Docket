@@ -36,7 +36,7 @@ from docket.interfaces.cli.main import app
 runner = CliRunner()
 ZOG_F = "contracts/Zogenix_Distributor Agreement.pdf"
 BLM_F = "contracts/Bloom_Maintenance Agreement.pdf"
-EVAL_PUBLIC = Path(__file__).resolve().parents[3] / "eval-public"
+EVAL_PUBLIC = Path(__file__).resolve().parents[4] / "evals" / "suites"
 
 
 def db_path(engine) -> str:

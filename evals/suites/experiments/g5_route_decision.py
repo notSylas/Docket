@@ -1,6 +1,6 @@
 """G5 routing: measure `classify_route` (deterministic route decision) on routing-g5.yaml.
 
-    cd backend && .venv/bin/python eval-public/experiments/g5_route_decision.py [--json out.json]
+    cd backend && .venv/bin/python evals/suites/experiments/g5_route_decision.py [--json out.json]
 
 Offline, no model call, no corpus ingestion. DOCKET_DATA_DIR defaults to a fresh
 temp dir before docket is imported (never the real data directory). Reports

@@ -3,8 +3,8 @@
 Writes two gold files over the EXISTING corpora (nothing in either corpus is
 modified, and no product code is touched):
 
-  gold-g2-tarnwick.yaml   over eval-public/corpus-synthetic/     (Tarnwick Provisions)
-  gold-g2-brindle.yaml    over eval-public/corpus-synthetic-g1/  (Brindle Loom Textiles)
+  gold-g2-tarnwick.yaml   over evals/suites/corpus-synthetic/     (Tarnwick Provisions)
+  gold-g2-brindle.yaml    over evals/suites/corpus-synthetic-g1/  (Brindle Loom Textiles)
 
 Every expected value is READ from the generated corpus files (workbook cells
 via openpyxl, memo/deck sentences via python-docx/python-pptx) and every
@@ -26,7 +26,7 @@ Category tags are carried in the question id (g2t-/g2b- + category) and in
   amb   ambiguity: a period or version is unstated (clarification wanted)
   miss  missing evidence (out_of_corpus) or revoked source
 
-Run from anywhere:   python eval-public/build_gold_g2.py
+Run from anywhere:   python evals/suites/build_gold_g2.py
 """
 
 from __future__ import annotations

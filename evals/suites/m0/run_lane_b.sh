@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # M0 phase 2b, Lane B: GPU-accelerated evaluation (flags off vs KAG-on; two judges) on the local AMD GPU.
 #
-#   backend/eval-public/m0/run_lane_b.sh [--out DIR] [--only STEP[,STEP...]] [--allow-cpu-fallback] [--skip-preflight]
+#   evals/suites/m0/run_lane_b.sh [--out DIR] [--only STEP[,STEP...]] [--allow-cpu-fallback] [--skip-preflight]
 #
 # Idempotent and resumable: every step writes `<output>.done` when finished and is skipped on the next call.
 # Runs under `systemd-run --user --scope -p MemoryMax=12G`, with PYTHONPATH=<this checkout>/backend/src and the

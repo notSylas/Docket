@@ -27,7 +27,7 @@ Requirements (Ubuntu)
   ollama pull qwen3-embedding:0.6b
 
 2. Write your questions (10-20)
-  cp ~/docket-kit/backend/eval-private/questions_template.yaml ~/my_questions.yaml
+  cp ~/docket-kit/evals/private-kit/questions_template.yaml ~/my_questions.yaml
   nano ~/my_questions.yaml
   Per question: question, expected_answer (short, key facts), expected_file (file name or
   a distinctive part of it), answerable (yes/no). Include 2-4 "no" questions whose answer is
@@ -36,10 +36,10 @@ Requirements (Ubuntu)
 
 3. Index your documents (use a NEW scratch folder; can take a while for big folders)
   cd ~/docket-kit/backend
-  ~/docket-kit-venv/bin/python eval-private/ingest_folder.py /path/to/your/documents ~/docket-private-eval/data
+  ~/docket-kit-venv/bin/python evals/private-kit/ingest_folder.py /path/to/your/documents ~/docket-private-eval/data
 
 4. Run the evaluation (prints aggregate numbers only)
-  ~/docket-kit-venv/bin/python eval-private/run_private_eval.py ~/docket-private-eval/data ~/my_questions.yaml --summary-json ~/docket-summary.json
+  ~/docket-kit-venv/bin/python evals/private-kit/run_private_eval.py ~/docket-private-eval/data ~/my_questions.yaml --summary-json ~/docket-summary.json
 
 5. Send back ~/docket-summary.json (and, if you like, the table printed on screen).
   Check it first: cat ~/docket-summary.json  (numbers only).
