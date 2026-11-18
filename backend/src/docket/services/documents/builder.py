@@ -91,6 +91,9 @@ def build_document(session: Session, version: EvidenceVersion, kag: bool = False
         select(Document).where(Document.evidence_version_id == version.id)
     ).scalar_one_or_none()
     if existing is not None:
+        # Keep the document's id across an in-place rebuild: `supersedes_document_id` (no FK) of other
+        # documents and the rowid of fts_documents key on it. Fields/edges cascade away and are rewritten.
+        row.id = existing.id
         session.delete(existing)
         session.flush()
         replaced = True
