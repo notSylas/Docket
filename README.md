@@ -25,8 +25,11 @@ Docket is a local-first, evidence-backed work assistant. Point it at your folder
 
 ## Install
 
+Docket is installed from a local checkout of this repository, so you always get exactly the code you have checked out. From the repository root (the folder that contains `backend/` and `app/`):
+
 ```bash
-pipx install "git+https://github.com/notSylas/Docket.git@main#subdirectory=backend"
+git checkout rust-app           # the branch with current development; use whichever branch or tag you want to run
+pipx install ./backend
 ```
 
 First install downloads several GB (Docling pulls in PyTorch for document parsing) and can take a few minutes.
@@ -34,8 +37,10 @@ First install downloads several GB (Docling pulls in PyTorch for document parsin
 If your system's default `python3` is older than 3.12, point pipx at a specific interpreter instead:
 
 ```bash
-pipx install --python python3.12 "git+https://github.com/notSylas/Docket.git@main#subdirectory=backend"
+pipx install --python python3.12 ./backend
 ```
+
+There is deliberately no `pipx install git+https://…` command here: a branch published on GitHub can lag behind the work in a local checkout, and installing from a stale ref gives you older code than this document describes.
 
 On first use Docket also downloads a small tokenizer (`Qwen/Qwen3-Embedding-0.6B`) from Hugging Face, used to keep chunks within the embedding model's limits. Offline, it falls back to an estimate and logs a warning; set `DOCKET_EMBED_TOKENIZER=heuristic` to skip the download.
 
@@ -121,7 +126,8 @@ A newer Docket upgrades its database automatically the first time it opens it, a
 
 ```bash
 cp -a ~/.local/share/docket ~/docket-backup        # or wherever DOCKET_DATA_DIR points
-pipx install --force "git+https://github.com/notSylas/Docket.git@main#subdirectory=backend"
+git pull                         # or check out the branch or tag you want, from the repository root
+pipx install --force ./backend
 ```
 
 Files you have already ingested are not re-chunked automatically, so improvements to how documents are split and indexed only reach new or changed files until you apply them:
@@ -158,7 +164,16 @@ All settings are environment variables with a `DOCKET_` prefix:
 
 ## Desktop app
 
-A Tauri + React desktop GUI exists in [`desktop/`](desktop/) but is currently paused in favor of stabilizing the CLI-first experience. It is not ready for use today — the CLI above is the supported way to run Docket.
+A native desktop application (Rust, [egui](https://github.com/emilk/egui)) is under development in [`app/`](app/). It is a Cargo workspace of three crates: `docket-app` (the window), `docketd` (a local service that supervises the Python worker and serves the app over a Unix socket) and `docket-proto` (the shared protocol types). It is not packaged or supported for everyday use yet. The CLI above is the supported way to run Docket.
+
+To try it from a checkout (Linux; it needs a Rust toolchain, the system libraries listed in `.github/workflows/ci.yml`, and the `docket` command from the install step above):
+
+```bash
+app/dev.sh                       # builds docketd and docket-app and runs them against a scratch data directory
+app/dev.sh /path/to/data-dir     # or against a data directory of your choice
+```
+
+The earlier Tauri + React prototype in [`desktop/`](desktop/) is legacy and paused; it does not work with the current backend.
 
 ## License
 
