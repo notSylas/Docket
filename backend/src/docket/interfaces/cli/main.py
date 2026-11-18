@@ -443,6 +443,28 @@ def library_clean(
         typer.echo("No evidence was deleted. Run docket library clean --apply to apply this cleanup.")
 
 
+@library_app.command("gc-graph")
+def library_gc_graph(
+    apply: bool = typer.Option(False, "--apply", help="Delete the orphaned graph entities (default: dry-run, counts only)."),
+) -> None:
+    """Find (dry-run) or remove (--apply) entity-graph rows no document references any more."""
+    from docket.core.writer_lock import lock_for_sessions
+    from docket.services.documents.kag import gc_graph
+
+    context = build_context()
+    try:
+        report = gc_graph(context.session_factory, lock_for_sessions(context.session_factory), apply=apply)
+    except (WriterLockBusyError, LibraryReplacedError):
+        raise
+    except Exception:
+        typer.echo("Graph cleanup could not finish; nothing was changed. Retry, or check disk space.", err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"{'Removed' if apply else 'Preview: would remove'} {report.entities} orphaned entities "
+               f"and {report.variants} name variants.")
+    if not apply:
+        typer.echo("Nothing was deleted. Run docket library gc-graph --apply to remove them (not reversible without a backup).")
+
+
 @app.command("backup")
 def backup_command(
     destination: Path | None = typer.Argument(None, help="New backup directory or .zip archive."),

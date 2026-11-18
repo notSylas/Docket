@@ -86,18 +86,22 @@ def build_document(session: Session, version: EvidenceVersion, kag: bool = False
         doc_text=doc_text,
         extractor_version=EXTRACTOR_VERSION,
     )
+    replaced = False
     existing = session.execute(
         select(Document).where(Document.evidence_version_id == version.id)
     ).scalar_one_or_none()
     if existing is not None:
         session.delete(existing)
         session.flush()
+        replaced = True
     session.add(row)
     session.flush()
     if kag:
         from docket.services.documents import kag as kag_graph
 
         kag_graph.write_graph(session, row.id, chunks, parties, first_text, file_name)
+    if replaced:  # the old row's edges cascaded away; drop entities only it referenced (any flag state)
+        _gc_graph(session)
     if doc_type in _CONTRACTISH or doc_type in ("other", "report"):
         cts = [ChunkText(c.id, c.text, c.ordinal, c.heading) for c in chunks]
         if doc_type in _CONTRACTISH:
@@ -109,6 +113,13 @@ def build_document(session: Session, version: EvidenceVersion, kag: bool = False
                     confidence=fv.confidence, extractor_version=EXTRACTOR_VERSION,
                 ))
     return row
+
+
+def _gc_graph(session) -> None:
+    """Orphan-entity GC in the caller's transaction (caller commits/rolls back)."""
+    from docket.services.documents import kag as kag_graph
+
+    kag_graph.gc_orphan_entities(session)
 
 
 def build_for_version(session_factory: sessionmaker, version_id: str, kag: bool = False) -> bool:
@@ -143,6 +154,8 @@ def prune_documents(session_factory: sessionmaker) -> int:
             ids = stale[i:i + 500]
             session.execute(delete(DocumentField).where(DocumentField.document_id.in_(ids)))
             session.execute(delete(Document).where(Document.id.in_(ids)))
+        if stale:
+            _gc_graph(session)
         session.commit()
         return len(stale)
 
@@ -155,6 +168,7 @@ def delete_for_version(session_factory: sessionmaker, version_id: str) -> None:
             if ids:
                 session.execute(delete(DocumentField).where(DocumentField.document_id.in_(ids)))
                 session.execute(delete(Document).where(Document.id.in_(ids)))
+                _gc_graph(session)
                 session.commit()
     except Exception:  # noqa: BLE001
         logger.warning("document delete failed for version %s", version_id, exc_info=True)
@@ -168,6 +182,8 @@ def delete_for_source(session_factory: sessionmaker, source_id: str) -> None:
                 chunk = ids[i:i + 500]
                 session.execute(delete(DocumentField).where(DocumentField.document_id.in_(chunk)))
                 session.execute(delete(Document).where(Document.id.in_(chunk)))
+            if ids:
+                _gc_graph(session)
             session.commit()
     except Exception:  # noqa: BLE001
         logger.warning("document delete failed for source %s", source_id, exc_info=True)

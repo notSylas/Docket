@@ -257,6 +257,50 @@ def write_graph(session, document_id: int, chunks, parties: list[str], preamble:
     return edges, links
 
 
+@dataclass(frozen=True)
+class GcReport:
+    """Counts only: entity names are never reported (they may be deleted private data)."""
+    entities: int = 0
+    variants: int = 0
+
+
+_ORPHAN = "NOT EXISTS (SELECT 1 FROM kag_document_entities de WHERE de.entity_id = {t}.id)"
+
+
+def gc_orphan_entities(session, *, dry_run: bool = False) -> GcReport:
+    """Delete kag_entities rows no document references, plus their variants (caller commits, so the
+    delete shares the caller's transaction and rolls back with it). Idempotent; entities still
+    referenced by any document are never touched. Runs regardless of the kag_scoping flag."""
+    from sqlalchemy import text
+
+    session.flush()  # pending edges must be visible, or their entities would look orphaned
+    n_ent = session.execute(text(f"SELECT COUNT(*) FROM kag_entities e WHERE {_ORPHAN.format(t='e')}")).scalar_one()
+    if not n_ent:
+        return GcReport()
+    n_var = session.execute(text(
+        "SELECT COUNT(*) FROM kag_entity_variants v WHERE v.entity_id IN "
+        f"(SELECT e.id FROM kag_entities e WHERE {_ORPHAN.format(t='e')})")).scalar_one()
+    if not dry_run:
+        session.execute(text(  # explicit, not relying on the FK cascade alone
+            "DELETE FROM kag_entity_variants WHERE entity_id IN "
+            f"(SELECT e.id FROM kag_entities e WHERE {_ORPHAN.format(t='e')})"))
+        session.execute(text(f"DELETE FROM kag_entities WHERE {_ORPHAN.format(t='kag_entities')}"))
+    return GcReport(int(n_ent), int(n_var))
+
+
+def gc_graph(session_factory, lock, *, apply: bool = False) -> GcReport:
+    """Maintenance path for historical orphans. Dry-run (default) counts only and takes no write lock;
+    apply deletes in ONE transaction under the library writer lock."""
+    if not apply:
+        with session_factory() as session:
+            return gc_orphan_entities(session, dry_run=True)
+    with lock.hold("removing orphaned graph entities"):
+        with session_factory() as session:
+            report = gc_orphan_entities(session)
+            session.commit()  # an exception above leaves the session uncommitted -> rolled back
+            return report
+
+
 # --- query ---------------------------------------------------------------
 
 @dataclass

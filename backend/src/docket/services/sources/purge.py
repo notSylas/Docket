@@ -134,6 +134,12 @@ class SourcePurgeService:
                 )
             session.flush()
 
+            # Documents (and their graph edges) went with the versions via FK cascade; drop the
+            # entities/variants only those documents referenced, in this same transaction.
+            from docket.services.documents.kag import gc_orphan_entities
+
+            gc_orphan_entities(session)
+
             # Safe-delete rule (section 8): a blob is eligible for removal
             # only when it now has zero rows in evidence_blob_references --
             # i.e. no OTHER version (this source's or any other source's)
