@@ -258,9 +258,12 @@ impl Subscription {
 
 impl Registry {
     pub fn new(tail_cap: usize, retained: usize, max_queued: usize) -> Arc<Self> {
+        // Nanosecond resolution: a daemon restarted within the same second must not
+        // mint the ids of its predecessor, or a task id held across the restart could
+        // name (and so read the grants of) an unrelated new task.
         let boot = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs() & 0xffff_ffff)
+            .map(|d| d.as_nanos() as u64)
             .unwrap_or(0);
         Arc::new(Self {
             inner: Mutex::new(Inner::default()),
@@ -1057,6 +1060,18 @@ mod tests {
             )],
         );
         assert!(!granted(&r, &id, "d") && granted(&r, &id, "e"));
+    }
+
+    #[test]
+    fn task_ids_of_registries_created_back_to_back_never_collide() {
+        // A restarted daemon (new Registry) must not reuse its predecessor's task ids.
+        let ids: std::collections::HashSet<String> = (0..200)
+            .map(|_| {
+                let r = Registry::new(64, 8, 1);
+                r.create(Duration::from_secs(1), false).unwrap().0 .0
+            })
+            .collect();
+        assert_eq!(ids.len(), 200);
     }
 
     #[test]
