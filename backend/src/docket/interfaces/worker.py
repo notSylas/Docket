@@ -288,6 +288,21 @@ def build_methods(context: Any, service_factory: Callable[[Any, Any], Any]) -> d
         notes = original_notes(context, [c.chunk_id for c in result.citations])
         from docket.services.status import ask_metadata
 
+        grants = {
+            g.chunk_id: g
+            for g in (getattr(result, "evidence_grants", None) or [])
+            if not result.abstained
+        }
+
+        def grant_fields(chunk_id: str) -> dict[str, str]:
+            g = grants.get(chunk_id)
+            if g is None:
+                return {}
+            out = {"source_id": g.source_id, "evidence_version_id": g.evidence_version_id}
+            if g.resolved_chunk_id:
+                out["resolved_chunk_id"] = g.resolved_chunk_id
+            return out
+
         return {
             "answer": result.answer,
             "abstained": bool(result.abstained),
@@ -299,6 +314,7 @@ def build_methods(context: Any, service_factory: Callable[[Any, Any], Any]) -> d
                     "chunk_id": c.chunk_id,
                     "excerpt": _excerpt(c.chunk_id),
                     **({"note": notes[c.chunk_id]} if c.chunk_id in notes else {}),
+                    **grant_fields(c.chunk_id),
                 }
                 for c in result.citations
             ],

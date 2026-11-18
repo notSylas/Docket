@@ -55,6 +55,7 @@ fn base_config(dir: &Path, cmd: Vec<String>) -> Config {
         health_interval: Duration::ZERO,
         health_stale: Duration::from_millis(600),
         health_timeout: Duration::from_secs(2),
+        evidence_timeout: Duration::from_secs(3),
     }
 }
 
@@ -1834,4 +1835,715 @@ async fn tasks_off_still_serves_status_v2_alone() {
     let (code, _) = d.ask("rate?").await;
     assert_eq!(code, 200);
     d.stop().await;
+}
+
+// ---------------------------------------------------------------------------
+// R2b-1b-iii: POST /v1/evidence/get
+// ---------------------------------------------------------------------------
+
+const NOT_CITED: &str = r#"{"outcome":"not_cited"}"#;
+const EV: &[&str] = &["--evidence", "--grants"];
+
+fn ev_body(task: &str, chunk: &str) -> String {
+    serde_json::json!({"task_id": task, "chunk_id": chunk}).to_string()
+}
+
+fn outcome(body: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(body).unwrap()["outcome"]
+        .as_str()
+        .unwrap_or("<none>")
+        .to_string()
+}
+
+impl Daemon {
+    async fn evidence_raw(&self, body: &str) -> (u16, String) {
+        self.http(
+            "POST",
+            "/v1/evidence/get".into(),
+            Some(body.to_string()),
+            vec![("Content-Type", "application/json".into())],
+        )
+        .await
+    }
+
+    /// 200 + the typed body.
+    async fn ev(&self, task: &str, chunk: &str) -> String {
+        let (c, b) = self.evidence_raw(&ev_body(task, chunk)).await;
+        assert_eq!(c, 200, "{b}");
+        b
+    }
+
+    async fn wait_idle(&self) {
+        let t0 = Instant::now();
+        while self.status().await.busy {
+            assert!(t0.elapsed() < T, "slot never freed");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    /// Run `question` to success and return its task id (slot free again).
+    async fn done_task(&self, question: &str) -> String {
+        let id = self.new_task(question, false).await;
+        self.wait_task(&id, "succeeded", |t| t.state == TaskState::Succeeded)
+            .await;
+        self.wait_idle().await;
+        id
+    }
+
+    /// Params of every `evidence.get` the fake worker received.
+    fn evcalls(&self) -> Vec<serde_json::Value> {
+        std::fs::read_to_string(self.dir.path().join("evcalls"))
+            .map(|s| {
+                s.lines()
+                    .map(|l| serde_json::from_str(l).unwrap())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Poll until a read of `chunk` is `ok` (the worker may be restarting).
+    async fn ev_until_ok(&self, task: &str, chunk: &str) -> String {
+        let t0 = Instant::now();
+        loop {
+            let b = self.ev(task, chunk).await;
+            if outcome(&b) == "ok" {
+                return b;
+            }
+            assert!(t0.elapsed() < T, "never ok, last: {}", outcome(&b));
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    /// Start a read on a background thread; join to get (status, body).
+    fn ev_bg(&self, task: &str, chunk: &str) -> tokio::task::JoinHandle<(u16, String)> {
+        let s = self.sock.clone();
+        let body = ev_body(task, chunk);
+        tokio::task::spawn_blocking(move || {
+            let r = client::post_json(&s, "/v1/evidence/get", &body, None, T).unwrap();
+            (r.status, r.text().unwrap())
+        })
+    }
+}
+
+fn passage_text(body: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(body).unwrap()["passage"]["text"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn evidence_ok_sends_exactly_the_granted_version_and_resolved_chunk() {
+    let mut d = Daemon::start(EV).await;
+    assert!(d
+        .status()
+        .await
+        .capabilities
+        .contains(&"evidence.v1".to_string()));
+    let t = d.done_task("cite c1 c3 old=new").await;
+    let b = d.ev(&t, "c1").await;
+    assert_eq!(outcome(&b), "ok");
+    let v: serde_json::Value = serde_json::from_str(&b).unwrap();
+    assert_eq!(v["untrusted_content"], true);
+    let text = passage_text(&b);
+    assert!(
+        text.contains("chunk=c1 versions=v1 before=1 after=1"),
+        "{text}"
+    );
+    assert_eq!(v["context_before"].as_array().unwrap().len(), 1);
+    // Exactly these params: no client ids, no before/after the client omitted.
+    assert_eq!(
+        d.evcalls().last().unwrap(),
+        &serde_json::json!({"chunk_id":"c1","allowed_version_ids":["v1"],
+                            "answer_excerpt":"excerpt of c1"})
+    );
+    // The client's window is forwarded; 0 is not dropped.
+    let (c, b) = d
+        .evidence_raw(
+            r#"{"task_id":"X","chunk_id":"c3","before":2,"after":0}"#
+                .replace('X', &t)
+                .as_str(),
+        )
+        .await;
+    assert_eq!(c, 200);
+    let v: serde_json::Value = serde_json::from_str(&b).unwrap();
+    assert_eq!(v["context_before"].as_array().unwrap().len(), 2);
+    assert_eq!(v["context_after"].as_array().unwrap().len(), 0);
+    assert_eq!(
+        d.evcalls().last().unwrap(),
+        &serde_json::json!({"chunk_id":"c3","allowed_version_ids":["v1"],
+                            "before":2,"after":0,"answer_excerpt":"excerpt of c3"})
+    );
+    // An alias remap sends the resolved id (never the citation's old id).
+    let b = d.ev(&t, "old").await;
+    assert_eq!(outcome(&b), "ok");
+    assert_eq!(d.evcalls().last().unwrap()["chunk_id"], "new");
+    assert_eq!(
+        d.evcalls().last().unwrap()["allowed_version_ids"],
+        serde_json::json!(["v1"])
+    );
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn every_not_cited_variant_is_byte_identical_and_never_reaches_the_worker() {
+    let mut d = Daemon::start(EV).await;
+    // Several citations of the same version: c2 is NOT thereby authorised.
+    let a = d.done_task("cite c1 c3").await;
+    let b = d.done_task("cite:v2:s2 d1").await;
+    let abstained = d.done_task("abstain c1").await;
+    assert_eq!(outcome(&d.ev(&a, "c1").await), "ok");
+    assert_eq!(outcome(&d.ev(&b, "d1").await), "ok");
+    let calls = d.evcalls().len();
+    let mut bodies = vec![
+        d.ev(&a, "c2").await,             // uncited chunk, same version as c1/c3
+        d.ev(&a, "d1").await,             // another task's grant
+        d.ev(&b, "c1").await,             // ... and the other way round
+        d.ev("t-nope", "c1").await,       // unknown task
+        d.ev(&abstained, "c1").await,     // abstained
+        d.ev(&a, &"z".repeat(200)).await, // unknown chunk
+    ];
+    // Not succeeded: running, then cancelled.
+    let run = d.new_task("citeslow c1", false).await;
+    bodies.push(d.ev(&run, "c1").await);
+    d.wait_task(&run, "succeeded", |t| t.state == TaskState::Succeeded)
+        .await;
+    let st = d.new_task("stream_stall", false).await;
+    d.wait_task(&st, "running", |t| t.state == TaskState::Running)
+        .await;
+    // While another task holds the slot: authorisation still comes first.
+    bodies.push(d.ev(&st, "c1").await);
+    bodies.push(d.ev(&a, "c2").await);
+    d.cancel_task(&st).await;
+    d.wait_task(&st, "cancelled", |t| t.state == TaskState::Cancelled)
+        .await;
+    bodies.push(d.ev(&st, "c1").await);
+    for (n, b) in bodies.iter().enumerate() {
+        assert_eq!(b, NOT_CITED, "variant {n}");
+    }
+    assert_eq!(
+        d.evcalls().len(),
+        calls,
+        "worker was called for a not_cited"
+    );
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn route_level_race_running_task_is_not_cited_then_ok_after_completion() {
+    let mut d = Daemon::start(EV).await;
+    let id = d.new_task("citeslow c1", false).await;
+    assert_eq!(d.ev(&id, "c1").await, NOT_CITED);
+    d.wait_task(&id, "succeeded", |t| t.state == TaskState::Succeeded)
+        .await;
+    d.wait_idle().await;
+    assert_eq!(outcome(&d.ev(&id, "c1").await), "ok");
+    assert_eq!(d.evcalls().len(), 1);
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn busy_right_after_completion_is_transient_and_leaves_the_task_intact() {
+    let mut d = Daemon::start(EV).await;
+    let id = d.new_task("cite c1", false).await;
+    d.wait_task(&id, "succeeded", |t| t.state == TaskState::Succeeded)
+        .await;
+    // Deliberately no wait_idle: the ask slot may still be held for a moment.
+    let t0 = Instant::now();
+    let mut seen = Vec::new();
+    loop {
+        let o = outcome(&d.ev(&id, "c1").await);
+        let done = o != "busy";
+        seen.push(o);
+        if done {
+            break;
+        }
+        assert!(t0.elapsed() < T, "busy never cleared");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert_eq!(seen.pop().as_deref(), Some("ok"));
+    assert!(seen.iter().all(|o| o == "busy"), "{seen:?}");
+    // The task is untouched and its grant still works.
+    assert_eq!(d.task(&id).await.state, TaskState::Succeeded);
+    assert_eq!(outcome(&d.ev(&id, "c1").await), "ok");
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn unsupported_for_metadata_less_answers_and_for_workers_without_the_feature() {
+    // Worker has the feature but its answers carry no metadata.
+    let mut d = Daemon::start(&["--evidence"]).await;
+    let t = d.done_task("cite c1").await;
+    assert_eq!(d.ev(&t, "c1").await, r#"{"outcome":"unsupported"}"#);
+    assert_eq!(d.ev(&t, "anything").await, r#"{"outcome":"unsupported"}"#);
+    assert!(d.evcalls().is_empty());
+    d.stop().await;
+
+    // Old worker: metadata but no `evidence.v1`: no capability, no call.
+    let mut d = Daemon::start(&["--grants"]).await;
+    assert!(!d
+        .status()
+        .await
+        .capabilities
+        .contains(&"evidence.v1".to_string()));
+    let t = d.done_task("cite c1").await;
+    assert_eq!(d.ev(&t, "c1").await, r#"{"outcome":"unsupported"}"#);
+    assert!(d.evcalls().is_empty());
+    // The ask path is unchanged for it.
+    let (c, _) = d.ask("rate?").await;
+    assert_eq!(c, 200);
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tasks_off_has_no_route_no_capability_and_no_evidence_access() {
+    let mut d = Daemon::start_with(EV, |c| c.tasks_enabled = false).await;
+    let (_, status) = d.get("/v1/status").await;
+    assert!(
+        !status.contains("evidence.v1") && !status.contains("capabilities"),
+        "{status}"
+    );
+    let (c, _) = d.evidence_raw(&ev_body("t-1", "c1")).await;
+    assert_eq!(c, 404);
+    assert!(d.evcalls().is_empty());
+    // Legacy ask has no task id, so it cannot use the route; it still works.
+    let (c, b) = d.ask("cite c1").await;
+    assert_eq!(c, 200, "{b}");
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn busy_while_a_question_runs_without_calling_the_worker() {
+    let mut d = Daemon::start(EV).await;
+    let t = d.done_task("cite c1").await;
+    let running = d.new_task("slow", false).await;
+    d.wait_task(&running, "running", |x| x.state == TaskState::Running)
+        .await;
+    let t0 = Instant::now();
+    assert_eq!(d.ev(&t, "c1").await, r#"{"outcome":"busy"}"#);
+    assert!(
+        t0.elapsed() < Duration::from_millis(1000),
+        "busy must be immediate"
+    );
+    assert!(d.evcalls().is_empty(), "worker called while busy");
+    d.wait_task(&running, "succeeded", |x| x.state == TaskState::Succeeded)
+        .await;
+    d.wait_idle().await;
+    assert_eq!(outcome(&d.ev(&t, "c1").await), "ok");
+    assert_eq!(d.evcalls().len(), 1);
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn read_in_flight_before_an_ask_does_not_block_the_ask_and_second_read_is_busy() {
+    let mut d = Daemon::start(&["--evidence", "--grants", "--evidence-delay", "0.8"]).await;
+    let t = d.done_task("cite slow1 c1").await;
+    let read = d.ev_bg(&t, "slow1");
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    // The read is mid-flight; the slot is free, so the Ask is accepted and
+    // queues in the worker behind the read.
+    let ask = d.new_task("rate?", false).await;
+    // Slot now taken: a second read is `busy` straight away.
+    assert_eq!(d.ev(&t, "c1").await, r#"{"outcome":"busy"}"#);
+    let (c, b) = read.await.unwrap();
+    assert_eq!((c, outcome(&b).as_str()), (200, "ok"), "{b}");
+    d.wait_task(&ask, "succeeded", |x| x.state == TaskState::Succeeded)
+        .await;
+    assert_eq!(
+        d.evcalls().len(),
+        1,
+        "only the first read reached the worker"
+    );
+    assert_eq!(d.starts(), 1);
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn soft_timeout_keeps_the_worker_and_a_late_reply_never_confuses_the_next_read() {
+    let mut d = Daemon::start_with(
+        &["--evidence", "--grants", "--evidence-delay", "0.6"],
+        |c| c.evidence_timeout = Duration::from_millis(400),
+    )
+    .await;
+    let t = d.done_task("cite slow1 c1 c2").await;
+    let pid = d.pid();
+    assert_eq!(d.ev(&t, "slow1").await, r#"{"outcome":"timeout"}"#);
+    // The worker is still busy with the slow read; its late reply (old id)
+    // lands while this next read is in flight and must be ignored by id.
+    let b = d.ev(&t, "c1").await;
+    assert_eq!(outcome(&b), "ok", "{b}");
+    let text = passage_text(&b);
+    assert!(text.contains("chunk=c1 "), "{text}");
+    assert!(!text.contains("slow1"));
+    assert_eq!(d.pid(), pid, "soft timeout must not replace the worker");
+    assert!(alive(pid));
+    assert_eq!(d.starts(), 1);
+    let st = d.status().await;
+    assert_eq!((st.worker.restarts, st.worker.state), (0, WorkerState::Up));
+    // And a question afterwards still works on the same worker.
+    let (c, _) = d.ask("rate?").await;
+    assert_eq!(c, 200);
+    assert_eq!(d.starts(), 1);
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn worker_crash_during_reads_is_worker_unavailable_and_recovers() {
+    let mut d = Daemon::start(&["--evidence", "--grants", "--evidence-delay", "0.5"]).await;
+    let t = d.done_task("cite slowcrash1 c1 crash1").await;
+    let pid = d.pid();
+    // A read queued behind a crashing one also ends as worker_unavailable
+    // (the worker is in restart backoff when it gets its turn).
+    let first = d.ev_bg(&t, "slowcrash1");
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    let second = d.ev(&t, "c1").await;
+    let (_, first) = first.await.unwrap();
+    assert_eq!(first, r#"{"outcome":"worker_unavailable"}"#);
+    assert_eq!(second, r#"{"outcome":"worker_unavailable"}"#);
+    // After the restart the next read succeeds.
+    d.ev_until_ok(&t, "c1").await;
+    assert_ne!(d.pid(), pid);
+    assert_eq!(d.starts(), 2);
+    assert_eq!(
+        d.ev(&t, "crash1").await,
+        r#"{"outcome":"worker_unavailable"}"#
+    );
+    d.ev_until_ok(&t, "c1").await;
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ask_cancelled_around_reads_never_strands_them() {
+    let mut d = Daemon::start(EV).await;
+    let t = d.done_task("cite c1").await;
+    let st = d.new_task("stream_stall", false).await;
+    d.wait_task(&st, "running", |x| x.state == TaskState::Running)
+        .await;
+    assert_eq!(d.ev(&t, "c1").await, r#"{"outcome":"busy"}"#);
+    let pid = d.pid();
+    d.cancel_task(&st).await;
+    d.wait_task(&st, "cancelled", |x| x.state == TaskState::Cancelled)
+        .await;
+    // While the worker is replaced a read is busy / worker_unavailable, never
+    // a hang or a stale answer; once it is back, reads succeed.
+    let t0 = Instant::now();
+    loop {
+        let b = d.ev(&t, "c1").await;
+        match outcome(&b).as_str() {
+            "ok" => break,
+            "busy" | "worker_unavailable" => {}
+            o => panic!("unexpected {o}"),
+        }
+        assert!(t0.elapsed() < T);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_ne!(d.pid(), pid);
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn worker_data_from_another_version_source_or_chunk_is_never_returned() {
+    let mut d = Daemon::start(EV).await;
+    let ids = [
+        "wrongver1",
+        "wrongsrc1",
+        "wrongchunk1",
+        "wrongctxver1",
+        "wrongctxsrc1",
+        "replaced1",
+        "nf1",
+        "su1",
+        "sp1",
+        "wnotcited1",
+        "wbusy1",
+        "wfuture1",
+        "badshape1",
+        "rpcerr1",
+    ];
+    let t = d.done_task(&format!("cite {}", ids.join(" "))).await;
+    for id in &ids[..5] {
+        let b = d.ev(&t, id).await;
+        assert_eq!(b, r#"{"outcome":"not_found"}"#, "{id}");
+        assert!(!b.contains("SECRET"));
+    }
+    let b = d.ev(&t, "replaced1").await;
+    assert_eq!(outcome(&b), "ok");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&b).unwrap()["passage"]["chunk_id"],
+        "new-replaced1"
+    );
+    for (id, want) in [
+        ("nf1", "not_found"),
+        ("su1", "source_unavailable"),
+        ("sp1", "superseded"),
+        // Daemon-only / unknown outcomes from the worker are never passed on.
+        ("wnotcited1", "unsupported"),
+        ("wbusy1", "unsupported"),
+        ("wfuture1", "unsupported"),
+        ("badshape1", "unsupported"),
+        ("rpcerr1", "worker_unavailable"),
+    ] {
+        assert_eq!(
+            d.ev(&t, id).await,
+            format!(r#"{{"outcome":"{want}"}}"#),
+            "{id}"
+        );
+    }
+    // A worker RPC error is not a crash.
+    assert_eq!(d.starts(), 1);
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn malformed_requests_are_400_with_one_generic_message_and_echo_nothing() {
+    let mut d = Daemon::start(EV).await;
+    let t = d.done_task("cite c1").await;
+    let calls = d.evcalls().len();
+    let long = "LEAKME".repeat(40);
+    let bodies: Vec<String> = vec![
+        "".into(),
+        "{".into(),
+        "[]".into(),
+        "null".into(),
+        r#"{"task_id":"LEAKME"}"#.into(),
+        r#"{"chunk_id":"LEAKME"}"#.into(),
+        r#"{"task_id":"","chunk_id":"LEAKME"}"#.into(),
+        r#"{"task_id":"LEAKME","chunk_id":""}"#.into(),
+        r#"{"task_id":"LEAKME","chunk_id":"a\u0000b"}"#.into(),
+        r#"{"task_id":"LEAKME","chunk_id":"c","before":4}"#.into(),
+        r#"{"task_id":"LEAKME","chunk_id":"c","after":-1}"#.into(),
+        r#"{"task_id":"LEAKME","chunk_id":"c","after":1.5}"#.into(),
+        r#"{"task_id":"LEAKME","chunk_id":"c","before":"1"}"#.into(),
+        r#"{"task_id":"LEAKME","chunk_id":"c","before":999999999999}"#.into(),
+        r#"{"task_id":"LEAKME","chunk_id":"c","evidence_version_id":"v1"}"#.into(),
+        r#"{"task_id":"LEAKME","chunk_id":"c","allowed_version_ids":["v1"]}"#.into(),
+        r#"{"task_id":"LEAKME","chunk_id":"c","scope":"all"}"#.into(),
+        r#"{"task_id":"LEAKME","chunk_id":"c","source_id":"s1"}"#.into(),
+        format!(r#"{{"task_id":"{long}","chunk_id":"c"}}"#),
+        format!(r#"{{"task_id":"{t}","chunk_id":"{}"}}"#, "x".repeat(201)),
+        format!(r#"{{"task_id":"{t}","chunk_id":"{}"}}"#, "é".repeat(201)),
+        format!(
+            r#"{{"task_id":"LEAKME","chunk_id":"c","pad":"{}"}}"#,
+            "x".repeat(70_000)
+        ),
+        format!(
+            r#"{{"task_id":"LEAKME","chunk_id":"c","pad":"{}"}}"#,
+            "x".repeat(9_000)
+        ),
+    ];
+    for b in &bodies {
+        let (c, resp) = d.evidence_raw(b).await;
+        assert_eq!(c, 400, "{}", &b[..b.len().min(80)]);
+        assert_eq!(err_code(&resp), "bad_request");
+        let e: ApiError = serde_json::from_str(&resp).unwrap();
+        assert_eq!(e.error.message, "invalid evidence request");
+        assert!(!resp.contains("LEAKME") && !resp.contains(&t), "{resp}");
+    }
+    // Boundary values are valid (and an unknown task is not_cited, not 400).
+    let (c, b) = d
+        .evidence_raw(&format!(
+            r#"{{"task_id":"nope","chunk_id":"{}","before":3,"after":3}}"#,
+            "é".repeat(200)
+        ))
+        .await;
+    assert_eq!((c, b.as_str()), (200, NOT_CITED));
+    // Wrong method and path shape: the chunk id is never in a URL.
+    assert_eq!(
+        d.http("GET", "/v1/evidence/get".into(), None, vec![])
+            .await
+            .0,
+        405
+    );
+    assert_eq!(d.evcalls().len(), calls);
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn worst_case_128_kib_multibyte_result_round_trips_intact() {
+    let mut d = Daemon::start(EV).await;
+    let t = d.done_task("cite big1 c1").await;
+    let (c, b) = d.evidence_raw(&ev_body(&t, "big1")).await;
+    assert_eq!(c, 200);
+    assert!(b.len() > 120_000, "response was {} bytes", b.len());
+    let text = passage_text(&b);
+    let unit = "\u{20ac}\u{8a9e}\u{1F600}";
+    assert!(text.len() > 110_000);
+    assert_eq!(text, unit.repeat(text.chars().count() / 3));
+    assert_eq!(outcome(&b), "ok");
+    // The very next read on the same worker is unaffected.
+    assert_eq!(outcome(&d.ev(&t, "c1").await), "ok");
+    assert_eq!(d.starts(), 1);
+    d.stop().await;
+}
+
+// --- logging: the real binary, stderr captured ---------------------------
+
+struct Proc {
+    child: std::process::Child,
+    sock: PathBuf,
+    log: PathBuf,
+    _dir: TempDir,
+}
+
+impl Proc {
+    fn start(extra_env: &[(&str, &str)], worker_extra: &[&str]) -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let sock = dir.path().join("d.sock");
+        let log = dir.path().join("stderr.log");
+        let cmd = fake_cmd(dir.path(), worker_extra).join(" ");
+        let mut c = std::process::Command::new(env!("CARGO_BIN_EXE_docketd"));
+        c.env_clear()
+            .env("PATH", std::env::var("PATH").unwrap_or_default())
+            .env("DOCKET_SOCKET", &sock)
+            .env("DOCKET_WORKER_CMD", cmd)
+            .env("DOCKET_LOG", "debug")
+            .stderr(std::fs::File::create(&log).unwrap())
+            .stdout(std::process::Stdio::null());
+        for (k, v) in extra_env {
+            c.env(k, v);
+        }
+        Self {
+            child: c.spawn().unwrap(),
+            sock,
+            log,
+            _dir: dir,
+        }
+    }
+
+    fn req(&self, method: &str, path: &str, body: Option<&str>) -> (u16, String) {
+        let r = client::request(
+            &self.sock,
+            method,
+            path,
+            &[],
+            body.map(str::as_bytes),
+            Some(T),
+        )
+        .unwrap();
+        (r.status, r.text().unwrap())
+    }
+
+    fn wait_up(&self) {
+        let t0 = Instant::now();
+        loop {
+            if let Ok(r) = client::get(&self.sock, "/v1/status", T) {
+                if r.text().is_ok_and(|b| b.contains(r#""state":"up""#)) {
+                    return;
+                }
+            }
+            assert!(t0.elapsed() < T, "daemon never came up");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    fn stop(mut self) -> String {
+        // SAFETY: plain kill(2) of our own child.
+        unsafe { libc::kill(self.child.id() as i32, libc::SIGTERM) };
+        let _ = self.child.wait();
+        std::fs::read_to_string(&self.log).unwrap()
+    }
+}
+
+#[test]
+fn evidence_reads_never_log_content_ids_or_params() {
+    const CHUNK: &str = "SECRETCHUNK-4242";
+    let p = Proc::start(
+        &[("DOCKET_EVIDENCE_TIMEOUT_MS", "300")],
+        &["--evidence", "--grants", "--evidence-delay", "0.6"],
+    );
+    p.wait_up();
+    let ids = [
+        CHUNK.to_string(),
+        format!("slow{CHUNK}"),
+        format!("nf{CHUNK}"),
+        format!("rpcerr{CHUNK}"),
+        format!("wrongver{CHUNK}"),
+        format!("crash{CHUNK}"),
+    ];
+    let q = format!("cite {}", ids.join(" "));
+    let (c, b) = p.req(
+        "POST",
+        "/v1/tasks",
+        Some(&serde_json::json!({"kind":"ask","question":q}).to_string()),
+    );
+    assert_eq!(c, 202, "{b}");
+    let task = serde_json::from_str::<CreateTaskResponse>(&b)
+        .unwrap()
+        .task_id
+        .0;
+    let t0 = Instant::now();
+    loop {
+        let (_, l) = p.req("GET", "/v1/tasks", None);
+        if l.contains("succeeded")
+            && !p
+                .req("GET", "/v1/status", None)
+                .1
+                .contains(r#""busy":true"#)
+        {
+            break;
+        }
+        assert!(t0.elapsed() < T);
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    let mut seen = vec![];
+    for id in &ids {
+        let body = serde_json::json!({"task_id": task, "chunk_id": id}).to_string();
+        let (c, b) = p.req("POST", "/v1/evidence/get", Some(&body));
+        assert_eq!(c, 200, "{b}");
+        seen.push(outcome(&b));
+        if id.starts_with("slow") {
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        if id.starts_with("crash") {
+            std::thread::sleep(Duration::from_millis(600));
+        }
+    }
+    // ok, timeout, not_found, worker_unavailable (rpc), not_found, worker_unavailable (crash)
+    assert_eq!(
+        seen,
+        [
+            "ok",
+            "timeout",
+            "not_found",
+            "worker_unavailable",
+            "not_found",
+            "worker_unavailable"
+        ]
+    );
+    // A malformed one too.
+    let (c, _) = p.req(
+        "POST",
+        "/v1/evidence/get",
+        Some(&format!(
+            r#"{{"task_id":"{task}","chunk_id":"{CHUNK}","x":1}}"#
+        )),
+    );
+    assert_eq!(c, 400);
+    let log = p.stop();
+    assert!(log.contains("request"), "logging was not captured: {log}");
+    assert!(log.contains("/v1/evidence/get"), "{log}");
+    for secret in ["SECRET", "excerpt of", "TEXT chunk"] {
+        assert!(!log.contains(secret), "log leaked {secret:?}:\n{log}");
+    }
+    // The task lifecycle lines (R1, `docketd::tasks`) name the task by design;
+    // nothing else, in particular nothing on the evidence path, may.
+    let rest: Vec<&str> = log
+        .lines()
+        .filter(|l| !l.contains("docketd::tasks"))
+        .collect();
+    assert!(
+        !rest.iter().any(|l| l.contains(&task)),
+        "task id leaked:\n{log}"
+    );
+}
+
+#[test]
+fn evidence_timeout_env_is_bounded() {
+    for bad in ["0", "50", "999999"] {
+        let mut p = Proc::start(&[("DOCKET_EVIDENCE_TIMEOUT_MS", bad)], &["--evidence"]);
+        let st = p.child.wait().unwrap();
+        assert_eq!(st.code(), Some(2), "{bad}");
+        let log = std::fs::read_to_string(&p.log).unwrap();
+        assert!(log.contains("DOCKET_EVIDENCE_TIMEOUT_MS"), "{log}");
+    }
 }

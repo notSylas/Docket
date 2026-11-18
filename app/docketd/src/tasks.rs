@@ -43,6 +43,129 @@ struct Entry {
     /// Carries `last_seq`; wakes subscribers.
     bell: watch::Sender<u64>,
     cancel: CancelToken,
+    /// Set once, inside `finish`, in the same critical section that makes the
+    /// task terminal. Never mutated afterwards; dropped with the entry.
+    grants: GrantState,
+}
+
+/// Longest id (source, version, chunk) accepted into a grant, in chars.
+const MAX_ID_CHARS: usize = 200;
+/// Longest answer-time excerpt kept in a grant, in chars.
+const MAX_EXCERPT_CHARS: usize = 1000;
+/// Most grants one task can hold; further citations are not granted.
+const MAX_GRANTS_PER_TASK: usize = 64;
+
+/// Permission to read one cited chunk back, minted from a citation of a
+/// succeeded, non-abstained answer. Ids are the worker's, bound to the
+/// citation's `chunk_id`; nothing the client sends ever enters a grant.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Grant {
+    pub chunk_id: String,
+    pub source_id: String,
+    pub evidence_version_id: String,
+    pub resolved_chunk_id: Option<String>,
+    /// Answer-time citation excerpt (at most 1000 chars).
+    pub excerpt: String,
+}
+
+// Ids and text are document-derived; never print them.
+impl std::fmt::Debug for Grant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Grant")
+            .field("resolved", &self.resolved_chunk_id.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+/// A task's evidence-grant state.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum GrantState {
+    /// Not eligible: not succeeded, abstained, cancelled/failed/timed out, or
+    /// no citations.
+    None,
+    /// Succeeded with citations, but none carried valid metadata (an older
+    /// worker).
+    Unsupported,
+    /// Valid, unique citations by `chunk_id`.
+    Granted(HashMap<String, Grant>),
+}
+
+/// Result of [`Registry::grant_lookup`].
+///
+/// `NotCited` deliberately covers an unknown or evicted task, a task that is
+/// not `Succeeded`, an ineligible task, and a chunk that was not granted, so
+/// a caller cannot probe task ids or chunk ids. `Unsupported` is a task-level
+/// fact ("the worker that answered was too old to attach metadata"), not
+/// chunk information, and is returned only for an existing, succeeded task
+/// whose grant state is `Unsupported`. Task ids are daemon-local (boot tag +
+/// counter), so knowing one already implies a local client of this daemon.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GrantLookup {
+    Granted(Grant),
+    Unsupported,
+    NotCited,
+}
+
+fn valid_id(s: &str) -> bool {
+    let n = s.chars().count();
+    (1..=MAX_ID_CHARS).contains(&n) && !s.contains('\0')
+}
+
+fn truncate_chars(s: &str, max: usize) -> String {
+    match s.char_indices().nth(max) {
+        Some((i, _)) => s[..i].to_string(),
+        None => s.to_string(),
+    }
+}
+
+/// Grants for a terminal `Succeeded` task, from its published events.
+fn grants_from(events: &[TaskEventBody]) -> GrantState {
+    let Some(r) = events.iter().find_map(|b| match b {
+        TaskEventBody::Result { result } => Some(result),
+        _ => None,
+    }) else {
+        return GrantState::None;
+    };
+    if r.abstained || r.citations.is_empty() {
+        return GrantState::None;
+    }
+    let mut seen: HashMap<&str, usize> = HashMap::new();
+    for c in &r.citations {
+        *seen.entry(c.chunk_id.as_str()).or_insert(0) += 1;
+    }
+    let mut any_valid = false;
+    let mut map = HashMap::new();
+    for c in &r.citations {
+        let (Some(src), Some(ver)) = (c.source_id.as_deref(), c.evidence_version_id.as_deref())
+        else {
+            continue;
+        };
+        if !(valid_id(&c.chunk_id) && valid_id(src) && valid_id(ver)) {
+            continue;
+        }
+        if c.resolved_chunk_id.as_deref().is_some_and(|x| !valid_id(x)) {
+            continue;
+        }
+        any_valid = true;
+        if seen.get(c.chunk_id.as_str()) != Some(&1) || map.len() >= MAX_GRANTS_PER_TASK {
+            continue;
+        }
+        map.insert(
+            c.chunk_id.clone(),
+            Grant {
+                chunk_id: c.chunk_id.clone(),
+                source_id: src.to_string(),
+                evidence_version_id: ver.to_string(),
+                resolved_chunk_id: c.resolved_chunk_id.clone(),
+                excerpt: truncate_chars(&c.excerpt, MAX_EXCERPT_CHARS),
+            },
+        );
+    }
+    if any_valid {
+        GrantState::Granted(map)
+    } else {
+        GrantState::Unsupported
+    }
 }
 
 #[derive(Default)]
@@ -201,6 +324,7 @@ impl Registry {
             closed: false,
             bell: watch::channel(0).0,
             cancel: cancel.clone(),
+            grants: GrantState::None,
         };
         self.push(
             &mut e,
@@ -280,6 +404,15 @@ impl Registry {
         if e.closed {
             return false;
         }
+        // Grants are minted here, under the same lock hold that makes the
+        // task terminal and publishes its Result, and only for `Succeeded`.
+        // (A cancel that won the race has already turned the outcome into
+        // `Cancelled` without a Result, so it gets none.)
+        e.grants = if state == TaskState::Succeeded {
+            grants_from(&events)
+        } else {
+            GrantState::None
+        };
         for b in events {
             self.push(e, id, b);
         }
@@ -346,6 +479,26 @@ impl Registry {
 
     pub fn state(&self, id: &str) -> Option<TaskState> {
         self.lock().tasks.get(id).map(|e| e.state)
+    }
+
+    /// Look up the grant for `chunk_id` of task `task_id`. One lock hold; the
+    /// answer is derived from the entry's state and grants together.
+    pub fn grant_lookup(&self, task_id: &str, chunk_id: &str) -> GrantLookup {
+        let g = self.lock();
+        let Some(e) = g.tasks.get(task_id) else {
+            return GrantLookup::NotCited;
+        };
+        if e.state != TaskState::Succeeded {
+            return GrantLookup::NotCited;
+        }
+        match &e.grants {
+            GrantState::None => GrantLookup::NotCited,
+            GrantState::Unsupported => GrantLookup::Unsupported,
+            GrantState::Granted(m) => m
+                .get(chunk_id)
+                .cloned()
+                .map_or(GrantLookup::NotCited, GrantLookup::Granted),
+        }
     }
 
     pub fn info(&self, id: &str) -> Option<TaskInfo> {
@@ -761,5 +914,286 @@ mod tests {
         });
         let rest = drain(&mut s).await;
         assert_eq!(rest.len(), 2);
+    }
+
+    // ---- evidence grants ----
+
+    use docket_proto::api::Citation;
+
+    fn cit(chunk: &str, src: Option<&str>, ver: Option<&str>) -> Citation {
+        Citation {
+            label: "[a#1]".into(),
+            source_display_name: "a.txt".into(),
+            chunk_id: chunk.into(),
+            excerpt: format!("excerpt {chunk}"),
+            source_id: src.map(Into::into),
+            evidence_version_id: ver.map(Into::into),
+            resolved_chunk_id: None,
+        }
+    }
+
+    fn good(chunk: &str) -> Citation {
+        cit(chunk, Some("s1"), Some("v1"))
+    }
+
+    fn result_ev(abstained: bool, cites: Vec<Citation>) -> TaskEventBody {
+        TaskEventBody::Result {
+            result: Box::new(AskResult {
+                answer: "a".into(),
+                abstained,
+                citations: cites,
+                ..Default::default()
+            }),
+        }
+    }
+
+    fn run(state: TaskState, ev: Vec<TaskEventBody>) -> (Arc<Registry>, String) {
+        let r = Registry::new(64, 8, 1);
+        let (id, _) = r.create(Duration::from_secs(1), false).unwrap();
+        r.start(&id.0);
+        r.finish(&id.0, state, ev);
+        (r, id.0)
+    }
+
+    fn granted(r: &Registry, id: &str, c: &str) -> bool {
+        matches!(r.grant_lookup(id, c), GrantLookup::Granted(_))
+    }
+
+    #[test]
+    fn grants_only_for_succeeded_non_abstained_with_citations() {
+        let (r, id) = run(
+            TaskState::Succeeded,
+            vec![result_ev(false, vec![good("c1")])],
+        );
+        match r.grant_lookup(&id, "c1") {
+            GrantLookup::Granted(g) => {
+                assert_eq!(
+                    (g.source_id.as_str(), g.evidence_version_id.as_str()),
+                    ("s1", "v1")
+                );
+                assert_eq!(g.excerpt, "excerpt c1");
+                assert!(g.resolved_chunk_id.is_none());
+            }
+            o => panic!("{o:?}"),
+        }
+        let none_cases = [
+            (
+                TaskState::Succeeded,
+                vec![result_ev(true, vec![good("c1")])],
+            ),
+            (TaskState::Succeeded, vec![result_ev(false, vec![])]),
+            (TaskState::Succeeded, vec![]),
+            (
+                TaskState::Cancelled,
+                vec![result_ev(false, vec![good("c1")])],
+            ),
+            (TaskState::Failed, vec![result_ev(false, vec![good("c1")])]),
+            (
+                TaskState::TimedOut,
+                vec![result_ev(false, vec![good("c1")])],
+            ),
+        ];
+        for (st, ev) in none_cases {
+            let (r, id) = run(st, ev);
+            assert_eq!(r.grant_lookup(&id, "c1"), GrantLookup::NotCited, "{st:?}");
+        }
+    }
+
+    #[test]
+    fn cancel_winning_the_race_yields_no_grants() {
+        let tok = CancelToken::new();
+        tok.cancel(CancelSource::User);
+        let v = serde_json::to_value(AskResult {
+            answer: "a".into(),
+            citations: vec![good("c1")],
+            ..Default::default()
+        })
+        .unwrap();
+        let (st, ev) = outcome(Ok(v), &tok);
+        assert_eq!(st, TaskState::Cancelled);
+        let (r, id) = run(st, ev);
+        assert_eq!(r.grant_lookup(&id, "c1"), GrantLookup::NotCited);
+    }
+
+    #[test]
+    fn grant_state_follows_validation_rules() {
+        let nul = cit("cn", Some("s\0"), Some("v1"));
+        let long = cit("cl", Some(&"s".repeat(201)), Some("v1"));
+        let empty_ver = cit("ce", Some("s1"), Some(""));
+        let only_src = cit("co", Some("s1"), None);
+        let bad_resolved = Citation {
+            resolved_chunk_id: Some("x\0".into()),
+            ..good("cr")
+        };
+        let ok_long = cit(&"k".repeat(200), Some(&"s".repeat(200)), Some("v1"));
+        let (r, id) = run(
+            TaskState::Succeeded,
+            vec![result_ev(
+                false,
+                vec![
+                    good("c1"),
+                    good("dup"),
+                    good("dup"),
+                    nul,
+                    long,
+                    empty_ver,
+                    only_src,
+                    bad_resolved,
+                    ok_long,
+                ],
+            )],
+        );
+        assert!(granted(&r, &id, "c1"));
+        assert!(granted(&r, &id, &"k".repeat(200)));
+        for c in ["dup", "cn", "cl", "ce", "co", "cr", "other"] {
+            assert_eq!(r.grant_lookup(&id, c), GrantLookup::NotCited, "{c}");
+        }
+        // A duplicate also cancels a would-be-valid twin of an invalid one.
+        let (r, id) = run(
+            TaskState::Succeeded,
+            vec![result_ev(
+                false,
+                vec![good("d"), cit("d", None, None), good("e")],
+            )],
+        );
+        assert!(!granted(&r, &id, "d") && granted(&r, &id, "e"));
+    }
+
+    #[test]
+    fn metadata_less_result_is_unsupported_only_for_succeeded_task() {
+        let (r, id) = run(
+            TaskState::Succeeded,
+            vec![result_ev(false, vec![cit("c1", None, None)])],
+        );
+        assert_eq!(r.grant_lookup(&id, "c1"), GrantLookup::Unsupported);
+        assert_eq!(r.grant_lookup(&id, "zzz"), GrantLookup::Unsupported);
+        assert_eq!(r.grant_lookup("nope", "c1"), GrantLookup::NotCited);
+        // Not terminal yet: not Unsupported.
+        let r2 = Registry::new(64, 8, 1);
+        let (id2, _) = r2.create(Duration::from_secs(1), false).unwrap();
+        assert_eq!(r2.grant_lookup(&id2.0, "c1"), GrantLookup::NotCited);
+        // All-invalid metadata is also Unsupported.
+        let (r, id) = run(
+            TaskState::Succeeded,
+            vec![result_ev(false, vec![cit("c1", Some("s\0"), Some("v"))])],
+        );
+        assert_eq!(r.grant_lookup(&id, "c1"), GrantLookup::Unsupported);
+    }
+
+    #[test]
+    fn alias_resolved_chunk_is_retained_and_excerpt_truncated_on_char_boundary() {
+        let c = Citation {
+            resolved_chunk_id: Some("new".into()),
+            excerpt: "é".repeat(1500),
+            ..good("old")
+        };
+        let (r, id) = run(TaskState::Succeeded, vec![result_ev(false, vec![c])]);
+        let GrantLookup::Granted(g) = r.grant_lookup(&id, "old") else {
+            panic!()
+        };
+        assert_eq!(g.resolved_chunk_id.as_deref(), Some("new"));
+        assert_eq!(g.excerpt.chars().count(), 1000);
+        assert!(!format!("{g:?}").contains('é') && !format!("{g:?}").contains("old"));
+    }
+
+    #[test]
+    fn same_version_citations_do_not_grant_uncited_chunks() {
+        let (r, id) = run(
+            TaskState::Succeeded,
+            vec![result_ev(false, vec![good("c1"), good("c3")])],
+        );
+        assert!(granted(&r, &id, "c1") && granted(&r, &id, "c3"));
+        assert_eq!(r.grant_lookup(&id, "c2"), GrantLookup::NotCited);
+    }
+
+    #[test]
+    fn grants_per_task_are_bounded() {
+        let cites: Vec<Citation> = (0..70).map(|i| good(&format!("c{i}"))).collect();
+        let (r, id) = run(TaskState::Succeeded, vec![result_ev(false, cites)]);
+        assert!(granted(&r, &id, "c0") && granted(&r, &id, "c63"));
+        assert!(!granted(&r, &id, "c64") && !granted(&r, &id, "c69"));
+    }
+
+    #[test]
+    fn grants_are_immutable_after_finish() {
+        let (r, id) = run(
+            TaskState::Succeeded,
+            vec![result_ev(false, vec![good("c1")])],
+        );
+        let before = r.grant_lookup(&id, "c1");
+        assert!(!r.finish(
+            &id,
+            TaskState::Succeeded,
+            vec![result_ev(false, vec![good("c9")])]
+        ));
+        assert!(!r.finish(&id, TaskState::Failed, vec![]));
+        assert_eq!(r.grant_lookup(&id, "c1"), before);
+        assert_eq!(r.grant_lookup(&id, "c9"), GrantLookup::NotCited);
+        assert_eq!(r.state(&id), Some(TaskState::Succeeded));
+    }
+
+    #[test]
+    fn grants_expire_with_eviction() {
+        let r = Registry::new(64, 1, 1);
+        let mut ids = vec![];
+        for _ in 0..3 {
+            let (id, _) = r.create(Duration::from_secs(1), false).unwrap();
+            r.start(&id.0);
+            r.finish(
+                &id.0,
+                TaskState::Succeeded,
+                vec![result_ev(false, vec![good("c1")])],
+            );
+            ids.push(id.0);
+        }
+        assert_eq!(r.grant_lookup(&ids[0], "c1"), GrantLookup::NotCited);
+        assert!(r.info(&ids[0]).is_none());
+        assert!(granted(&r, &ids[2], "c1"));
+    }
+
+    #[test]
+    fn state_and_grants_become_visible_together() {
+        for _ in 0..50 {
+            let r = Registry::new(64, 8, 1);
+            let (id, _) = r.create(Duration::from_secs(1), false).unwrap();
+            r.start(&id.0);
+            let barrier = Arc::new(std::sync::Barrier::new(5));
+            let readers: Vec<_> = (0..4)
+                .map(|_| {
+                    let (r, id, b) = (r.clone(), id.0.clone(), barrier.clone());
+                    std::thread::spawn(move || {
+                        b.wait();
+                        loop {
+                            // Reverse order of the writer's effects: a grant
+                            // seen implies Succeeded; Succeeded seen implies
+                            // a grant (state is only read after the lookup,
+                            // and again before it).
+                            let st_before = r.state(&id);
+                            let l = r.grant_lookup(&id, "c1");
+                            let st_after = r.state(&id);
+                            if st_before == Some(TaskState::Succeeded) {
+                                assert!(
+                                    matches!(l, GrantLookup::Granted(_)),
+                                    "succeeded without grant"
+                                );
+                            }
+                            if matches!(l, GrantLookup::Granted(_)) {
+                                assert_eq!(st_after, Some(TaskState::Succeeded));
+                                return;
+                            }
+                        }
+                    })
+                })
+                .collect();
+            barrier.wait();
+            r.finish(
+                &id.0,
+                TaskState::Succeeded,
+                vec![result_ev(false, vec![good("c1")])],
+            );
+            for h in readers {
+                h.join().unwrap();
+            }
+        }
     }
 }

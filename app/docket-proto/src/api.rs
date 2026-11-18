@@ -61,13 +61,22 @@ pub struct AskRequest {
     pub stream: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Citation {
     pub label: String,
     pub source_display_name: String,
     pub chunk_id: String,
     #[serde(default)]
     pub excerpt: String,
+    /// Source and evidence version the cited chunk came from. Present
+    /// together or not at all; absent from older workers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_version_id: Option<String>,
+    /// Only for alias remaps: the chunk id the citation was resolved to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_chunk_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -290,6 +299,7 @@ mod tests {
                 source_display_name: "a.txt".into(),
                 chunk_id: "c1".into(),
                 excerpt: "x".into(),
+                ..Default::default()
             }],
             timings: Timings {
                 total_s: 1.5,
@@ -299,6 +309,22 @@ mod tests {
         };
         let s = serde_json::to_string(&r).unwrap();
         assert_eq!(serde_json::from_str::<AskResult>(&s).unwrap(), r);
+    }
+
+    #[test]
+    fn citation_new_fields_are_optional_and_omitted() {
+        let old =
+            r#"{"label":"[a#1]","source_display_name":"a.txt","chunk_id":"c1","excerpt":"x"}"#;
+        let c: Citation = serde_json::from_str(old).unwrap();
+        assert_eq!(
+            (&c.source_id, &c.evidence_version_id, &c.resolved_chunk_id),
+            (&None, &None, &None)
+        );
+        assert_eq!(serde_json::to_string(&c).unwrap(), old);
+        let new = r#"{"label":"l","source_display_name":"a","chunk_id":"c","excerpt":"","source_id":"s","evidence_version_id":"v","resolved_chunk_id":"r"}"#;
+        let c: Citation = serde_json::from_str(new).unwrap();
+        assert_eq!(c.source_id.as_deref(), Some("s"));
+        assert_eq!(serde_json::to_string(&c).unwrap(), new);
     }
 
     #[test]
