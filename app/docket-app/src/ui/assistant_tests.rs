@@ -23,6 +23,7 @@ fn result() -> AskResult {
             source_display_name: "Synthetic rates".into(),
             chunk_id: "synthetic-1".into(),
             excerpt: "Synthetic rate: 2,650".into(),
+            ..Default::default()
         }],
         ..Default::default()
     }

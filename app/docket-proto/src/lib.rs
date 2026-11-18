@@ -10,6 +10,7 @@
 
 pub mod api;
 pub mod client;
+pub mod evidence;
 pub mod rpc;
 pub mod status;
 pub mod task;

@@ -632,6 +632,12 @@ class KagDocumentEntity(Base):
     )
     role: Mapped[str] = mapped_column(String, primary_key=True, default="party")
     chunk_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Provenance (migration 0019). One deterministic REPRESENTATIVE mention, not all mentions:
+    # chunk-relative Python code-point offsets, end exclusive: chunk.text[span_start:span_end].
+    # evidence_kind: 'span' | 'none'; NULL = legacy row (pre-0019), unverified.
+    span_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    span_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    evidence_kind: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class KagDocumentClause(Base):
@@ -646,3 +652,7 @@ class KagDocumentClause(Base):
     clause_type: Mapped[str] = mapped_column(String, nullable=False)
     chunk_id: Mapped[str] = mapped_column(String, nullable=False)
     confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.6)
+    # Provenance (migration 0019): 'chunk' = chunk-level only (span stays NULL); NULL = legacy.
+    span_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    span_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    evidence_kind: Mapped[str | None] = mapped_column(String, nullable=True)

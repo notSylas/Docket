@@ -258,6 +258,7 @@ mod tests {
             source_display_name: "x".into(),
             chunk_id: "id".into(),
             excerpt: String::new(),
+            ..Default::default()
         }
     }
 

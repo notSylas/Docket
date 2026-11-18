@@ -223,16 +223,109 @@ def classify_chunk(chunk_text: str, heading: str | None = None) -> list[tuple[st
 
 # --- build ---------------------------------------------------------------
 
+# Provenance kinds. NULL (legacy) is deliberately NOT one of them: rows written before migration 0019
+# carry no verdict and must never be reported as spans.
+EVIDENCE_SPAN = "span"      # entity edge: chunk + code-point span, validated against the persisted text
+EVIDENCE_NONE = "none"      # entity edge: no textual mention found (e.g. file-name-only company)
+EVIDENCE_CHUNK = "chunk"    # clause edge: chunk-level only; the keyword classifier does not expose a span
+KIND_LEGACY = "legacy"      # reported for rows whose columns are NULL (pre-0019): unverified
+
+MAX_SEARCH_CHUNKS = 64      # entity mentions are searched in the first N chunks (by ordinal)
+
+_ALNUM = frozenset("abcdefghijklmnopqrstuvwxyz0123456789")
+
+
+def _tokens_with_spans(text_: str) -> list[tuple[str, int, int]]:
+    """Name-normalisation tokens of `text_` (the same folding as `_clean`: lower case, '&' -> 'and',
+    apostrophes dropped, [a-z0-9]+ runs) with their [start, end) code-point offsets in `text_`."""
+    out: list[tuple[str, int, int]] = []
+    cur: list[str] = []
+    cs = ce = 0
+    for i, ch in enumerate(text_):
+        if ch in "\u2019'`":
+            continue  # transparent inside a word: "Reed's" -> "reeds"
+        if ch == "&":
+            if cur:
+                out.append(("".join(cur), cs, ce))
+                cur = []
+            out.append(("and", i, i + 1))
+            continue
+        lc = ch.lower()
+        if lc and all(c in _ALNUM for c in lc):
+            if not cur:
+                cs = i
+            cur.append(lc)
+            ce = i + 1
+        elif cur:
+            out.append(("".join(cur), cs, ce))
+            cur = []
+    if cur:
+        out.append(("".join(cur), cs, ce))
+    return out
+
+
+def _candidate_keys(display: str) -> list[str]:
+    """Lookup keys for one entity in a FIXED preference order: full normalised name, core name, then the
+    remaining recorded variants alphabetically."""
+    full, core = normalize_name(display), core_name(display)
+    ordered = [full, core] + sorted(name_variants(display) - {full, core})
+    seen: set[str] = set()
+    return [k for k in ordered if k and usable_variant(k) and not (k in seen or seen.add(k))]
+
+
+def _span_valid(chunk_text: str, start: int | None, end: int | None, allowed: set[str]) -> bool:
+    """True when chunk_text[start:end] is a real, non-empty slice whose name-normalisation is one of the
+    recorded variants. Used both when writing and when auditing."""
+    if start is None or end is None or not (0 <= start < end <= len(chunk_text)):
+        return False
+    return normalize_name(chunk_text[start:end]) in allowed
+
+
+def find_mention(chunks, display: str) -> tuple[str, int, int] | None:
+    """Deterministic REPRESENTATIVE mention of `display`: (chunk_id, start, end) or None.
+
+    Chunks are searched in ordinal order (first MAX_SEARCH_CHUNKS); the first chunk with any match wins;
+    inside it the earliest occurrence wins, ties going to the earlier key in `_candidate_keys`. Matching is
+    case-, punctuation- and whitespace-insensitive, but the result is a real slice of the persisted chunk
+    text (end exclusive, Python code-point indices) and is re-validated before being returned. This is ONE
+    mention, not proof that every mention was found."""
+    keys = _candidate_keys(display)
+    if not keys:
+        return None
+    allowed = set(name_variants(display)) | set(keys)
+    seqs = [(k, tuple(k.split())) for k in keys]
+    for ch in sorted(chunks, key=lambda c: (c.ordinal, c.id))[:MAX_SEARCH_CHUNKS]:
+        toks = _tokens_with_spans(ch.text)
+        words = [t for t, _s, _e in toks]
+        best: tuple[int, int, int, int] | None = None  # (start, key_rank, end, _)
+        for rank, (_k, seq) in enumerate(seqs):
+            n = len(seq)
+            for j in range(len(words) - n + 1):
+                if tuple(words[j:j + n]) == seq:
+                    cand = (toks[j][1], rank, toks[j + n - 1][2], 0)
+                    if best is None or cand[:2] < best[:2]:
+                        best = cand
+                    break  # earliest occurrence of this key
+        if best is not None and _span_valid(ch.text, best[0], best[2], allowed):
+            return ch.id, best[0], best[2]
+    return None
+
+
 def write_graph(session, document_id: int, chunks, parties: list[str], preamble: str, file_name: str | None = None) -> tuple[int, int]:
     """Replace this document's graph rows (caller commits). `chunks`: objects with id/text/heading/ordinal.
-    Returns (entity_edges, clause_links)."""
+    Returns (entity_edges, clause_links).
+
+    Provenance: each entity edge stores ONE deterministic representative mention (see `find_mention`):
+    chunk_id + chunk-relative [span_start, span_end) with evidence_kind='span', or, when the name has no
+    validated textual mention (file-name-only company), NULL chunk/span with evidence_kind='none'. Clause
+    edges are chunk-level only (evidence_kind='chunk', no span): the classifier does not expose its match.
+    Rows from before migration 0019 keep NULL evidence_kind (legacy, unverified)."""
     from sqlalchemy import delete, select
 
     from docket.core.db.models import KagDocumentClause, KagDocumentEntity, KagEntity, KagEntityVariant
 
     session.execute(delete(KagDocumentEntity).where(KagDocumentEntity.document_id == document_id))
     session.execute(delete(KagDocumentClause).where(KagDocumentClause.document_id == document_id))
-    first_chunk = chunks[0].id if chunks else None
     edges = 0
     for display, role in preamble_entities(parties, preamble, file_name):
         key = core_name(display)
@@ -247,14 +340,188 @@ def write_graph(session, document_id: int, chunks, parties: list[str], preamble:
             if usable_variant(v) and session.get(KagEntityVariant, (ent.id, v)) is None:
                 session.add(KagEntityVariant(entity_id=ent.id, variant=v))
         if session.get(KagDocumentEntity, (document_id, ent.id, role)) is None:
-            session.add(KagDocumentEntity(document_id=document_id, entity_id=ent.id, role=role, chunk_id=first_chunk))
+            hit = find_mention(chunks, display)
+            if hit is None:
+                session.add(KagDocumentEntity(document_id=document_id, entity_id=ent.id, role=role, chunk_id=None,
+                                              span_start=None, span_end=None, evidence_kind=EVIDENCE_NONE))
+            else:
+                session.add(KagDocumentEntity(document_id=document_id, entity_id=ent.id, role=role, chunk_id=hit[0],
+                                              span_start=hit[1], span_end=hit[2], evidence_kind=EVIDENCE_SPAN))
             edges += 1
     links = 0
     for ch in chunks:
         for ctype, conf in classify_chunk(ch.text, getattr(ch, "heading", None)):
-            session.add(KagDocumentClause(document_id=document_id, clause_type=ctype, chunk_id=ch.id, confidence=conf))
+            session.add(KagDocumentClause(document_id=document_id, clause_type=ctype, chunk_id=ch.id,
+                                          confidence=conf, evidence_kind=EVIDENCE_CHUNK))
             links += 1
     return edges, links
+
+
+# --- provenance read helper + integrity ---------------------------------
+
+def _provenance(chunk_id, start, end, kind) -> dict:
+    """The R2b contract: {chunk_id, span_start, span_end, kind}. A span is only ever reported for kind
+    'span' with a complete, ordered span; 'none' reports no chunk; 'chunk' (clause) reports the chunk only.
+    Legacy rows (NULL kind, written before 0019) report NO chunk id and no span: their old chunk id was
+    always the document's first chunk, so it must not be presented as evidence. A 'span' row with
+    inconsistent columns, or an unknown kind, is 'stale', never promoted to 'span' or 'legacy' evidence."""
+    empty = {"chunk_id": None, "span_start": None, "span_end": None}
+    if kind == EVIDENCE_SPAN:
+        if chunk_id and start is not None and end is not None and 0 <= start < end:
+            return {"chunk_id": chunk_id, "span_start": start, "span_end": end, "kind": EVIDENCE_SPAN}
+        return {**empty, "kind": "stale"}
+    if kind == EVIDENCE_NONE:
+        return {**empty, "kind": EVIDENCE_NONE}
+    if kind == EVIDENCE_CHUNK:
+        return {"chunk_id": chunk_id, "span_start": None, "span_end": None, "kind": EVIDENCE_CHUNK}
+    if kind is None:
+        return {**empty, "kind": KIND_LEGACY}
+    return {**empty, "kind": "stale"}
+
+
+def entity_edge_provenance(session, document_id: int, entity_id: int, role: str = "party", *, verify: bool = True) -> dict | None:
+    """Provenance of one document->entity edge, or None when the edge does not exist. With `verify`, a
+    'span' edge whose chunk is gone, belongs to another version, or no longer slice-matches a recorded
+    variant is reported as kind 'stale' with no span."""
+    row = session.execute(text(
+        "SELECT chunk_id, span_start, span_end, evidence_kind FROM kag_document_entities "
+        "WHERE document_id = :d AND entity_id = :e AND role = :r"), {"d": document_id, "e": entity_id, "r": role}).first()
+    if row is None:
+        return None
+    prov = _provenance(*row)
+    if verify and prov["kind"] == EVIDENCE_SPAN:
+        chunk = session.execute(text(
+            "SELECT c.text, c.evidence_version_id = d.evidence_version_id FROM chunks c, documents d "
+            "WHERE c.id = :c AND d.id = :d"), {"c": prov["chunk_id"], "d": document_id}).first()
+        variants = set(session.execute(text(
+            "SELECT variant FROM kag_entity_variants WHERE entity_id = :e"), {"e": entity_id}).scalars())
+        if chunk is None or not chunk[1] or not _span_valid(chunk[0], prov["span_start"], prov["span_end"], variants):
+            return {"chunk_id": None, "span_start": None, "span_end": None, "kind": "stale"}
+    return prov
+
+
+def clause_edge_provenance(session, clause_row_id: int, *, verify: bool = True) -> dict | None:
+    """Provenance of one kag_document_clauses row (chunk-level; never a span). With `verify`, a 'chunk' row
+    whose chunk is gone or belongs to another evidence version than its document is reported 'stale'."""
+    row = session.execute(text(
+        "SELECT chunk_id, span_start, span_end, evidence_kind, document_id FROM kag_document_clauses WHERE id = :i"),
+        {"i": clause_row_id}).first()
+    if row is None:
+        return None
+    prov = _provenance(*row[:4])
+    if verify and prov["kind"] == EVIDENCE_CHUNK:
+        ok = session.execute(text(
+            "SELECT c.evidence_version_id = d.evidence_version_id FROM chunks c, documents d "
+            "WHERE c.id = :c AND d.id = :d"), {"c": prov["chunk_id"], "d": row[4]}).first()
+        if ok is None or not ok[0]:
+            return {"chunk_id": None, "span_start": None, "span_end": None, "kind": "stale"}
+    return prov
+
+
+@dataclass(frozen=True)
+class IntegrityReport:
+    """Counts only (no names, no text). `dangling` = chunk id with no chunks row; `version_mismatch` =
+    chunk belongs to a different evidence version than the edge's document; `span_mismatch` = 'span'
+    edge that no longer slices to a recorded variant (or has inconsistent columns)."""
+    entity_edges: int = 0
+    entity_span: int = 0
+    entity_none: int = 0
+    entity_legacy: int = 0
+    clause_edges: int = 0
+    clause_chunk: int = 0
+    clause_legacy: int = 0
+    dangling: int = 0
+    version_mismatch: int = 0
+    span_mismatch: int = 0
+    documents: int = 0              # info: documents of servable (READY, ACTIVE) versions
+    documents_no_graph: int = 0     # info only, NOT a problem: no graph rows (KAG off, or invalidated and not rebuilt)
+    documents_affected: int = 0     # distinct documents with dangling/mismatched/stale-span/legacy edges (repair targets)
+
+    @property
+    def problems(self) -> int:
+        return self.dangling + self.version_mismatch + self.span_mismatch
+
+    @property
+    def legacy_edges(self) -> int:
+        return self.entity_legacy + self.clause_legacy
+
+
+_SERVABLE_DOCS = (
+    "SELECT COUNT(*) FROM documents d JOIN evidence_versions ev ON ev.id = d.evidence_version_id "
+    "JOIN sources s ON s.id = ev.source_id WHERE ev.status = 'READY' AND s.status = 'ACTIVE'{extra}")
+_NO_GRAPH = (" AND NOT EXISTS (SELECT 1 FROM kag_document_entities x WHERE x.document_id = d.id)"
+             " AND NOT EXISTS (SELECT 1 FROM kag_document_clauses c WHERE c.document_id = d.id)")
+
+
+def affected_document_ids(session) -> set[int]:
+    """Read-only: ids of documents that own at least one dangling, version-mismatched, span-stale,
+    inconsistent or legacy (unverified) graph edge. These are the only documents `repair_graph` touches."""
+    ids: set[int] = set()
+    for tbl in ("kag_document_entities", "kag_document_clauses"):
+        chunk_nullable = tbl == "kag_document_entities"
+        ids.update(session.execute(text(
+            f"SELECT DISTINCT x.document_id FROM {tbl} x JOIN documents d ON d.id = x.document_id "
+            f"WHERE x.evidence_kind IS NULL "
+            f"OR ({'x.chunk_id IS NOT NULL AND ' if chunk_nullable else ''}NOT EXISTS "
+            "(SELECT 1 FROM chunks c WHERE c.id = x.chunk_id AND c.evidence_version_id = d.evidence_version_id))"
+        )).scalars())
+    ids.update(session.execute(text(
+        "SELECT DISTINCT document_id FROM kag_document_entities "
+        "WHERE (evidence_kind = 'span' AND (chunk_id IS NULL OR span_start IS NULL OR span_end IS NULL)) "
+        "OR (evidence_kind = 'none' AND (chunk_id IS NOT NULL OR span_start IS NOT NULL OR span_end IS NOT NULL))")).scalars())
+    ids.update(session.execute(text(
+        "SELECT DISTINCT document_id FROM kag_document_clauses WHERE span_start IS NOT NULL OR span_end IS NOT NULL")).scalars())
+    variants: dict[int, set[str]] = {}
+    for eid, v in session.execute(text("SELECT entity_id, variant FROM kag_entity_variants")):
+        variants.setdefault(eid, set()).add(v)
+    for did, eid, s, e, ctext in session.execute(text(
+            "SELECT x.document_id, x.entity_id, x.span_start, x.span_end, c.text FROM kag_document_entities x "
+            "JOIN chunks c ON c.id = x.chunk_id WHERE x.evidence_kind = 'span' "
+            "AND x.span_start IS NOT NULL AND x.span_end IS NOT NULL")):
+        if did not in ids and not _span_valid(ctext, s, e, variants.get(eid, set())):
+            ids.add(did)
+    return ids
+
+
+def check_graph_integrity(session) -> IntegrityReport:
+    """Read-only audit of graph provenance. Never writes."""
+    def one(sql: str) -> int:
+        return int(session.execute(text(sql)).scalar_one())
+
+    ent = "kag_document_entities"
+    cl = "kag_document_clauses"
+    dangling = one(f"SELECT COUNT(*) FROM {ent} x WHERE x.chunk_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM chunks c WHERE c.id = x.chunk_id)") \
+        + one(f"SELECT COUNT(*) FROM {cl} x WHERE NOT EXISTS (SELECT 1 FROM chunks c WHERE c.id = x.chunk_id)")
+    mismatch = one(
+        f"SELECT COUNT(*) FROM {ent} x JOIN chunks c ON c.id = x.chunk_id JOIN documents d ON d.id = x.document_id "
+        "WHERE c.evidence_version_id <> d.evidence_version_id") + one(
+        f"SELECT COUNT(*) FROM {cl} x JOIN chunks c ON c.id = x.chunk_id JOIN documents d ON d.id = x.document_id "
+        "WHERE c.evidence_version_id <> d.evidence_version_id")
+    bad_span = one(  # internally inconsistent provenance columns
+        f"SELECT COUNT(*) FROM {ent} WHERE (evidence_kind = 'span' AND (chunk_id IS NULL OR span_start IS NULL OR span_end IS NULL)) "
+        "OR (evidence_kind = 'none' AND (chunk_id IS NOT NULL OR span_start IS NOT NULL OR span_end IS NOT NULL))") + one(
+        f"SELECT COUNT(*) FROM {cl} WHERE span_start IS NOT NULL OR span_end IS NOT NULL")
+    variants: dict[int, set[str]] = {}
+    for eid, v in session.execute(text("SELECT entity_id, variant FROM kag_entity_variants")):
+        variants.setdefault(eid, set()).add(v)
+    for eid, s, e, ctext in session.execute(text(
+            f"SELECT x.entity_id, x.span_start, x.span_end, c.text FROM {ent} x JOIN chunks c ON c.id = x.chunk_id "
+            "WHERE x.evidence_kind = 'span' AND x.span_start IS NOT NULL AND x.span_end IS NOT NULL")):
+        if not _span_valid(ctext, s, e, variants.get(eid, set())):
+            bad_span += 1
+    return IntegrityReport(
+        documents=one(_SERVABLE_DOCS.format(extra="")),
+        documents_no_graph=one(_SERVABLE_DOCS.format(extra=_NO_GRAPH)),
+        documents_affected=len(affected_document_ids(session)),
+        entity_edges=one(f"SELECT COUNT(*) FROM {ent}"),
+        entity_span=one(f"SELECT COUNT(*) FROM {ent} WHERE evidence_kind = 'span'"),
+        entity_none=one(f"SELECT COUNT(*) FROM {ent} WHERE evidence_kind = 'none'"),
+        entity_legacy=one(f"SELECT COUNT(*) FROM {ent} WHERE evidence_kind IS NULL"),
+        clause_edges=one(f"SELECT COUNT(*) FROM {cl}"),
+        clause_chunk=one(f"SELECT COUNT(*) FROM {cl} WHERE evidence_kind = 'chunk'"),
+        clause_legacy=one(f"SELECT COUNT(*) FROM {cl} WHERE evidence_kind IS NULL"),
+        dangling=dangling, version_mismatch=mismatch, span_mismatch=bad_span,
+    )
 
 
 @dataclass(frozen=True)
@@ -299,6 +566,86 @@ def gc_graph(session_factory, lock, *, apply: bool = False) -> GcReport:
             report = gc_orphan_entities(session)
             session.commit()  # an exception above leaves the session uncommitted -> rolled back
             return report
+
+
+def invalidate_graph_for_version(session, evidence_version_id: str) -> int:
+    """Drop the graph EDGES (kag_document_entities, kag_document_clauses) of the documents of ONE evidence
+    version, then orphan-GC entities no document references any more. Runs in the CALLER's session and
+    transaction (no commit), so it commits or rolls back together with the chunk replace/delete that
+    triggers it. Returns the number of edges removed.
+
+    Design: the `documents` row and its `document_fields` are deliberately KEPT (they carry their own
+    deterministic fields and document-level matching depends on them); only the graph derived from the
+    now-replaced chunks goes. A version with no graph rows is simply "no graph evidence": kag.plan() cannot
+    match it (matching starts from entity edges), so it degrades to the non-KAG path. Nothing is rebuilt here
+    (no flag lookup, no models); the ingest hook (when enabled) or `docket library graph-integrity --repair
+    --apply` / `docket documents build` rebuild it. Other versions' documents and shared entities are untouched
+    (an entity survives while any document references it). Harmless and cheap when KAG never wrote a graph."""
+    p = {"v": evidence_version_id}
+    n = 0
+    for tbl in ("kag_document_entities", "kag_document_clauses"):
+        n += session.execute(text(
+            f"DELETE FROM {tbl} WHERE document_id IN (SELECT id FROM documents WHERE evidence_version_id = :v)"), p).rowcount or 0
+    if n:
+        gc_orphan_entities(session)
+    return n
+
+
+@dataclass(frozen=True)
+class RepairReport:
+    """Counts only. `candidates` = documents with dangling/mismatched/stale/legacy edges. `repairable` = of
+    those, current (READY, ACTIVE) with stored chunks. Unrepairable ones are reported, never changed."""
+    candidates: int = 0
+    repairable: int = 0
+    rebuilt: int = 0
+    failed: int = 0
+    deferred: int = 0            # repairable but beyond the per-run bound
+    unrepairable_not_current: int = 0   # version not READY or source not ACTIVE
+    unrepairable_no_chunks: int = 0     # no stored chunks to rebuild from
+    orphan_entities_removed: int = 0
+
+
+def repair_graph(session_factory, lock, *, apply: bool = False, max_documents: int = 500) -> RepairReport:
+    """Rebuild the graph of ONLY the affected documents, from the stored chunks (no original files, models
+    or network). Dry-run (default) takes no lock and writes nothing. Apply runs under the library writer
+    lock, one transaction per document (`build_for_version`, kag=True: rebuilds regardless of the
+    kag_scoping setting because the user asked explicitly), then one orphan GC. Idempotent: rebuilt documents
+    are clean, so a second run has nothing repairable."""
+    from sqlalchemy import select
+
+    from docket.core.db.models import Chunk, Document, EvidenceVersion, Source
+
+    with session_factory() as session:
+        todo: list[str] = []
+        not_current = no_chunks = 0
+        for did in sorted(affected_document_ids(session)):
+            d = session.get(Document, did)
+            v = session.get(EvidenceVersion, d.evidence_version_id) if d else None
+            src = session.get(Source, v.source_id) if v else None
+            if v is None or src is None or v.status != VersionStatus.READY or src.status != SourceStatus.ACTIVE:
+                not_current += 1
+            elif session.execute(select(Chunk.id).where(Chunk.evidence_version_id == v.id).limit(1)).first() is None:
+                no_chunks += 1
+            else:
+                todo.append(v.id)
+    batch, deferred = todo[:max_documents], max(0, len(todo) - max_documents)
+    base = dict(candidates=len(todo) + not_current + no_chunks, repairable=len(todo), deferred=deferred,
+                unrepairable_not_current=not_current, unrepairable_no_chunks=no_chunks)
+    if not apply or not batch:
+        return RepairReport(**base)
+    from docket.services.documents.builder import build_for_version
+
+    rebuilt = failed = 0
+    with lock.hold("repairing the entity graph"):
+        for vid in batch:
+            if build_for_version(session_factory, vid, True):
+                rebuilt += 1
+            else:
+                failed += 1
+        with session_factory() as session:
+            gc = gc_orphan_entities(session)
+            session.commit()
+    return RepairReport(**base, rebuilt=rebuilt, failed=failed, orphan_entities_removed=gc.entities)
 
 
 # --- query ---------------------------------------------------------------
@@ -404,6 +751,25 @@ def plan(engine: Engine, question: str, scope_version_ids: list[str] | None = No
         return KagPlan(reason="error")
 
 
+def _graph_trustworthy(engine: Engine, document_ids: list[int]) -> bool:
+    """'No clause rows' only means 'clause absent' when the document's graph provably belongs to its current
+    chunks: its version has chunks and none of its edges is dangling or points at another version's chunk.
+    A stale/partial graph is UNKNOWN, never evidence of absence (fail safe: the caller falls back to normal
+    retrieval and abstention rules). Fully built documents are unaffected."""
+    ids = ",".join(str(int(d)) for d in document_ids)
+    with engine.connect() as conn:
+        no_chunks = conn.execute(text(
+            "SELECT COUNT(*) FROM documents d WHERE d.id IN (" + ids + ") AND NOT EXISTS "
+            "(SELECT 1 FROM chunks c WHERE c.evidence_version_id = d.evidence_version_id)")).scalar_one()
+        stale = 0
+        for tbl, nullable in (("kag_document_entities", True), ("kag_document_clauses", False)):
+            stale += conn.execute(text(
+                f"SELECT COUNT(*) FROM {tbl} x JOIN documents d ON d.id = x.document_id WHERE d.id IN ({ids}) "
+                f"AND {'x.chunk_id IS NOT NULL AND ' if nullable else ''}NOT EXISTS "
+                "(SELECT 1 FROM chunks c WHERE c.id = x.chunk_id AND c.evidence_version_id = d.evidence_version_id)")).scalar_one()
+    return not no_chunks and not stale
+
+
 def _plan(engine: Engine, question: str, scope_version_ids: list[str] | None) -> KagPlan:
     clause = detect_clause_type(question)
     hits = match_entities(engine, question)
@@ -477,7 +843,7 @@ def _plan(engine: Engine, question: str, scope_version_ids: list[str] | None) ->
                 text("SELECT chunk_id, confidence FROM kag_document_clauses WHERE clause_type = :t AND document_id IN ("
                      + ",".join(str(int(d)) for d in dids) + ")"), {"t": clause.name}).all()
         p.clause_chunk_ids = {c: float(cf) for c, cf in crow}
-        p.clause_absent = bool(mode == "unique" and clause.can_be_absent and not crow)
+        p.clause_absent = bool(mode == "unique" and clause.can_be_absent and not crow and _graph_trustworthy(engine, dids))
     return p
 
 

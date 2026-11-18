@@ -120,6 +120,24 @@ class Citation(BaseModel):
     source_display_name: str
 
 
+_MAX_GRANT_FIELD = 200
+
+
+class CitationGrant(BaseModel):
+    """Authorization metadata for one final citation (additive; see
+    `_citation_grants`). `resolved_chunk_id` is set only when the resolver
+    mapped the cited id to a different (replacement) chunk."""
+
+    chunk_id: str
+    source_id: str
+    evidence_version_id: str
+    resolved_chunk_id: str | None = None
+
+
+def _grant_field_ok(value: object) -> bool:
+    return isinstance(value, str) and 0 < len(value) <= _MAX_GRANT_FIELD and "\x00" not in value
+
+
 class QueryResult(BaseModel):
     question: str
     answer: str
@@ -154,6 +172,10 @@ class QueryResult(BaseModel):
     # AbstentionReason value when the abstention has a specific code (an empty
     # or out-of-scope boundary); None otherwise.
     abstention_reason: str | None = None
+    # Per-citation evidence-read authorization metadata derived from the
+    # authoritative resolver against this question's own scope. Empty when
+    # abstained, uncited, or nothing could be proven.
+    evidence_grants: list[CitationGrant] = []
     # Optional for older consumers. Seconds, exclusive phases plus overhead.
     latency_by_phase: dict[str, float] | None = None
     latency_s: float | None = None
@@ -422,6 +444,8 @@ class QueryService:
         trimmed = trim_history(history)
         run = RunContext()
         kwargs: dict[str, Any] = {"boundary": boundary} if boundary is not None else {}
+        scope_sink: dict[str, Any] = {}
+        kwargs["scope_sink"] = scope_sink
         result = (
             self._ask_agent(question, trimmed, run, **kwargs)
             if mode == QueryMode.AGENT
@@ -435,10 +459,70 @@ class QueryService:
         # or the validation already done inside `_ask_fast`/`_ask_agent`.
         update: dict[str, Any] = {"answer": normalize_latex(result.answer)}
         update.update(self._tier_coverage(result))
+        if not result.abstained and result.citations and "ids" in scope_sink:
+            update["evidence_grants"] = self._citation_grants(
+                result.citations, boundary, scope_sink["ids"]
+            )
         if boundary is not None:
             update["scope_label"] = boundary.label
             update["scope_file_count"] = boundary.file_count
         return result.model_copy(update=update)
+
+    def _citation_grants(
+        self,
+        citations: list[Citation],
+        boundary: ResolvedScope | None,
+        scope_ids: list[str] | None,
+    ) -> list[CitationGrant]:
+        """Grant metadata for final, validated citations, from the resolver only.
+
+        A citation is granted only when its chunk resolves now and the resolved
+        chunk's version is inside the question's boundary and the retrieval
+        scope actually used. Anything else (unresolvable, duplicate or
+        conflicting ids, malformed ids, any error) yields no entry: never
+        guessed. No ids or text are logged."""
+        try:
+            counts: dict[str, int] = {}
+            for c in citations:
+                counts[c.chunk_id] = counts.get(c.chunk_id, 0) + 1
+            unique = [cid for cid, n in counts.items() if n == 1 and _grant_field_ok(cid)]
+            if not unique:
+                return []
+            by_id: dict[str, ResolvedEvidence] = {}
+            try:
+                batch = self._resolver.resolve_many(list(unique))
+                if len(batch) == len(unique):
+                    by_id = dict(zip(unique, batch))
+            except Exception:  # noqa: BLE001 -- fall back to one at a time
+                by_id = {}
+            if not by_id:
+                for cid in unique:
+                    try:
+                        one = self._resolver.resolve_many([cid])
+                        if len(one) == 1:
+                            by_id[cid] = one[0]
+                    except Exception:  # noqa: BLE001 -- unresolvable: not grantable
+                        continue
+            allowed = set(scope_ids) if scope_ids is not None else None
+            grants: list[CitationGrant] = []
+            for c in citations:
+                ev = by_id.get(c.chunk_id)
+                if ev is None:
+                    continue
+                vid, sid, rid = ev.evidence_version_id, ev.source_id, ev.chunk_id
+                if not (_grant_field_ok(vid) and _grant_field_ok(sid) and _grant_field_ok(rid)):
+                    continue
+                if boundary is not None and not boundary.contains(vid):
+                    continue
+                if allowed is not None and vid not in allowed:
+                    continue
+                grants.append(CitationGrant(
+                    chunk_id=c.chunk_id, source_id=sid, evidence_version_id=vid,
+                    resolved_chunk_id=rid if rid != c.chunk_id else None,
+                ))
+            return grants
+        except Exception:  # noqa: BLE001 -- metadata is advisory; never fail an answer
+            return []
 
     def _tier_coverage(self, result: QueryResult) -> dict[str, Any]:
         """Tiered indexing: when some files are still keyword-only, say how
@@ -532,6 +616,7 @@ class QueryService:
         history: list[ConversationTurn] | None = None,
         boundary: ResolvedScope | None = None,
         on_delta: Callable[[str], None] | None = None,
+        scope_sink: dict[str, Any] | None = None,
     ) -> QueryResult:
         # Follow-up rewrite: never on the first turn. The agent path computes
         # the same rewrite once per run (see `_ask_agent`).
@@ -544,6 +629,8 @@ class QueryService:
         )
         scope_ids, outside = self._combine_scope(named_ids, boundary)
         scoped_to = list(signals.scope_files) if named_ids and signals is not None else None
+        if scope_sink is not None and not outside:
+            scope_sink["ids"] = None if scope_ids is None else list(scope_ids)
         if outside and boundary is not None:
             return self._abstain_for_scope(
                 question, QueryMode.FAST, boundary, self._outside_message(boundary),
@@ -1070,6 +1157,7 @@ class QueryService:
         history: list[ConversationTurn] | None = None,
         run: RunContext | None = None,
         boundary: ResolvedScope | None = None,
+        scope_sink: dict[str, Any] | None = None,
     ) -> QueryResult:
         run = run if run is not None else RunContext()
         agent = self._get_agent()
@@ -1097,6 +1185,8 @@ class QueryService:
                 standalone=standalone, scoped_to=scoped_to,
                 warning="the named file is outside the selected scope",
             )
+        if scope_sink is not None:
+            scope_sink["ids"] = None if effective is None else list(effective)
         run.search_scope_ids = effective
         run.boundary_ids = (
             list(boundary.version_ids)

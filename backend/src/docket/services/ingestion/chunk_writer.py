@@ -137,11 +137,15 @@ class ChunkWriter:
         random, so they would otherwise be duplicated. Blob references are
         untouched: none are keyed by chunk/unit rows (they belong to the
         version's content and page images)."""
+        from docket.services.documents.kag import invalidate_graph_for_version
+
         with self._session_factory() as session:
             session.execute(delete(Chunk).where(Chunk.evidence_version_id == evidence_version_id))
             session.execute(
                 delete(EvidenceUnit).where(EvidenceUnit.evidence_version_id == evidence_version_id)
             )
+            # graph edges derived from these chunks go in the same transaction (see kag docstring)
+            invalidate_graph_for_version(session, evidence_version_id)
             session.commit()
 
     def chunk_recipe_ids_by_version(self, source_id: str) -> dict[str, set[str]]:
@@ -319,6 +323,8 @@ class ChunkWriter:
         says READY) and reconcile removes any that a crash left behind."""
         from sqlalchemy import text as sql_text
 
+        from docket.services.documents.kag import invalidate_graph_for_version
+
         with self._session_factory() as session:
             version = session.get(EvidenceVersion, evidence_version_id)
             if version is None or version.status == VersionStatus.SUPERSEDED:
@@ -340,6 +346,8 @@ class ChunkWriter:
             session.execute(
                 delete(EvidenceUnit).where(EvidenceUnit.evidence_version_id == evidence_version_id)
             )
+            # same transaction: graph edges derived from the replaced chunks are dropped (and roll back with us)
+            invalidate_graph_for_version(session, evidence_version_id)
             session.flush()
             session.add_all(built.units)
             session.flush()

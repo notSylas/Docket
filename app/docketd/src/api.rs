@@ -2,9 +2,10 @@
 
 use crate::config::Config;
 use crate::health::{self, HealthCache};
-use crate::tasks::{CancelOutcome, Pull, Registry, SubmitError, Tasks};
+use crate::tasks::{CancelOutcome, Grant, GrantLookup, Pull, Registry, SubmitError, Tasks};
 use crate::worker::{CallError, CallOpts, WorkerHandle};
 use axum::body::Bytes;
+use axum::extract::rejection::BytesRejection;
 use axum::extract::{DefaultBodyLimit, Extension, Path, Request, State};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
@@ -13,8 +14,9 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use docket_proto::api::{
-    ApiError, AskRequest, AskResult, ErrorBody, SourcesResponse, StatusResponse,
+    ApiError, AskRequest, AskResult, ErrorBody, SourcesResponse, StatusResponse, WorkerState,
 };
+use docket_proto::evidence::{EvidenceRequest, EvidenceResponse};
 use docket_proto::task::{
     CancelRequest, CancelResponse, CancelSource, CreateTaskRequest, CreateTaskResponse, TaskEvent,
     TaskEventBody, TaskId, TaskState, TasksResponse,
@@ -30,6 +32,12 @@ use tracing::{info, warn};
 
 const MAX_BODY: usize = 64 * 1024;
 const MAX_QUESTION_CHARS: usize = 8_000;
+/// Worker feature (and client capability) for `POST /v1/evidence/get`.
+const EVIDENCE_FEATURE: &str = "evidence.v1";
+/// A valid evidence request is two ids of at most 200 chars plus two digits.
+const MAX_EVIDENCE_BODY: usize = 8 * 1024;
+const MAX_EVIDENCE_ID_CHARS: usize = 200;
+const MAX_EVIDENCE_CONTEXT: u8 = 3;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -39,6 +47,7 @@ pub struct AppState {
     tasks: Tasks,
     tasks_enabled: bool,
     call_timeout: Duration,
+    evidence_timeout: Duration,
     counter: Arc<AtomicU64>,
     boot: u64,
     cfg: Arc<Config>,
@@ -59,6 +68,7 @@ impl AppState {
             ask_slot,
             tasks_enabled: cfg.tasks_enabled,
             call_timeout: cfg.call_timeout,
+            evidence_timeout: cfg.evidence_timeout,
             counter: Arc::new(AtomicU64::new(1)),
             boot,
             cfg: Arc::new(cfg.clone()),
@@ -99,7 +109,8 @@ pub fn router(state: AppState) -> Router {
         r = r
             .route("/v1/tasks", post(create_task).get(list_tasks))
             .route("/v1/tasks/{id}/events", get(task_events))
-            .route("/v1/tasks/{id}/cancel", post(cancel_task));
+            .route("/v1/tasks/{id}/cancel", post(cancel_task))
+            .route("/v1/evidence/get", post(evidence_get));
     }
     r.layer(DefaultBodyLimit::max(MAX_BODY))
         .layer(middleware::from_fn_with_state(state.clone(), request_id))
@@ -192,6 +203,9 @@ async fn status(State(st): State<AppState>) -> Json<StatusResponse> {
     }
     if v2 {
         capabilities.push("status.v2".to_string());
+    }
+    if st.tasks_enabled && meta.features.iter().any(|f| f == EVIDENCE_FEATURE) {
+        capabilities.push(EVIDENCE_FEATURE.to_string());
     }
     Json(StatusResponse {
         service: "ok".into(),
@@ -540,4 +554,330 @@ async fn cancel_task(
         accepted,
     })
     .into_response()
+}
+
+// ---------------------------------------------------------------------------
+// POST /v1/evidence/get
+// ---------------------------------------------------------------------------
+
+fn valid_evidence_id(s: &str) -> bool {
+    let n = s.chars().count();
+    (1..=MAX_EVIDENCE_ID_CHARS).contains(&n) && !s.contains('\0')
+}
+
+/// Strict request parsing. The error is a unit: the caller answers with one
+/// fixed message, so no value is ever echoed.
+fn parse_evidence(body: &[u8]) -> Result<EvidenceRequest, ()> {
+    if body.len() > MAX_EVIDENCE_BODY {
+        return Err(());
+    }
+    let req: EvidenceRequest = serde_json::from_slice(body).map_err(|_| ())?;
+    let window_ok = |w: Option<u8>| w.is_none_or(|n| n <= MAX_EVIDENCE_CONTEXT);
+    if valid_evidence_id(&req.task_id)
+        && valid_evidence_id(&req.chunk_id)
+        && window_ok(req.before)
+        && window_ok(req.after)
+    {
+        Ok(req)
+    } else {
+        Err(())
+    }
+}
+
+/// Typed outcomes are HTTP 200 with only the outcome body; the log line (debug
+/// level) carries the outcome code and nothing else.
+fn evidence_reply(r: EvidenceResponse) -> Response {
+    let code = match &r {
+        EvidenceResponse::Ok(_) => "ok",
+        EvidenceResponse::NotFound => "not_found",
+        EvidenceResponse::SourceUnavailable => "source_unavailable",
+        EvidenceResponse::Superseded => "superseded",
+        EvidenceResponse::NotCited => "not_cited",
+        EvidenceResponse::Busy => "busy",
+        EvidenceResponse::Timeout => "timeout",
+        EvidenceResponse::WorkerUnavailable => "worker_unavailable",
+        EvidenceResponse::Unsupported | EvidenceResponse::Unknown => "unsupported",
+    };
+    tracing::debug!(target: "docketd::evidence", outcome = code, "evidence read");
+    (StatusCode::OK, Json(r)).into_response()
+}
+
+/// Exactly the params the worker is sent. Everything comes from the grant
+/// (minted from the task's own citations); the client contributes only the
+/// optional context window. The worker default (1) applies when absent.
+fn evidence_params(grant: &Grant, req: &EvidenceRequest) -> (String, Value) {
+    let sent = grant
+        .resolved_chunk_id
+        .clone()
+        .unwrap_or_else(|| grant.chunk_id.clone());
+    let mut p = serde_json::Map::new();
+    p.insert("chunk_id".into(), Value::String(sent.clone()));
+    p.insert(
+        "allowed_version_ids".into(),
+        Value::Array(vec![Value::String(grant.evidence_version_id.clone())]),
+    );
+    if let Some(b) = req.before {
+        p.insert("before".into(), b.into());
+    }
+    if let Some(a) = req.after {
+        p.insert("after".into(), a.into());
+    }
+    if !grant.excerpt.is_empty() {
+        p.insert(
+            "answer_excerpt".into(),
+            Value::String(grant.excerpt.clone()),
+        );
+    }
+    (sent, Value::Object(p))
+}
+
+/// Turn the worker's answer into the client's. Defence in depth: the worker is
+/// trusted to enforce `allowed_version_ids`, but data from another version,
+/// another source or another chunk is never returned. Worker-originated
+/// daemon-only outcomes (`not_cited`, `busy`, `timeout`, `worker_unavailable`),
+/// an unknown outcome and a malformed result all become `unsupported`: a worker
+/// cannot make the daemon grant or deny anything by naming them.
+fn map_evidence_result(
+    res: Result<Value, CallError>,
+    grant: &Grant,
+    sent: &str,
+) -> EvidenceResponse {
+    let v = match res {
+        Ok(v) => v,
+        Err(CallError::Timeout) => return EvidenceResponse::Timeout,
+        Err(_) => return EvidenceResponse::WorkerUnavailable,
+    };
+    let Ok(parsed) = serde_json::from_value::<EvidenceResponse>(v) else {
+        mismatch("malformed_result");
+        return EvidenceResponse::Unsupported;
+    };
+    match parsed {
+        EvidenceResponse::Ok(mut ok) => {
+            let same = |p: &docket_proto::evidence::Passage| {
+                p.evidence_version_id == grant.evidence_version_id && p.source_id == grant.source_id
+            };
+            let p = &ok.passage;
+            let chunk_ok = p.chunk_id == sent
+                || p.replaced_from
+                    .as_deref()
+                    .is_some_and(|r| r == sent || r == grant.chunk_id);
+            if !(same(p)
+                && chunk_ok
+                && ok.context_before.iter().all(same)
+                && ok.context_after.iter().all(same))
+            {
+                mismatch("identity_mismatch");
+                return EvidenceResponse::NotFound;
+            }
+            ok.untrusted_content = true;
+            EvidenceResponse::Ok(ok)
+        }
+        r @ (EvidenceResponse::NotFound
+        | EvidenceResponse::SourceUnavailable
+        | EvidenceResponse::Superseded) => r,
+        _ => {
+            mismatch("unexpected_outcome");
+            EvidenceResponse::Unsupported
+        }
+    }
+}
+
+/// Content-free diagnostic for a worker reply that broke the evidence
+/// contract: a fixed reason code only, never ids, text or the reply itself.
+fn mismatch(reason: &'static str) {
+    tracing::warn!(target: "docketd::evidence", reason, "evidence protocol mismatch");
+}
+
+async fn evidence_get(
+    State(st): State<AppState>,
+    Extension(rid): Extension<RequestId>,
+    body: Result<Bytes, BytesRejection>,
+) -> Response {
+    // a. Validate. One fixed message; no value is ever echoed.
+    let Some(req) = body.ok().and_then(|b| parse_evidence(&b).ok()) else {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "bad_request",
+            "invalid evidence request",
+            &rid.0,
+        );
+    };
+    // b. Authorize, before anything that depends on existence or worker state.
+    let grant = match st.tasks.registry.grant_lookup(&req.task_id, &req.chunk_id) {
+        GrantLookup::NotCited => return evidence_reply(EvidenceResponse::NotCited),
+        GrantLookup::Unsupported => return evidence_reply(EvidenceResponse::Unsupported),
+        GrantLookup::Granted(g) => g,
+    };
+    // c. Worker state. State is checked first: while a worker restarts its
+    // feature list is momentarily empty and that must read as unavailable,
+    // not as an old worker.
+    if st.worker.info().state != WorkerState::Up {
+        return evidence_reply(EvidenceResponse::WorkerUnavailable);
+    }
+    if !st
+        .worker
+        .meta()
+        .features
+        .iter()
+        .any(|f| f == EVIDENCE_FEATURE)
+    {
+        return evidence_reply(EvidenceResponse::Unsupported);
+    }
+    // d. A question is running or queued: never queue behind it.
+    if st.ask_slot.available_permits() == 0 {
+        return evidence_reply(EvidenceResponse::Busy);
+    }
+    // e. Neither the ask slot nor any task state is touched. A soft timeout
+    // leaves the worker running.
+    let (sent, params) = evidence_params(&grant, &req);
+    let res = st
+        .worker
+        .call("evidence.get", params, CallOpts::soft(st.evidence_timeout))
+        .await;
+    // f. Map.
+    evidence_reply(map_evidence_result(res, &grant, &sent))
+}
+
+#[cfg(test)]
+mod evidence_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn grant() -> Grant {
+        Grant {
+            chunk_id: "c1".into(),
+            source_id: "s1".into(),
+            evidence_version_id: "v1".into(),
+            resolved_chunk_id: None,
+            excerpt: String::new(),
+        }
+    }
+
+    fn passage(chunk: &str, src: &str, ver: &str) -> Value {
+        json!({"chunk_id":chunk,"source_id":src,"source_display_name":"a.txt",
+               "evidence_version_id":ver,"ordinal":1,"text":"t"})
+    }
+
+    fn ok(p: Value, before: Vec<Value>) -> Value {
+        json!({"outcome":"ok","passage":p,"context_before":before,"context_after":[]})
+    }
+
+    #[test]
+    fn request_validation_is_strict() {
+        assert!(parse_evidence(br#"{"task_id":"t","chunk_id":"c"}"#).is_ok());
+        assert!(parse_evidence(br#"{"task_id":"t","chunk_id":"c","before":3,"after":0}"#).is_ok());
+        let long = "x".repeat(201);
+        let bad: Vec<String> = vec![
+            "".into(),
+            "nope".into(),
+            r#"{"task_id":"","chunk_id":"c"}"#.into(),
+            r#"{"task_id":"t","chunk_id":""}"#.into(),
+            r#"{"task_id":"t","chunk_id":"a\u0000b"}"#.into(),
+            format!(r#"{{"task_id":"t","chunk_id":"{long}"}}"#),
+            r#"{"task_id":"t","chunk_id":"c","before":4}"#.into(),
+            r#"{"task_id":"t","chunk_id":"c","after":-1}"#.into(),
+            r#"{"task_id":"t","chunk_id":"c","after":1.5}"#.into(),
+            r#"{"task_id":"t","chunk_id":"c","after":"1"}"#.into(),
+            r#"{"task_id":"t","chunk_id":"c","evidence_version_id":"v"}"#.into(),
+            r#"{"task_id":"t","chunk_id":"c","allowed_version_ids":["v"]}"#.into(),
+            r#"{"task_id":"t","chunk_id":"c","scope":"all"}"#.into(),
+            format!(
+                r#"{{"task_id":"t","chunk_id":"c","pad":"{}"}}"#,
+                "x".repeat(9000)
+            ),
+        ];
+        for b in bad {
+            assert!(parse_evidence(b.as_bytes()).is_err(), "{b}");
+        }
+        let two_hundred = "é".repeat(200);
+        let b = format!(r#"{{"task_id":"t","chunk_id":"{two_hundred}"}}"#);
+        assert!(parse_evidence(b.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn params_come_only_from_the_grant() {
+        let req = |before, after| EvidenceRequest {
+            task_id: "t".into(),
+            chunk_id: "c1".into(),
+            before,
+            after,
+        };
+        let (sent, p) = evidence_params(&grant(), &req(None, None));
+        assert_eq!(sent, "c1");
+        assert_eq!(p, json!({"chunk_id":"c1","allowed_version_ids":["v1"]}));
+        let mut g = grant();
+        g.resolved_chunk_id = Some("new".into());
+        g.excerpt = "ex".into();
+        let (sent, p) = evidence_params(&g, &req(Some(0), Some(3)));
+        assert_eq!(sent, "new");
+        assert_eq!(
+            p,
+            json!({"chunk_id":"new","allowed_version_ids":["v1"],
+                   "before":0,"after":3,"answer_excerpt":"ex"})
+        );
+    }
+
+    #[test]
+    fn untrusted_content_is_forced_true_whatever_the_worker_says() {
+        let g = grant();
+        for flag in [json!(false), json!(null), json!("no")] {
+            let mut v = ok(passage("c1", "s1", "v1"), vec![passage("c0", "s1", "v1")]);
+            v["untrusted_content"] = flag;
+            match map_evidence_result(Ok(v), &g, "c1") {
+                EvidenceResponse::Ok(o) => assert!(o.untrusted_content),
+                other => assert_eq!(
+                    other,
+                    EvidenceResponse::Unsupported,
+                    "bad flag types are rejected, never ok"
+                ),
+            }
+        }
+        let mut v = ok(passage("c1", "s1", "v1"), vec![]);
+        v["untrusted_content"] = json!(false);
+        match map_evidence_result(Ok(v), &g, "c1") {
+            EvidenceResponse::Ok(o) => assert!(o.untrusted_content),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn worker_result_mapping() {
+        let g = grant();
+        let map = |v: Value| map_evidence_result(Ok(v), &g, "c1");
+        assert!(map(ok(
+            passage("c1", "s1", "v1"),
+            vec![passage("c0", "s1", "v1")]
+        ))
+        .is_ok());
+        // replaced_from names the requested id.
+        let mut p = passage("new", "s1", "v1");
+        p["replaced_from"] = json!("c1");
+        assert!(map(ok(p, vec![])).is_ok());
+        for bad in [
+            ok(passage("c1", "s1", "v2"), vec![]),
+            ok(passage("c1", "s2", "v1"), vec![]),
+            ok(passage("zz", "s1", "v1"), vec![]),
+            ok(passage("c1", "s1", "v1"), vec![passage("c0", "s1", "v9")]),
+            ok(passage("c1", "s1", "v1"), vec![passage("c0", "s9", "v1")]),
+        ] {
+            assert_eq!(map(bad), EvidenceResponse::NotFound);
+        }
+        assert_eq!(
+            map(json!({"outcome":"superseded"})),
+            EvidenceResponse::Superseded
+        );
+        for o in ["not_cited", "busy", "timeout", "worker_unavailable", "x"] {
+            assert_eq!(map(json!({"outcome":o})), EvidenceResponse::Unsupported);
+        }
+        assert_eq!(map(json!({"nope":1})), EvidenceResponse::Unsupported);
+        assert_eq!(map(json!(null)), EvidenceResponse::Unsupported);
+        assert_eq!(
+            map_evidence_result(Err(CallError::Timeout), &g, "c1"),
+            EvidenceResponse::Timeout
+        );
+        assert_eq!(
+            map_evidence_result(Err(CallError::Crashed), &g, "c1"),
+            EvidenceResponse::WorkerUnavailable
+        );
+    }
 }

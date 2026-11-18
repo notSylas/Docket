@@ -46,6 +46,15 @@ pub struct Config {
     /// detection is the idle ping and the ask timeout). It is also the longest
     /// a question can wait behind a health call already in flight.
     pub health_timeout: Duration,
+    /// Limit for one `evidence.get` read (`POST /v1/evidence/get`). It is a
+    /// soft timeout like `health`: a miss answers `timeout` and never kills or
+    /// replaces the worker. It bounds how long the DAEMON waits for the reply.
+    /// The worker handles one request at a time, so a question that arrives
+    /// while a read is still running waits for that read to finish: normally
+    /// milliseconds (indexed SQLite reads, no model), and in a pathological
+    /// case bounded by SQLite's 15 s busy timeout, not by this value. A read
+    /// is refused as `busy` once a question holds the ask slot.
+    pub evidence_timeout: Duration,
 }
 
 fn env_ms(name: &str, default: u64) -> Duration {
@@ -55,6 +64,16 @@ fn env_ms(name: &str, default: u64) -> Duration {
             .and_then(|v| v.parse().ok())
             .unwrap_or(default),
     )
+}
+
+/// Like `env_ms`, but a value that parses and is outside `min..=max` is an
+/// error (an unparsable value falls back to the default, as for `env_ms`).
+fn env_ms_bounded(name: &str, default: u64, min: u64, max: u64) -> Result<Duration, String> {
+    match std::env::var(name).ok().and_then(|v| v.parse::<u64>().ok()) {
+        None => Ok(Duration::from_millis(default)),
+        Some(v) if (min..=max).contains(&v) => Ok(Duration::from_millis(v)),
+        Some(_) => Err(format!("{name} must be between {min} and {max}")),
+    }
 }
 
 fn env_usize(name: &str, default: usize) -> usize {
@@ -73,7 +92,9 @@ impl Config {
     /// `DOCKET_CANCEL_GRACE_MS`, and for tasks `DOCKET_TASKS` (`off` hides the
     /// task routes), `DOCKET_TASK_TAIL`, `DOCKET_RETAINED_TASKS`, `DOCKET_MAX_QUEUED_TASKS`, and for
     /// status `DOCKET_HEALTH_INTERVAL_MS` (15000; 0 = off), `DOCKET_HEALTH_STALE_MS`
-    /// (3x the interval) and `DOCKET_HEALTH_TIMEOUT_MS` (2000).
+    /// (3x the interval) and `DOCKET_HEALTH_TIMEOUT_MS` (2000), and for evidence
+    /// reads `DOCKET_EVIDENCE_TIMEOUT_MS` (3000; accepted range 100..=60000, a
+    /// value outside it is a start-up error).
     pub fn from_env() -> Result<Self, String> {
         let (socket, socket_is_default) = match std::env::var_os("DOCKET_SOCKET") {
             Some(p) => (PathBuf::from(p), false),
@@ -84,6 +105,7 @@ impl Config {
         if worker_cmd.is_empty() {
             return Err("DOCKET_WORKER_CMD is empty".into());
         }
+        let evidence_timeout = env_ms_bounded("DOCKET_EVIDENCE_TIMEOUT_MS", 3_000, 100, 60_000)?;
         let health_interval = env_ms("DOCKET_HEALTH_INTERVAL_MS", 15_000);
         Ok(Self {
             socket,
@@ -110,6 +132,7 @@ impl Config {
                 (health_interval.as_millis() as u64).saturating_mul(3),
             ),
             health_timeout: env_ms("DOCKET_HEALTH_TIMEOUT_MS", 2_000),
+            evidence_timeout,
         })
     }
 }
