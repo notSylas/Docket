@@ -41,8 +41,10 @@ pub struct Config {
     pub health_interval: Duration,
     /// A health section older than this is reported `stale`.
     pub health_stale: Duration,
-    /// Limit for one `health` call. A worker that misses it is replaced like
-    /// any hung worker, so keep it generous but well under a question's.
+    /// Limit for one `health` call. A miss only marks the health sections
+    /// stale (`health_timeout`); the worker is NOT replaced for it (real hang
+    /// detection is the idle ping and the ask timeout). It is also the longest
+    /// a question can wait behind a health call already in flight.
     pub health_timeout: Duration,
 }
 
@@ -71,7 +73,7 @@ impl Config {
     /// `DOCKET_CANCEL_GRACE_MS`, and for tasks `DOCKET_TASKS` (`off` hides the
     /// task routes), `DOCKET_TASK_TAIL`, `DOCKET_RETAINED_TASKS`, `DOCKET_MAX_QUEUED_TASKS`, and for
     /// status `DOCKET_HEALTH_INTERVAL_MS` (15000; 0 = off), `DOCKET_HEALTH_STALE_MS`
-    /// (3x the interval) and `DOCKET_HEALTH_TIMEOUT_MS` (5000).
+    /// (3x the interval) and `DOCKET_HEALTH_TIMEOUT_MS` (2000).
     pub fn from_env() -> Result<Self, String> {
         let (socket, socket_is_default) = match std::env::var_os("DOCKET_SOCKET") {
             Some(p) => (PathBuf::from(p), false),
@@ -107,7 +109,7 @@ impl Config {
                 "DOCKET_HEALTH_STALE_MS",
                 (health_interval.as_millis() as u64).saturating_mul(3),
             ),
-            health_timeout: env_ms("DOCKET_HEALTH_TIMEOUT_MS", 5_000),
+            health_timeout: env_ms("DOCKET_HEALTH_TIMEOUT_MS", 2_000),
         })
     }
 }

@@ -528,6 +528,7 @@ impl Tasks {
                     progress: Some(ptx),
                     cancel: Some(cancel.clone()),
                     task: Some(id.clone()),
+                    ..CallOpts::default()
                 },
             )
             .await;
