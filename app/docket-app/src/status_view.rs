@@ -54,7 +54,10 @@ const MODEL_CODES: &[(&str, &str)] = &[
     ("model_missing", "a model is not installed"),
     ("ollama_unreachable", "model server not reachable"),
     ("ollama_not_local", "model server is not local"),
-    ("ollama_bad_response", "model server gave an unexpected reply"),
+    (
+        "ollama_bad_response",
+        "model server gave an unexpected reply",
+    ),
 ];
 const INDEX_CODES: &[(&str, &str)] = &[
     ("ok", "index fine"),
@@ -112,7 +115,10 @@ const ANOMALY_CODES: &[(&str, &str)] = &[
     ("keyword_only_idle", "some files are keyword-only"),
 ];
 const WARNING_CODES: &[(&str, &str)] = &[
-    ("evidence_unavailable", "cited evidence is no longer available"),
+    (
+        "evidence_unavailable",
+        "cited evidence is no longer available",
+    ),
     ("no_citations", "the answer has no citations"),
     ("empty_answer", "the answer is empty"),
     (
@@ -120,7 +126,10 @@ const WARNING_CODES: &[(&str, &str)] = &[
         "the named file is outside the selected scope",
     ),
     ("unknown_citation", "the answer cites an unknown passage"),
-    ("named_file_empty", "the named file has no searchable passages"),
+    (
+        "named_file_empty",
+        "the named file has no searchable passages",
+    ),
     (
         "keyword_only_evidence",
         "the answer used keyword-only passages",
@@ -363,7 +372,10 @@ impl StatusModel {
         let since = now_ms.saturating_sub(self.received_ms);
         let silent = self.error.is_none() && since > STATUS_STALE_LOCAL_MS;
         let v2 = st.health.is_some() && st.has_capability("status.v2");
-        let down_err = self.error.clone().or(silent.then_some(FetchError::Unreachable));
+        let down_err = self
+            .error
+            .clone()
+            .or(silent.then_some(FetchError::Unreachable));
 
         if !v2 {
             // Old daemon: today's behaviour, nothing new.
@@ -446,7 +458,10 @@ impl StatusModel {
         };
         let mut wtip = vec![
             format!("Relaunches {} · failures {}", wp.restarts, wp.crashes),
-            format!("In this state for {}", fmt_dur((wp.since_ms + since) / 1000)),
+            format!(
+                "In this state for {}",
+                fmt_dur((wp.since_ms + since) / 1000)
+            ),
         ];
         wtip.push(match wp.last_ok_age_ms {
             Some(a) => format!("Last reply {}", fmt_age(a + since)),
@@ -528,8 +543,10 @@ impl StatusModel {
             });
         }
         for c in &chips {
-            if matches!(c.kind, ChipKind::Model | ChipKind::Database | ChipKind::Index)
-                && !c.stale
+            if matches!(
+                c.kind,
+                ChipKind::Model | ChipKind::Database | ChipKind::Index
+            ) && !c.stale
                 && matches!(c.tone, Tone::Warn | Tone::Bad)
             {
                 banners.push(Banner {
@@ -737,7 +754,11 @@ fn model_chip(s: Option<&Section<ModelsData>>, c: &Fresh) -> Chip {
         tip.push(format!("Reason: {}", lookup(MODEL_CODES, &s.code)));
     }
     tip.push(fresh_tip(age, stale));
-    let mut tone = if tone_rank(at) >= tone_rank(et) { at } else { et };
+    let mut tone = if tone_rank(at) >= tone_rank(et) {
+        at
+    } else {
+        et
+    };
     let st = section_tone(s.state);
     if tone_rank(st) > tone_rank(tone) && st != Tone::Good {
         tone = st;
@@ -842,7 +863,8 @@ fn index_chip(s: Option<&Section<IndexingData>>, c: &Fresh) -> Chip {
                 _ => format!("indexing, progress unknown ({eta})"),
             };
             tone = Tone::Info;
-        } else if v.failed.unwrap_or(0) > 0 && v.ready.unwrap_or(0) + v.keyword_only.unwrap_or(0) == 0
+        } else if v.failed.unwrap_or(0) > 0
+            && v.ready.unwrap_or(0) + v.keyword_only.unwrap_or(0) == 0
         {
             value = format!("failed ({} files)", v.failed.unwrap_or(0));
             tone = Tone::Bad;
@@ -1013,9 +1035,9 @@ pub fn source_view(s: &SourceInfo, v2: bool) -> SourceView {
         match s.readiness.unwrap_or(Readiness::Unknown) {
             Readiness::Ready => {
                 let usable_ok = versions.is_some_and(|v| v.ready.unwrap_or(0) > 0);
-                let clean = versions.is_some_and(|v| {
-                    v.pending.unwrap_or(0) == 0 && v.failed.unwrap_or(0) == 0
-                }) && s.anomalies.is_empty();
+                let clean = versions
+                    .is_some_and(|v| v.pending.unwrap_or(0) == 0 && v.failed.unwrap_or(0) == 0)
+                    && s.anomalies.is_empty();
                 if has_empty_ready || (usable_ok && !clean) {
                     ("Partly ready".to_string(), Tone::Warn)
                 } else if usable_ok {
@@ -1030,10 +1052,7 @@ pub fn source_view(s: &SourceInfo, v2: bool) -> SourceView {
                     .map(|v| v.ready.unwrap_or(0) + v.keyword_only.unwrap_or(0))
                     .filter(|_| versions.is_some_and(|v| v.ready.is_some()));
                 match usable {
-                    Some(0) => (
-                        "Indexing, no usable files yet".to_string(),
-                        Tone::Info,
-                    ),
+                    Some(0) => ("Indexing, no usable files yet".to_string(), Tone::Info),
                     _ => ("Indexing".to_string(), Tone::Info),
                 }
             }
@@ -1152,7 +1171,10 @@ impl SourcesState {
     pub fn note(&self, now_ms: u64, question_running: bool) -> Option<String> {
         let age = self.age_ms(now_ms)?;
         if self.refresh_failed {
-            Some(format!("Could not refresh. Showing the list from {}.", fmt_age(age)))
+            Some(format!(
+                "Could not refresh. Showing the list from {}.",
+                fmt_age(age)
+            ))
         } else if age > SOURCES_STALE_MS || question_running {
             Some(format!("As of {}", fmt_age(age)))
         } else {
