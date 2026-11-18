@@ -37,7 +37,10 @@ pub enum Event {
     /// The question was stopped; the partial text is gone.
     Cancelled,
     /// The stop request could not be delivered.
-    StopFailed(String),
+    StopFailed {
+        task_id: String,
+        message: String,
+    },
 }
 
 pub struct Backend {
@@ -235,7 +238,14 @@ impl Backend {
                     }
                 });
             if let Err(e) = res {
-                send(&tx, &ctx, Event::StopFailed(format!("could not stop: {e}")));
+                send(
+                    &tx,
+                    &ctx,
+                    Event::StopFailed {
+                        task_id,
+                        message: format!("could not stop: {e}"),
+                    },
+                );
             }
         });
     }
