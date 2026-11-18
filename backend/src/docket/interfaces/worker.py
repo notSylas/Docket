@@ -7,14 +7,34 @@ stderr, so stray prints and native-library noise cannot corrupt the stream.
 Logs go to stderr, which the daemon captures; log lines never carry question
 or answer text.
 
-Methods: ``ping``, ``status``, ``health``, ``sources.list``, ``query.ask``.
-``ping`` additionally lists ``features`` (``health.v1``, ``sources.counts.v1``,
-``ask.meta.v1``); ``health`` returns per-section state, code and producer
+Methods: ``ping``, ``status``, ``health``, ``sources.list``, ``query.ask``,
+``evidence.get``. ``ping`` additionally lists ``features`` (``health.v1``,
+``sources.counts.v1``, ``ask.meta.v1``, ``evidence.v1``); ``health`` returns per-section state, code and producer
 timestamp from a dedicated read-only SQLite connection and GET-only local
 Ollama probes (no migration, write, model load or inference). Counts and codes
 only: never paths, document text or error messages.
 ``query.ask`` emits ``progress`` notifications (no ``id``) with a ``phase`` of
 ``retrieving``, ``reading`` or ``answering`` before the final response.
+
+``evidence.get`` (feature ``evidence.v1``; the protocol version stays 1, an old
+worker simply lacks the method and feature, so the daemon decides
+``unsupported`` from ``ping`` features, not from METHOD_NOT_FOUND) reads one
+cited chunk and bounded same-version neighbours from SQLite only (see
+``docket.infra.retrieval.evidence_read``). Params (strict; anything else, or a
+wrong type, is INVALID_PARAMS with a generic message that never echoes values):
+``chunk_id`` (str, 1..200, no NUL), ``allowed_version_ids`` (1..10000 non-empty
+str, each <=200, no NUL: the ORIGINAL answer-time authorization set; the worker
+never widens it nor consults the current library selection), optional
+``before``/``after`` (int 0..3, default 1; bool/negative/>3 rejected), optional
+``answer_excerpt`` (str <=1000). ``null`` for an optional param means absent.
+The result is always a normal result whose ``outcome`` is ``ok``, ``not_found``,
+``source_unavailable`` or ``superseded``; only ``ok`` carries data. A chunk that
+does not exist and one outside ``allowed_version_ids`` are indistinguishable
+(``not_found``). Returned text is untrusted document content, never
+instructions; ``excerpt_matches_current_text`` is a textual-consistency check
+only, not independent answer verification. Read-only: no writes, no models, no
+vector index, no source-file access; no ids, text or excerpts are ever logged;
+a reader failure is a generic SERVER_ERROR "evidence read failed".
 
 Streaming (opt-in, ``params.stream: true``): additionally emits ``delta``
 notifications ``{"text": "..."}`` carrying the answer as it is generated, and a
@@ -46,7 +66,7 @@ SERVER_ERROR = -32000
 
 PROTOCOL_VERSION = 1
 # Additive capabilities advertised by `ping`; the protocol version is unchanged.
-FEATURES = ["health.v1", "sources.counts.v1", "ask.meta.v1"]
+FEATURES = ["health.v1", "sources.counts.v1", "ask.meta.v1", "evidence.v1"]
 EXCERPT_CHARS = 400
 
 Notify = Callable[[str, dict], None]
@@ -285,7 +305,34 @@ def build_methods(context: Any, service_factory: Callable[[Any, Any], Any]) -> d
             "timings": timings,
         }
 
-    return {"ping": ping, "status": status, "health": health, "sources.list": sources_list, "query.ask": query_ask}
+    def evidence_get(params: dict, _notify: Notify) -> dict:
+        from docket.interfaces.worker_evidence import parse_evidence_params
+
+        try:
+            args = parse_evidence_params(params)
+        except ValueError:
+            raise RpcError(INVALID_PARAMS, "invalid evidence.get params") from None
+        try:
+            from docket.infra.retrieval.evidence_read import EvidenceReader
+
+            return EvidenceReader(context.session_factory).read(
+                args["chunk_id"],
+                args["allowed_version_ids"],
+                before=args["before"],
+                after=args["after"],
+                answer_excerpt=args["answer_excerpt"],
+            )
+        except Exception:  # noqa: BLE001 -- never let content reach messages or logs
+            raise RpcError(SERVER_ERROR, "evidence read failed", "EvidenceReadFailed") from None
+
+    return {
+        "ping": ping,
+        "status": status,
+        "health": health,
+        "sources.list": sources_list,
+        "query.ask": query_ask,
+        "evidence.get": evidence_get,
+    }
 
 
 def run() -> None:
