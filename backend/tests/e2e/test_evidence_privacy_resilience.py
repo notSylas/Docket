@@ -11,7 +11,7 @@ import pytest
 
 import harness
 
-pytestmark = pytest.mark.integration
+pytestmark = pytest.mark.e2e
 
 NOT_CITED = {"outcome": "not_cited"}
 ANSI = re.compile(r"\x1b\[[0-9;]*m")

@@ -23,7 +23,7 @@ from docket.core.db.models import (
     VersionStatus,
 )
 
-pytestmark = pytest.mark.integration
+pytestmark = pytest.mark.e2e
 
 NOT_CITED = {"outcome": "not_cited"}
 

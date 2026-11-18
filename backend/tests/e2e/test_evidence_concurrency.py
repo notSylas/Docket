@@ -17,7 +17,7 @@ import pytest
 import harness
 from docket.core.db.engine import BUSY_TIMEOUT_MS
 
-pytestmark = pytest.mark.integration
+pytestmark = pytest.mark.e2e
 
 
 def lib_with_chunks(lib, n=8):

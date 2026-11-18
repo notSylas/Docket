@@ -44,5 +44,6 @@ packages = ["src/docket"]
 markers = [
     "integration: requires a running Ollama instance with qwen3:14b and qwen3-embedding:0.6b pulled",
     "gpu: GPU lane (Ollama + ROCm hardware); deselected by the mandatory CPU-only CI (-m 'not gpu')",
+    "e2e: real docketd binary + real worker protocol on a scratch library; needs a built docketd (cargo build in app/), no Ollama and no GPU; the model and vector layers are stubbed (tests/e2e)",
 ]
 testpaths = ["tests"]
