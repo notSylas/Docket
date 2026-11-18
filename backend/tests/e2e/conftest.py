@@ -1,6 +1,6 @@
 """R2b-1c: end-to-end evidence API tests (real docketd + REAL worker protocol layer +
 real scratch library; only LLM generation and vector retrieval are stubbed, see
-``e2e_worker.py``). Run: ``pytest tests/e2e -m integration -p no:cacheprovider``."""
+``e2e_worker.py``). Run: ``pytest tests/e2e -m e2e -p no:cacheprovider`` (needs ``cargo build`` in app/; no Ollama or GPU)."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import harness
 def pytest_collection_modifyitems(items):
     for item in items:
         if "tests/e2e" in str(item.fspath).replace("\\", "/"):
-            item.add_marker(pytest.mark.integration)
+            item.add_marker(pytest.mark.e2e)
 
 
 @pytest.fixture(autouse=True)

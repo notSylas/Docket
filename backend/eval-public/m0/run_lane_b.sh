@@ -22,7 +22,12 @@ if [ -z "${DOCKET_LANE_B_INNER:-}" ]; then
   echo "warning: systemd-run not found; running without the 12G cap" >&2
 fi
 
-py="${DOCKET_LANE_B_PYTHON:-/home/pc/Desktop/Rajdeep_Dev/Local_Agent/backend/.venv/bin/python}"
+# Interpreter: $DOCKET_LANE_B_PYTHON, else this checkout's backend/.venv, else python3 on PATH. A linked git
+# worktree has no .venv of its own: point DOCKET_LANE_B_PYTHON at the venv you installed Docket into.
+py="${DOCKET_LANE_B_PYTHON:-}"
+if [ -z "$py" ]; then
+  if [ -x "$repo/backend/.venv/bin/python" ]; then py="$repo/backend/.venv/bin/python"; else py="$(command -v python3)"; fi
+fi
 export PYTHONPATH="$repo/backend/src${PYTHONPATH:+:$PYTHONPATH}"
 export DOCKET_PARSE_WORKERS=1
 export DOCKET_GPU_CARD="${DOCKET_GPU_CARD:-card0}"   # card0 = the discrete RX 9070 XT (card1 is the CPU iGPU)

@@ -40,9 +40,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libxkbcommon-dev libwayland-dev libx11-dev libgl1-mesa-dev
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: app
-      - name: cargo test --workspace
+      - name: cargo fmt --check
         working-directory: app
-        run: cargo test --workspace
+        run: cargo fmt --all --check
+      - name: cargo clippy (warnings are errors)
+        working-directory: app
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: cargo test --workspace (locked dependencies)
+        working-directory: app
+        run: cargo test --workspace --locked

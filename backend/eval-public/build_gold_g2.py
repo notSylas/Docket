@@ -35,6 +35,7 @@ import hashlib
 import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -43,10 +44,8 @@ from openpyxl import load_workbook
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-os.environ.setdefault(
-    "DOCKET_DATA_DIR",
-    "/tmp/claude-1000/-home-pc-Desktop-Rajdeep-Dev-Local-Agent/b10fefe4-c2be-4f17-a32d-75b8491f9030/scratchpad/data",
-)
+# Importing docket modules must never touch the real library: default to a throwaway data dir.
+os.environ.setdefault("DOCKET_DATA_DIR", tempfile.mkdtemp(prefix="docket-gold-g2-"))
 
 from build_synthetic_corpus_g1 import FULL_MONTH, fmt, num_re, rnd, ZERO, NOT_FOUND  # noqa: E402
 

@@ -24,7 +24,8 @@ def test_run_script_contract():
     text = (M0 / "run_lane_b.sh").read_text()
     assert "systemd-run --user --scope -q -p MemoryMax=12G" in text
     assert "DOCKET_PARSE_WORKERS=1" in text
-    assert "/home/pc/Desktop/Rajdeep_Dev/Local_Agent/backend/.venv/bin/python" in text
+    assert "DOCKET_LANE_B_PYTHON" in text and "$repo/backend/.venv/bin/python" in text
+    assert "/home/" not in text  # no developer-specific absolute path (portable across checkouts)
     assert 'PYTHONPATH="$repo/backend/src' in text
     assert "python -I" not in text.replace("never `python -I`", "")
     assert "unset DOCKET_KAG_SCOPING" in text  # flags are set per configuration, never inherited
