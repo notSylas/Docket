@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Local equivalent of .github/workflows/ci.yml, capped at 6 GB via systemd-run.
-#   ./ci-local.sh          CPU lane: python unit suite (-m "not gpu and not integration") + cargo test --workspace
+#   ./ci-local.sh          CPU lane: python unit suite (-m "not gpu and not integration") + cargo fmt --check, clippy -D warnings, test --workspace (all --locked)
 #   ./ci-local.sh --gpu    GPU lane: tests marked `gpu` (needs Ollama + ROCm; opt-in via DOCKET_GPU_LANE=1)
 #                          The full GPU evaluation (answers + judges) is backend/eval-public/m0/run_lane_b.sh.
 #   ./ci-local.sh --python-only | --rust-only
@@ -43,7 +43,9 @@ run_python() {
   (cd "$here/backend" && "$py" -m pytest tests/unit -m "not gpu and not integration" -q)
 }
 run_rust() {
-  (cd "$here/app" && cargo test --workspace)
+  (cd "$here/app" && cargo fmt --all --check \
+    && cargo clippy --workspace --all-targets --locked -- -D warnings \
+    && cargo test --workspace --locked)
 }
 run_kag_eval() {
   if [ -z "${DOCKET_KAG_EVAL_DB:-}" ]; then
