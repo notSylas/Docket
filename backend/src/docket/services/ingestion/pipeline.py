@@ -4,7 +4,7 @@ Ties together, for one ``Source``: walking its folder, `EvidenceManager`
 (store bytes + version tracking), `DoclingParser` (parse to markdown),
 `chunk_document` (split into units/chunks), `ChunkWriter` (persist
 `EvidenceUnit`/`Chunk` rows + the version-diff/reconcile-set lookups around
-them), and `IndexManager` (embed + index). This replaces `spike/ingest.py`'s
+them), and `IndexManager` (embed + index). This replaces `archive/spike/ingest.py`'s
 "drop everything and rebuild from scratch every run" behavior with a truly
 incremental run: unchanged files are detected and skipped before any
 parsing/chunking/embedding happens, and one bad file never aborts the rest

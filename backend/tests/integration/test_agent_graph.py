@@ -2,9 +2,9 @@
 the bounded agent loop wired to REAL `search_knowledge`/`read_evidence`
 tools, run against a real Ollama chat model.
 
-Ports `spike/test_agent_policy_gateway.py`'s Case 1 ("normal bounded
+Ports `archive/spike/test_agent_policy_gateway.py`'s Case 1 ("normal bounded
 investigation") and Case 2 ("adversarial prompt requesting an out-of-policy
-tool") almost directly -- see `spike/RESULTS.md`'s "Tier 3 — Agent Policy
+tool") almost directly -- see `archive/spike/RESULTS.md`'s "Tier 3 — Agent Policy
 Gateway" section for what those proved originally. The difference here: the
 spike's tools returned hardcoded fake results; these use a real small fixture
 corpus (same fixture-building pattern as `test_agent_tools.py`/

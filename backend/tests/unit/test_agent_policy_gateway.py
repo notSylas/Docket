@@ -1,7 +1,7 @@
 """Unit tests for `docket.services.agent.policy_gateway.make_policy_gateway`.
 
-Ported almost directly from `spike/test_agent_policy_gateway.py`'s Case 3 --
-see `spike/RESULTS.md`'s "Tier 3 — Agent Policy Gateway" section. These are
+Ported almost directly from `archive/spike/test_agent_policy_gateway.py`'s Case 3 --
+see `archive/spike/RESULTS.md`'s "Tier 3 — Agent Policy Gateway" section. These are
 the most important tests in this checkpoint: they forge tool_calls and
 invoke the gateway function directly, bypassing the LLM/tool-binding layer
 entirely, proving the gateway's own fail-closed enforcement logic is sound

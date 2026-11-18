@@ -1,7 +1,7 @@
 """Factory functions building the real `search_knowledge`/`read_evidence`
 LangChain tools that the Agent Policy Gateway's allow-list is built from.
 
-The validation spike (`spike/test_agent_policy_gateway.py`) used two
+The validation spike (`archive/spike/test_agent_policy_gateway.py`) used two
 module-level `@tool`-decorated functions that returned hardcoded, canned
 results -- fine for isolating the gateway's *enforcement* logic (the thing
 that spike was actually validating), but useless for a real investigation:

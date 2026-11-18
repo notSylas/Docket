@@ -34,7 +34,7 @@ def build_context_block(resolved_chunks: list[ResolvedEvidence]) -> str:
     Chunks are separated by a blank line, so it's unambiguous to the model
     (and to a human reading the prompt) which label pairs with which text
     block. Same shape as the spike's `context_blocks` construction in
-    `spike/query.py`, just built from `ResolvedEvidence` instead of raw DB rows.
+    `archive/spike/query.py`, just built from `ResolvedEvidence` instead of raw DB rows.
     """
     blocks = [
         f"{chunk.citation_label}\n{chunk.location}\n{chunk.text}"

@@ -67,8 +67,8 @@
 from PyInstaller.utils.hooks import collect_data_files, copy_metadata
 
 datas = [
-    ('../../backend/alembic.ini', '.'),
-    ('../../backend/src/docket/db/migrations', 'src/docket/db/migrations'),
+    ('../../../backend/alembic.ini', '.'),
+    ('../../../backend/src/docket/db/migrations', 'src/docket/db/migrations'),
 ]
 datas += copy_metadata('docling')
 datas += copy_metadata('docling-slim')

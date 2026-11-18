@@ -285,7 +285,7 @@ class DoclingParser:
     """Parses documents via Docling and returns normalized markdown text.
 
     ``DocumentConverter`` is constructed once (it loads layout/OCR/table
-    models -- expensive, see spike/RESULTS.md's first-call-latency finding)
+    models -- expensive, see archive/spike/RESULTS.md's first-call-latency finding)
     and reused across ``parse()`` calls, mirroring the spike's usage.
     """
 

@@ -2,8 +2,8 @@
 
 Moved byte-for-byte from `query/prompts.py` (see git history for that
 module's original docstring, preserved there since `query/prompts.py` is
-now a thin re-export shim). The spike (`spike/query.py`, see
-`spike/RESULTS.md` "Retrieval Quality") validated the overall shape of this
+now a thin re-export shim). The spike (`archive/spike/query.py`, see
+`archive/spike/RESULTS.md` "Retrieval Quality") validated the overall shape of this
 prompt -- citation-or-abstain, 12/12 correct on the eval set (correct
 citations, correct abstention on out-of-corpus questions, correct handling
 of ambiguous/trap questions). The one rough edge it found ("Known rough

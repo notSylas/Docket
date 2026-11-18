@@ -173,7 +173,7 @@ app/dev.sh                       # builds docketd and docket-app and runs them a
 app/dev.sh /path/to/data-dir     # or against a data directory of your choice
 ```
 
-The earlier Tauri + React prototype in [`desktop/`](desktop/) is legacy and paused; it does not work with the current backend.
+The earlier Tauri + React prototype in [`archive/desktop-tauri/`](archive/desktop-tauri/) is legacy and paused; it does not work with the current backend.
 
 ## License
 

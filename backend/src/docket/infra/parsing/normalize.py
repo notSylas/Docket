@@ -2,7 +2,7 @@
 
 Docling's ``export_to_markdown()`` CommonMark-escapes special characters in
 prose by prefixing them with a backslash (e.g. ``evidence_version_id`` becomes
-``evidence\\_version\\_id``). See ``spike/RESULTS.md`` under "Tier 2 --
+``evidence\\_version\\_id``). See ``archive/spike/RESULTS.md`` under "Tier 2 --
 Document Parsing Quality (Docling)": if that escaped text is what gets
 chunked and indexed, exact-identifier lexical search (FTS5) silently
 degrades on any snake_case identifier, because the indexed token no longer

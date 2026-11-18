@@ -24,7 +24,7 @@ SAMPLE_DOCX = DOCS_DIR / "01_Work_Intelligence_PRD_v1.0.docx"
 def parser() -> DoclingParser:
     # Constructed once per test module: Docling loads its models on
     # DocumentConverter() construction, which is expensive the first time
-    # (see spike/RESULTS.md's first-call-latency finding).
+    # (see archive/spike/RESULTS.md's first-call-latency finding).
     return DoclingParser()
 
 

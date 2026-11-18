@@ -2,7 +2,7 @@
 `docket query`, against a real Ollama server (the one place in this
 checkpoint real Ollama is used -- everywhere else uses
 `FakeInferenceGateway`). Replaces the validation spike's manual,
-CLI-driven verification (`spike/ingest.py` + `spike/query.py`, run by hand)
+CLI-driven verification (`archive/spike/ingest.py` + `archive/spike/query.py`, run by hand)
 with an automated one.
 
 Marked `integration` (requires a running Ollama with `qwen3:14b` and
