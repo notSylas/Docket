@@ -180,11 +180,8 @@ def test_purge_cascades_graph_edges_and_clause_links(lib, tmp_path):
     assert kag.plan(e, "Which law governs the Bloom Energy agreement?").active
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "FINDING (M0, not fixed by design): hard-deleting a source leaves its kag_entities/kag_entity_variants rows "
-    "(only the document edges cascade). The deleted contract's party name stays queryable in the graph and "
-    "KagPlan.entities/doc_info['kag'] echo it for an inactive plan (reason 'named entity has no document in scope')."))
 def test_purge_leaves_no_orphan_entities(lib, tmp_path):
+    """M3-1: the purge transaction also removes entities/variants only the deleted documents referenced."""
     e, sf = lib
     _purge(e, sf, tmp_path, "src_z")
     orphans = _scalar(e, "SELECT COUNT(*) FROM kag_entities WHERE id NOT IN (SELECT entity_id FROM kag_document_entities)")
@@ -223,10 +220,8 @@ def test_query_service_scopes_only_into_eligible_version(lib, monkeypatch):
     assert scoped and scoped[0]["scope_version_ids"] == ["ev_z"]
 
 
-def test_finding_evidence_deleted_entity_name_still_echoed(lib, tmp_path):
-    """Pins the observable half of the orphan-entity finding above (documents what happens today)."""
+def test_deleted_entity_name_is_no_longer_echoed(lib, tmp_path):
     e, sf = lib
     _purge(e, sf, tmp_path, "src_z")
     p = kag.plan(e, ZOG_CLAUSE_Q)
-    assert p.reason == "named entity has no document in scope"
-    assert p.entities  # the deleted contract's party name is still echoed
+    assert not p.active and not p.entities
