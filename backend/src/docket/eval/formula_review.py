@@ -13,7 +13,7 @@ human (or a blind-reviewing model) can compare them against, and later
 aggregates a human's `correct: true/false` labels. There is no promotion
 path here: turning a labeled-correct transcription into searchable/citable
 evidence is a separate, later, explicitly gated decision this module does not
-make (see `Docs/accuracy-evaluation.md`'s "Formula evidence and experiments"
+make (see `docs/architecture/accuracy-evaluation.md`'s "Formula evidence and experiments"
 section).
 
 Modeled closely on `docket.eval.calibration`'s export/score pair, but

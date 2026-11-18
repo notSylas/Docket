@@ -83,7 +83,7 @@ class Settings(BaseSettings):
     # -- never promoted into searchable/citable evidence. Nothing should call
     # the VLM for formula regions until this is explicitly turned on, and
     # turning it on is never itself sufficient to make transcriptions
-    # citable (see Docs/accuracy-evaluation.md's "Formula evidence and
+    # citable (see docs/architecture/accuracy-evaluation.md's "Formula evidence and
     # experiments" section -- that requires a separate, later, manually
     # verified decision).
     formula_transcription_enabled: bool = False

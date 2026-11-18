@@ -1,0 +1,4 @@
+Prototype: 680 tracked/nonignored untracked file hashes unchanged; Git status unchanged.
+Integration: git diff HEAD --name-only empty; only new docs/ui-prototype C0 files.
+rust-app: HEAD unchanged at 3a6a4ca2d9e809c15551623428626c724283c810; working tree clean.
+No Python, daemon, protocol, M3, Cargo manifest/lockfile or schema changes.

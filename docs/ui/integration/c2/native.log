@@ -1,0 +1,577 @@
+2026-11-18T18:06:05.658474Z  INFO docketd::worker: worker launched starts=1 generation=1
+2026-11-18T18:06:05.658472Z  INFO docketd: listening socket=/tmp/docket-c2-review/docketd.sock
+2026-11-18T18:06:05.807448Z  INFO docketd::http: request request_id=6afde90d-000001 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:06:05.807844Z  INFO docketd::http: request request_id=6afde90d-000002 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:06:05.808452Z  INFO docketd::http: request request_id=6afde90d-000003 method=GET path=/v1/sources status=200 ms=0
+2026-11-18T18:06:07.808462Z  INFO docketd::http: request request_id=6afde90d-000004 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:06:09.809241Z  INFO docketd::http: request request_id=6afde90d-000005 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:06:11.810037Z  INFO docketd::http: request request_id=6afde90d-000006 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:06:13.810906Z  INFO docketd::http: request request_id=6afde90d-000007 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:06:15.811878Z  INFO docketd::http: request request_id=6afde90d-000008 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:06:15.813243Z  INFO docketd::http: request request_id=6afde90d-000009 method=GET path=/v1/sources status=200 ms=0
+2026-11-18T18:06:17.812975Z  INFO docketd::http: request request_id=6afde90d-00000a method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:06:19.814135Z  INFO docketd::http: request request_id=6afde90d-00000b method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:06:21.815207Z  INFO docketd::http: request request_id=6afde90d-00000c method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:06:23.816150Z  INFO docketd::http: request request_id=6afde90d-00000d method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:06:25.817036Z  INFO docketd::http: request request_id=6afde90d-00000e method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:06:25.817870Z  INFO docketd::http: request request_id=6afde90d-00000f method=GET path=/v1/sources status=200 ms=0
+2026-11-18T18:06:27.818094Z  INFO docketd::http: request request_id=6afde90d-000010 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:06:29.819261Z  INFO docketd::http: request request_id=6afde90d-000011 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:06:31.820187Z  INFO docketd::http: request request_id=6afde90d-000012 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:06:33.821345Z  INFO docketd::http: request request_id=6afde90d-000013 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:06:35.822535Z  INFO docketd::http: request request_id=6afde90d-000014 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:06:35.823647Z  INFO docketd::http: request request_id=6afde90d-000015 method=GET path=/v1/sources status=200 ms=0
+2026-11-18T18:06:37.823649Z  INFO docketd::http: request request_id=6afde90d-000016 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:06:39.824706Z  INFO docketd::http: request request_id=6afde90d-000017 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:06:41.825778Z  INFO docketd::http: request request_id=6afde90d-000018 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:06:43.826579Z  INFO docketd::http: request request_id=6afde90d-000019 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:06:45.827401Z  INFO docketd::http: request request_id=6afde90d-00001a method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:06:45.828425Z  INFO docketd::http: request request_id=6afde90d-00001b method=GET path=/v1/sources status=200 ms=0
+2026-11-18T18:06:47.828310Z  INFO docketd::http: request request_id=6afde90d-00001c method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:06:49.829453Z  INFO docketd::http: request request_id=6afde90d-00001d method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:06:51.830409Z  INFO docketd::http: request request_id=6afde90d-00001e method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:06:53.831435Z  INFO docketd::http: request request_id=6afde90d-00001f method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:06:55.832366Z  INFO docketd::http: request request_id=6afde90d-000020 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:06:55.833298Z  INFO docketd::http: request request_id=6afde90d-000021 method=GET path=/v1/sources status=200 ms=0
+2026-11-18T18:06:57.833389Z  INFO docketd::http: request request_id=6afde90d-000022 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:06:59.834306Z  INFO docketd::http: request request_id=6afde90d-000023 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:07:01.835067Z  INFO docketd::http: request request_id=6afde90d-000024 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:07:03.835858Z  INFO docketd::http: request request_id=6afde90d-000025 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:07:05.836860Z  INFO docketd::http: request request_id=6afde90d-000026 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:07:05.838042Z  INFO docketd::http: request request_id=6afde90d-000027 method=GET path=/v1/sources status=200 ms=0
+2026-11-18T18:07:07.838067Z  INFO docketd::http: request request_id=6afde90d-000028 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:07:09.839019Z  INFO docketd::http: request request_id=6afde90d-000029 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:07:11.839935Z  INFO docketd::http: request request_id=6afde90d-00002a method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:07:13.840946Z  INFO docketd::http: request request_id=6afde90d-00002b method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:07:15.842031Z  INFO docketd::http: request request_id=6afde90d-00002c method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:07:15.842871Z  INFO docketd::http: request request_id=6afde90d-00002d method=GET path=/v1/sources status=200 ms=0
+2026-11-18T18:07:17.842994Z  INFO docketd::http: request request_id=6afde90d-00002e method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:07:19.843775Z  INFO docketd::http: request request_id=6afde90d-00002f method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:07:21.844559Z  INFO docketd::http: request request_id=6afde90d-000030 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:07:23.845340Z  INFO docketd::http: request request_id=6afde90d-000031 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:07:25.846254Z  INFO docketd::http: request request_id=6afde90d-000032 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:07:25.847174Z  INFO docketd::http: request request_id=6afde90d-000033 method=GET path=/v1/sources status=200 ms=0
+2026-11-18T18:07:27.847288Z  INFO docketd::http: request request_id=6afde90d-000034 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:07:29.848072Z  INFO docketd::http: request request_id=6afde90d-000035 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:07:31.848970Z  INFO docketd::http: request request_id=6afde90d-000036 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:07:33.395508Z  INFO docketd::http: request request_id=6afde90d-000037 method=POST path=/v1/tasks status=202 ms=0
+2026-11-18T18:07:33.396174Z  INFO docketd::tasks: task finished task="t-6afde90d-1" state=Succeeded events=6
+2026-11-18T18:07:33.397654Z  INFO docketd::http: request request_id=6afde90d-000038 method=GET path=/v1/tasks/t-6afde90d-1/events status=200 ms=0
+2026-11-18T18:07:33.849928Z  INFO docketd::http: request request_id=6afde90d-000039 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:07:34.594105Z  INFO docketd::http: request request_id=6afde90d-00003a method=GET path=/v1/sources status=200 ms=0
+2026-11-18T18:07:35.850867Z  INFO docketd::http: request request_id=6afde90d-00003b method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:07:35.851882Z  INFO docketd::http: request request_id=6afde90d-00003c method=GET path=/v1/sources status=200 ms=0
+2026-11-18T18:07:37.851736Z  INFO docketd::http: request request_id=6afde90d-00003d method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:07:39.852693Z  INFO docketd::http: request request_id=6afde90d-00003e method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:07:41.853681Z  INFO docketd::http: request request_id=6afde90d-00003f method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:07:42.345914Z  WARN docketd::http: call failed request_id=6afde90d-000040 code="worker_error"
+2026-11-18T18:07:42.346015Z  INFO docketd::http: request request_id=6afde90d-000040 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:07:43.235296Z  INFO docketd::http: request request_id=6afde90d-000041 method=GET path=/v1/sources status=200 ms=0
+2026-11-18T18:07:43.854471Z  INFO docketd::http: request request_id=6afde90d-000042 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:07:44.126228Z  WARN docketd::http: call failed request_id=6afde90d-000043 code="worker_error"
+2026-11-18T18:07:44.126318Z  INFO docketd::http: request request_id=6afde90d-000043 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:07:45.855341Z  INFO docketd::http: request request_id=6afde90d-000044 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:07:45.856100Z  WARN docketd::http: call failed request_id=6afde90d-000045 code="worker_error"
+2026-11-18T18:07:45.856177Z  INFO docketd::http: request request_id=6afde90d-000045 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:07:47.856167Z  INFO docketd::http: request request_id=6afde90d-000046 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:07:47.856893Z  WARN docketd::http: call failed request_id=6afde90d-000047 code="worker_error"
+2026-11-18T18:07:47.856958Z  INFO docketd::http: request request_id=6afde90d-000047 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:07:49.857040Z  INFO docketd::http: request request_id=6afde90d-000048 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:07:49.857801Z  WARN docketd::http: call failed request_id=6afde90d-000049 code="worker_error"
+2026-11-18T18:07:49.857876Z  INFO docketd::http: request request_id=6afde90d-000049 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:07:51.857922Z  INFO docketd::http: request request_id=6afde90d-00004a method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:07:51.858707Z  WARN docketd::http: call failed request_id=6afde90d-00004b code="worker_error"
+2026-11-18T18:07:51.858767Z  INFO docketd::http: request request_id=6afde90d-00004b method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:07:53.858793Z  INFO docketd::http: request request_id=6afde90d-00004c method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:07:53.859568Z  WARN docketd::http: call failed request_id=6afde90d-00004d code="worker_error"
+2026-11-18T18:07:53.859614Z  INFO docketd::http: request request_id=6afde90d-00004d method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:07:55.859669Z  INFO docketd::http: request request_id=6afde90d-00004e method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:07:55.860429Z  WARN docketd::http: call failed request_id=6afde90d-00004f code="worker_error"
+2026-11-18T18:07:55.860490Z  INFO docketd::http: request request_id=6afde90d-00004f method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:07:57.860708Z  INFO docketd::http: request request_id=6afde90d-000050 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:07:57.861904Z  WARN docketd::http: call failed request_id=6afde90d-000051 code="worker_error"
+2026-11-18T18:07:57.861997Z  INFO docketd::http: request request_id=6afde90d-000051 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:07:59.861745Z  INFO docketd::http: request request_id=6afde90d-000052 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:07:59.862661Z  WARN docketd::http: call failed request_id=6afde90d-000053 code="worker_error"
+2026-11-18T18:07:59.862711Z  INFO docketd::http: request request_id=6afde90d-000053 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:08:01.862659Z  INFO docketd::http: request request_id=6afde90d-000054 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:08:01.863680Z  WARN docketd::http: call failed request_id=6afde90d-000055 code="worker_error"
+2026-11-18T18:08:01.863731Z  INFO docketd::http: request request_id=6afde90d-000055 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:08:03.863769Z  INFO docketd::http: request request_id=6afde90d-000056 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:08:03.864606Z  WARN docketd::http: call failed request_id=6afde90d-000057 code="worker_error"
+2026-11-18T18:08:03.864676Z  INFO docketd::http: request request_id=6afde90d-000057 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:08:05.864917Z  INFO docketd::http: request request_id=6afde90d-000058 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:08:05.866054Z  WARN docketd::http: call failed request_id=6afde90d-000059 code="worker_error"
+2026-11-18T18:08:05.866115Z  INFO docketd::http: request request_id=6afde90d-000059 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:08:07.866371Z  INFO docketd::http: request request_id=6afde90d-00005a method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:08:07.867695Z  WARN docketd::http: call failed request_id=6afde90d-00005b code="worker_error"
+2026-11-18T18:08:07.867745Z  INFO docketd::http: request request_id=6afde90d-00005b method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:08:09.867995Z  INFO docketd::http: request request_id=6afde90d-00005c method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:08:09.869201Z  WARN docketd::http: call failed request_id=6afde90d-00005d code="worker_error"
+2026-11-18T18:08:09.869294Z  INFO docketd::http: request request_id=6afde90d-00005d method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:08:11.869089Z  INFO docketd::http: request request_id=6afde90d-00005e method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:08:11.870329Z  WARN docketd::http: call failed request_id=6afde90d-00005f code="worker_error"
+2026-11-18T18:08:11.870422Z  INFO docketd::http: request request_id=6afde90d-00005f method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:08:13.870460Z  INFO docketd::http: request request_id=6afde90d-000060 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:08:13.871580Z  WARN docketd::http: call failed request_id=6afde90d-000061 code="worker_error"
+2026-11-18T18:08:13.871673Z  INFO docketd::http: request request_id=6afde90d-000061 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:08:15.871658Z  INFO docketd::http: request request_id=6afde90d-000062 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:08:15.872578Z  WARN docketd::http: call failed request_id=6afde90d-000063 code="worker_error"
+2026-11-18T18:08:15.872637Z  INFO docketd::http: request request_id=6afde90d-000063 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:08:17.872702Z  INFO docketd::http: request request_id=6afde90d-000064 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:08:17.873565Z  WARN docketd::http: call failed request_id=6afde90d-000065 code="worker_error"
+2026-11-18T18:08:17.873629Z  INFO docketd::http: request request_id=6afde90d-000065 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:08:19.873665Z  INFO docketd::http: request request_id=6afde90d-000066 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:08:19.874425Z  WARN docketd::http: call failed request_id=6afde90d-000067 code="worker_error"
+2026-11-18T18:08:19.874476Z  INFO docketd::http: request request_id=6afde90d-000067 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:08:21.874822Z  INFO docketd::http: request request_id=6afde90d-000068 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:08:21.875704Z  WARN docketd::http: call failed request_id=6afde90d-000069 code="worker_error"
+2026-11-18T18:08:21.875761Z  INFO docketd::http: request request_id=6afde90d-000069 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:08:23.876016Z  INFO docketd::http: request request_id=6afde90d-00006a method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:08:23.877097Z  WARN docketd::http: call failed request_id=6afde90d-00006b code="worker_error"
+2026-11-18T18:08:23.877299Z  INFO docketd::http: request request_id=6afde90d-00006b method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:08:25.877179Z  INFO docketd::http: request request_id=6afde90d-00006c method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:08:25.878204Z  WARN docketd::http: call failed request_id=6afde90d-00006d code="worker_error"
+2026-11-18T18:08:25.878295Z  INFO docketd::http: request request_id=6afde90d-00006d method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:08:27.878744Z  INFO docketd::http: request request_id=6afde90d-00006e method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:08:27.879812Z  WARN docketd::http: call failed request_id=6afde90d-00006f code="worker_error"
+2026-11-18T18:08:27.879863Z  INFO docketd::http: request request_id=6afde90d-00006f method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:08:29.879954Z  INFO docketd::http: request request_id=6afde90d-000070 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:08:29.880937Z  WARN docketd::http: call failed request_id=6afde90d-000071 code="worker_error"
+2026-11-18T18:08:29.881030Z  INFO docketd::http: request request_id=6afde90d-000071 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:08:31.881173Z  INFO docketd::http: request request_id=6afde90d-000072 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:08:31.882341Z  WARN docketd::http: call failed request_id=6afde90d-000073 code="worker_error"
+2026-11-18T18:08:31.882432Z  INFO docketd::http: request request_id=6afde90d-000073 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:08:33.882620Z  INFO docketd::http: request request_id=6afde90d-000074 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:08:33.883764Z  WARN docketd::http: call failed request_id=6afde90d-000075 code="worker_error"
+2026-11-18T18:08:33.883822Z  INFO docketd::http: request request_id=6afde90d-000075 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:08:35.884215Z  INFO docketd::http: request request_id=6afde90d-000076 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:08:35.885447Z  WARN docketd::http: call failed request_id=6afde90d-000077 code="worker_error"
+2026-11-18T18:08:35.885541Z  INFO docketd::http: request request_id=6afde90d-000077 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:08:37.885634Z  INFO docketd::http: request request_id=6afde90d-000078 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:08:37.886838Z  WARN docketd::http: call failed request_id=6afde90d-000079 code="worker_error"
+2026-11-18T18:08:37.886929Z  INFO docketd::http: request request_id=6afde90d-000079 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:08:39.886892Z  INFO docketd::http: request request_id=6afde90d-00007a method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:08:39.887923Z  WARN docketd::http: call failed request_id=6afde90d-00007b code="worker_error"
+2026-11-18T18:08:39.887973Z  INFO docketd::http: request request_id=6afde90d-00007b method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:08:41.888131Z  INFO docketd::http: request request_id=6afde90d-00007c method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:08:41.889272Z  WARN docketd::http: call failed request_id=6afde90d-00007d code="worker_error"
+2026-11-18T18:08:41.889359Z  INFO docketd::http: request request_id=6afde90d-00007d method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:08:43.889273Z  INFO docketd::http: request request_id=6afde90d-00007e method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:08:43.890066Z  WARN docketd::http: call failed request_id=6afde90d-00007f code="worker_error"
+2026-11-18T18:08:43.890110Z  INFO docketd::http: request request_id=6afde90d-00007f method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:08:45.890359Z  INFO docketd::http: request request_id=6afde90d-000080 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:08:45.891479Z  WARN docketd::http: call failed request_id=6afde90d-000081 code="worker_error"
+2026-11-18T18:08:45.891593Z  INFO docketd::http: request request_id=6afde90d-000081 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:08:47.891555Z  INFO docketd::http: request request_id=6afde90d-000082 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:08:47.892594Z  WARN docketd::http: call failed request_id=6afde90d-000083 code="worker_error"
+2026-11-18T18:08:47.892713Z  INFO docketd::http: request request_id=6afde90d-000083 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:08:49.892719Z  INFO docketd::http: request request_id=6afde90d-000084 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:08:49.893678Z  WARN docketd::http: call failed request_id=6afde90d-000085 code="worker_error"
+2026-11-18T18:08:49.893727Z  INFO docketd::http: request request_id=6afde90d-000085 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:08:51.893794Z  INFO docketd::http: request request_id=6afde90d-000086 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:08:51.894916Z  INFO docketd::http: request request_id=6afde90d-000087 method=GET path=/v1/sources status=200 ms=0
+2026-11-18T18:08:53.894932Z  INFO docketd::http: request request_id=6afde90d-000088 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:08:55.896119Z  INFO docketd::http: request request_id=6afde90d-000089 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:08:57.897323Z  INFO docketd::http: request request_id=6afde90d-00008a method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:08:59.898360Z  INFO docketd::http: request request_id=6afde90d-00008b method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:09:01.899302Z  INFO docketd::http: request request_id=6afde90d-00008c method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:09:01.900282Z  INFO docketd::http: request request_id=6afde90d-00008d method=GET path=/v1/sources status=200 ms=0
+2026-11-18T18:09:03.900292Z  INFO docketd::http: request request_id=6afde90d-00008e method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:09:05.901557Z  INFO docketd::http: request request_id=6afde90d-00008f method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:09:07.902731Z  INFO docketd::http: request request_id=6afde90d-000090 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:09:09.904288Z  INFO docketd::http: request request_id=6afde90d-000091 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:09:11.905391Z  INFO docketd::http: request request_id=6afde90d-000092 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:09:11.906386Z  WARN docketd::http: call failed request_id=6afde90d-000093 code="worker_error"
+2026-11-18T18:09:11.906476Z  INFO docketd::http: request request_id=6afde90d-000093 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:09:13.906483Z  INFO docketd::http: request request_id=6afde90d-000094 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:09:13.907328Z  WARN docketd::http: call failed request_id=6afde90d-000095 code="worker_error"
+2026-11-18T18:09:13.907379Z  INFO docketd::http: request request_id=6afde90d-000095 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:09:15.907473Z  INFO docketd::http: request request_id=6afde90d-000096 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:09:15.908312Z  WARN docketd::http: call failed request_id=6afde90d-000097 code="worker_error"
+2026-11-18T18:09:15.908363Z  INFO docketd::http: request request_id=6afde90d-000097 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:09:17.908515Z  INFO docketd::http: request request_id=6afde90d-000098 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:09:17.909623Z  WARN docketd::http: call failed request_id=6afde90d-000099 code="worker_error"
+2026-11-18T18:09:17.909672Z  INFO docketd::http: request request_id=6afde90d-000099 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:09:19.909963Z  INFO docketd::http: request request_id=6afde90d-00009a method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:09:19.910940Z  WARN docketd::http: call failed request_id=6afde90d-00009b code="worker_error"
+2026-11-18T18:09:19.910987Z  INFO docketd::http: request request_id=6afde90d-00009b method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:09:21.911178Z  INFO docketd::http: request request_id=6afde90d-00009c method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:09:21.912153Z  WARN docketd::http: call failed request_id=6afde90d-00009d code="worker_error"
+2026-11-18T18:09:21.912270Z  INFO docketd::http: request request_id=6afde90d-00009d method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:09:23.912353Z  INFO docketd::http: request request_id=6afde90d-00009e method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:09:23.913431Z  WARN docketd::http: call failed request_id=6afde90d-00009f code="worker_error"
+2026-11-18T18:09:23.913490Z  INFO docketd::http: request request_id=6afde90d-00009f method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:09:25.913631Z  INFO docketd::http: request request_id=6afde90d-0000a0 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:09:25.914640Z  WARN docketd::http: call failed request_id=6afde90d-0000a1 code="worker_error"
+2026-11-18T18:09:25.914698Z  INFO docketd::http: request request_id=6afde90d-0000a1 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:09:27.914928Z  INFO docketd::http: request request_id=6afde90d-0000a2 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:09:27.915958Z  WARN docketd::http: call failed request_id=6afde90d-0000a3 code="worker_error"
+2026-11-18T18:09:27.916009Z  INFO docketd::http: request request_id=6afde90d-0000a3 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:09:29.916060Z  INFO docketd::http: request request_id=6afde90d-0000a4 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:09:29.917097Z  WARN docketd::http: call failed request_id=6afde90d-0000a5 code="worker_error"
+2026-11-18T18:09:29.917199Z  INFO docketd::http: request request_id=6afde90d-0000a5 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:09:31.917358Z  INFO docketd::http: request request_id=6afde90d-0000a6 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:09:31.918472Z  WARN docketd::http: call failed request_id=6afde90d-0000a7 code="worker_error"
+2026-11-18T18:09:31.918559Z  INFO docketd::http: request request_id=6afde90d-0000a7 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:09:33.918545Z  INFO docketd::http: request request_id=6afde90d-0000a8 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:09:33.919492Z  WARN docketd::http: call failed request_id=6afde90d-0000a9 code="worker_error"
+2026-11-18T18:09:33.919582Z  INFO docketd::http: request request_id=6afde90d-0000a9 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:09:35.919629Z  INFO docketd::http: request request_id=6afde90d-0000aa method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:09:35.920811Z  WARN docketd::http: call failed request_id=6afde90d-0000ab code="worker_error"
+2026-11-18T18:09:35.920901Z  INFO docketd::http: request request_id=6afde90d-0000ab method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:09:37.920809Z  INFO docketd::http: request request_id=6afde90d-0000ac method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:09:37.922029Z  WARN docketd::http: call failed request_id=6afde90d-0000ad code="worker_error"
+2026-11-18T18:09:37.922132Z  INFO docketd::http: request request_id=6afde90d-0000ad method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:09:39.922016Z  INFO docketd::http: request request_id=6afde90d-0000ae method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:09:39.922964Z  WARN docketd::http: call failed request_id=6afde90d-0000af code="worker_error"
+2026-11-18T18:09:39.923048Z  INFO docketd::http: request request_id=6afde90d-0000af method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:09:41.923163Z  INFO docketd::http: request request_id=6afde90d-0000b0 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:09:41.924048Z  WARN docketd::http: call failed request_id=6afde90d-0000b1 code="worker_error"
+2026-11-18T18:09:41.924089Z  INFO docketd::http: request request_id=6afde90d-0000b1 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:09:43.924329Z  INFO docketd::http: request request_id=6afde90d-0000b2 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:09:43.925372Z  WARN docketd::http: call failed request_id=6afde90d-0000b3 code="worker_error"
+2026-11-18T18:09:43.925423Z  INFO docketd::http: request request_id=6afde90d-0000b3 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:09:45.925886Z  INFO docketd::http: request request_id=6afde90d-0000b4 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:09:45.926987Z  WARN docketd::http: call failed request_id=6afde90d-0000b5 code="worker_error"
+2026-11-18T18:09:45.927076Z  INFO docketd::http: request request_id=6afde90d-0000b5 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:09:47.926961Z  INFO docketd::http: request request_id=6afde90d-0000b6 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:09:47.927941Z  WARN docketd::http: call failed request_id=6afde90d-0000b7 code="worker_error"
+2026-11-18T18:09:47.928023Z  INFO docketd::http: request request_id=6afde90d-0000b7 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:09:49.928014Z  INFO docketd::http: request request_id=6afde90d-0000b8 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:09:49.928850Z  WARN docketd::http: call failed request_id=6afde90d-0000b9 code="worker_error"
+2026-11-18T18:09:49.928913Z  INFO docketd::http: request request_id=6afde90d-0000b9 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:09:51.928943Z  INFO docketd::http: request request_id=6afde90d-0000ba method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:09:51.929933Z  WARN docketd::http: call failed request_id=6afde90d-0000bb code="worker_error"
+2026-11-18T18:09:51.930020Z  INFO docketd::http: request request_id=6afde90d-0000bb method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:09:53.930072Z  INFO docketd::http: request request_id=6afde90d-0000bc method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:09:53.930889Z  WARN docketd::http: call failed request_id=6afde90d-0000bd code="worker_error"
+2026-11-18T18:09:53.930942Z  INFO docketd::http: request request_id=6afde90d-0000bd method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:09:55.931046Z  INFO docketd::http: request request_id=6afde90d-0000be method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:09:55.931787Z  WARN docketd::http: call failed request_id=6afde90d-0000bf code="worker_error"
+2026-11-18T18:09:55.931853Z  INFO docketd::http: request request_id=6afde90d-0000bf method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:09:57.932076Z  INFO docketd::http: request request_id=6afde90d-0000c0 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:09:57.932882Z  WARN docketd::http: call failed request_id=6afde90d-0000c1 code="worker_error"
+2026-11-18T18:09:57.932961Z  INFO docketd::http: request request_id=6afde90d-0000c1 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:09:59.933102Z  INFO docketd::http: request request_id=6afde90d-0000c2 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:09:59.934012Z  INFO docketd::http: request request_id=6afde90d-0000c3 method=GET path=/v1/sources status=200 ms=0
+2026-11-18T18:10:01.934087Z  INFO docketd::http: request request_id=6afde90d-0000c4 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:10:03.934936Z  INFO docketd::http: request request_id=6afde90d-0000c5 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:10:05.935928Z  INFO docketd::http: request request_id=6afde90d-0000c6 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:10:07.936862Z  INFO docketd::http: request request_id=6afde90d-0000c7 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:10:09.938087Z  INFO docketd::http: request request_id=6afde90d-0000c8 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:10:09.939097Z  INFO docketd::http: request request_id=6afde90d-0000c9 method=GET path=/v1/sources status=200 ms=0
+2026-11-18T18:10:11.939170Z  INFO docketd::http: request request_id=6afde90d-0000ca method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:10:13.939931Z  INFO docketd::http: request request_id=6afde90d-0000cb method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:10:15.941355Z  INFO docketd::http: request request_id=6afde90d-0000cc method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:10:17.942264Z  INFO docketd::http: request request_id=6afde90d-0000cd method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:10:19.943453Z  INFO docketd::http: request request_id=6afde90d-0000ce method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:10:19.944958Z  WARN docketd::http: call failed request_id=6afde90d-0000cf code="worker_error"
+2026-11-18T18:10:19.945038Z  INFO docketd::http: request request_id=6afde90d-0000cf method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:10:21.944763Z  INFO docketd::http: request request_id=6afde90d-0000d0 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:10:21.945807Z  WARN docketd::http: call failed request_id=6afde90d-0000d1 code="worker_error"
+2026-11-18T18:10:21.945895Z  INFO docketd::http: request request_id=6afde90d-0000d1 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:10:23.945959Z  INFO docketd::http: request request_id=6afde90d-0000d2 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:10:23.947224Z  WARN docketd::http: call failed request_id=6afde90d-0000d3 code="worker_error"
+2026-11-18T18:10:23.947329Z  INFO docketd::http: request request_id=6afde90d-0000d3 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:10:25.947340Z  INFO docketd::http: request request_id=6afde90d-0000d4 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:10:25.948273Z  WARN docketd::http: call failed request_id=6afde90d-0000d5 code="worker_error"
+2026-11-18T18:10:25.948322Z  INFO docketd::http: request request_id=6afde90d-0000d5 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:10:27.948394Z  INFO docketd::http: request request_id=6afde90d-0000d6 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:10:27.949549Z  INFO docketd::http: request request_id=6afde90d-0000d7 method=GET path=/v1/sources status=200 ms=0
+2026-11-18T18:10:29.949655Z  INFO docketd::http: request request_id=6afde90d-0000d8 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:10:31.951321Z  INFO docketd::http: request request_id=6afde90d-0000d9 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:10:33.952450Z  INFO docketd::http: request request_id=6afde90d-0000da method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:10:35.953482Z  INFO docketd::http: request request_id=6afde90d-0000db method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:10:37.954512Z  INFO docketd::http: request request_id=6afde90d-0000dc method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:10:37.955350Z  INFO docketd::http: request request_id=6afde90d-0000dd method=GET path=/v1/sources status=200 ms=0
+2026-11-18T18:10:39.955466Z  INFO docketd::http: request request_id=6afde90d-0000de method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:10:41.956575Z  INFO docketd::http: request request_id=6afde90d-0000df method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:10:43.957570Z  INFO docketd::http: request request_id=6afde90d-0000e0 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:10:45.958706Z  INFO docketd::http: request request_id=6afde90d-0000e1 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:10:47.959610Z  INFO docketd::http: request request_id=6afde90d-0000e2 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:10:47.960541Z  WARN docketd::http: call failed request_id=6afde90d-0000e3 code="worker_error"
+2026-11-18T18:10:47.960629Z  INFO docketd::http: request request_id=6afde90d-0000e3 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:10:49.960623Z  INFO docketd::http: request request_id=6afde90d-0000e4 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:10:49.961372Z  WARN docketd::http: call failed request_id=6afde90d-0000e5 code="worker_error"
+2026-11-18T18:10:49.961451Z  INFO docketd::http: request request_id=6afde90d-0000e5 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:10:51.961414Z  INFO docketd::http: request request_id=6afde90d-0000e6 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:10:51.962134Z  WARN docketd::http: call failed request_id=6afde90d-0000e7 code="worker_error"
+2026-11-18T18:10:51.962184Z  INFO docketd::http: request request_id=6afde90d-0000e7 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:10:53.962406Z  INFO docketd::http: request request_id=6afde90d-0000e8 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:10:53.963624Z  WARN docketd::http: call failed request_id=6afde90d-0000e9 code="worker_error"
+2026-11-18T18:10:53.963741Z  INFO docketd::http: request request_id=6afde90d-0000e9 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:10:55.963495Z  INFO docketd::http: request request_id=6afde90d-0000ea method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:10:55.964534Z  WARN docketd::http: call failed request_id=6afde90d-0000eb code="worker_error"
+2026-11-18T18:10:55.964591Z  INFO docketd::http: request request_id=6afde90d-0000eb method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:10:57.964674Z  INFO docketd::http: request request_id=6afde90d-0000ec method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:10:57.965690Z  WARN docketd::http: call failed request_id=6afde90d-0000ed code="worker_error"
+2026-11-18T18:10:57.965767Z  INFO docketd::http: request request_id=6afde90d-0000ed method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:10:59.965846Z  INFO docketd::http: request request_id=6afde90d-0000ee method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:10:59.966785Z  WARN docketd::http: call failed request_id=6afde90d-0000ef code="worker_error"
+2026-11-18T18:10:59.966850Z  INFO docketd::http: request request_id=6afde90d-0000ef method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:11:01.966857Z  INFO docketd::http: request request_id=6afde90d-0000f0 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:11:01.967776Z  WARN docketd::http: call failed request_id=6afde90d-0000f1 code="worker_error"
+2026-11-18T18:11:01.967833Z  INFO docketd::http: request request_id=6afde90d-0000f1 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:11:03.967875Z  INFO docketd::http: request request_id=6afde90d-0000f2 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:11:03.968861Z  WARN docketd::http: call failed request_id=6afde90d-0000f3 code="worker_error"
+2026-11-18T18:11:03.968937Z  INFO docketd::http: request request_id=6afde90d-0000f3 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:11:05.969015Z  INFO docketd::http: request request_id=6afde90d-0000f4 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:11:05.970272Z  WARN docketd::http: call failed request_id=6afde90d-0000f5 code="worker_error"
+2026-11-18T18:11:05.970372Z  INFO docketd::http: request request_id=6afde90d-0000f5 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:11:07.970276Z  INFO docketd::http: request request_id=6afde90d-0000f6 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:11:07.971273Z  WARN docketd::http: call failed request_id=6afde90d-0000f7 code="worker_error"
+2026-11-18T18:11:07.971337Z  INFO docketd::http: request request_id=6afde90d-0000f7 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:11:09.971415Z  INFO docketd::http: request request_id=6afde90d-0000f8 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:11:09.972517Z  WARN docketd::http: call failed request_id=6afde90d-0000f9 code="worker_error"
+2026-11-18T18:11:09.972596Z  INFO docketd::http: request request_id=6afde90d-0000f9 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:11:11.972519Z  INFO docketd::http: request request_id=6afde90d-0000fa method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:11:11.973377Z  WARN docketd::http: call failed request_id=6afde90d-0000fb code="worker_error"
+2026-11-18T18:11:11.973425Z  INFO docketd::http: request request_id=6afde90d-0000fb method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:11:13.973603Z  INFO docketd::http: request request_id=6afde90d-0000fc method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:11:13.975248Z  WARN docketd::http: call failed request_id=6afde90d-0000fd code="worker_error"
+2026-11-18T18:11:13.975332Z  INFO docketd::http: request request_id=6afde90d-0000fd method=GET path=/v1/sources status=502 ms=1
+2026-11-18T18:11:15.974588Z  INFO docketd::http: request request_id=6afde90d-0000fe method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:11:15.975367Z  WARN docketd::http: call failed request_id=6afde90d-0000ff code="worker_error"
+2026-11-18T18:11:15.975454Z  INFO docketd::http: request request_id=6afde90d-0000ff method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:11:17.975638Z  INFO docketd::http: request request_id=6afde90d-000100 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:11:17.976729Z  WARN docketd::http: call failed request_id=6afde90d-000101 code="worker_error"
+2026-11-18T18:11:17.976836Z  INFO docketd::http: request request_id=6afde90d-000101 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:11:19.976813Z  INFO docketd::http: request request_id=6afde90d-000102 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:11:19.977685Z  WARN docketd::http: call failed request_id=6afde90d-000103 code="worker_error"
+2026-11-18T18:11:19.977747Z  INFO docketd::http: request request_id=6afde90d-000103 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:11:21.977985Z  INFO docketd::http: request request_id=6afde90d-000104 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:11:21.979039Z  WARN docketd::http: call failed request_id=6afde90d-000105 code="worker_error"
+2026-11-18T18:11:21.979142Z  INFO docketd::http: request request_id=6afde90d-000105 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:11:23.978997Z  INFO docketd::http: request request_id=6afde90d-000106 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:11:23.980001Z  WARN docketd::http: call failed request_id=6afde90d-000107 code="worker_error"
+2026-11-18T18:11:23.980063Z  INFO docketd::http: request request_id=6afde90d-000107 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:11:25.980141Z  INFO docketd::http: request request_id=6afde90d-000108 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:11:25.981216Z  WARN docketd::http: call failed request_id=6afde90d-000109 code="worker_error"
+2026-11-18T18:11:25.981311Z  INFO docketd::http: request request_id=6afde90d-000109 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:11:27.981028Z  INFO docketd::http: request request_id=6afde90d-00010a method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:11:27.981929Z  WARN docketd::http: call failed request_id=6afde90d-00010b code="worker_error"
+2026-11-18T18:11:27.982031Z  INFO docketd::http: request request_id=6afde90d-00010b method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:11:29.982123Z  INFO docketd::http: request request_id=6afde90d-00010c method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:11:29.983267Z  WARN docketd::http: call failed request_id=6afde90d-00010d code="worker_error"
+2026-11-18T18:11:29.983365Z  INFO docketd::http: request request_id=6afde90d-00010d method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:11:31.983400Z  INFO docketd::http: request request_id=6afde90d-00010e method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:11:31.984623Z  WARN docketd::http: call failed request_id=6afde90d-00010f code="worker_error"
+2026-11-18T18:11:31.984718Z  INFO docketd::http: request request_id=6afde90d-00010f method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:11:33.984662Z  INFO docketd::http: request request_id=6afde90d-000110 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:11:33.985831Z  WARN docketd::http: call failed request_id=6afde90d-000111 code="worker_error"
+2026-11-18T18:11:33.985931Z  INFO docketd::http: request request_id=6afde90d-000111 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:11:35.985971Z  INFO docketd::http: request request_id=6afde90d-000112 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:11:35.986980Z  WARN docketd::http: call failed request_id=6afde90d-000113 code="worker_error"
+2026-11-18T18:11:35.987050Z  INFO docketd::http: request request_id=6afde90d-000113 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:11:37.987097Z  INFO docketd::http: request request_id=6afde90d-000114 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:11:37.988042Z  WARN docketd::http: call failed request_id=6afde90d-000115 code="worker_error"
+2026-11-18T18:11:37.988150Z  INFO docketd::http: request request_id=6afde90d-000115 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:11:39.988151Z  INFO docketd::http: request request_id=6afde90d-000116 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:11:39.989304Z  WARN docketd::http: call failed request_id=6afde90d-000117 code="worker_error"
+2026-11-18T18:11:39.989351Z  INFO docketd::http: request request_id=6afde90d-000117 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:11:41.989437Z  INFO docketd::http: request request_id=6afde90d-000118 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:11:41.990249Z  WARN docketd::http: call failed request_id=6afde90d-000119 code="worker_error"
+2026-11-18T18:11:41.990297Z  INFO docketd::http: request request_id=6afde90d-000119 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:11:43.990463Z  INFO docketd::http: request request_id=6afde90d-00011a method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:11:43.991319Z  WARN docketd::http: call failed request_id=6afde90d-00011b code="worker_error"
+2026-11-18T18:11:43.991386Z  INFO docketd::http: request request_id=6afde90d-00011b method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:11:45.991543Z  INFO docketd::http: request request_id=6afde90d-00011c method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:11:45.992381Z  WARN docketd::http: call failed request_id=6afde90d-00011d code="worker_error"
+2026-11-18T18:11:45.992461Z  INFO docketd::http: request request_id=6afde90d-00011d method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:11:47.992584Z  INFO docketd::http: request request_id=6afde90d-00011e method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:11:47.993513Z  WARN docketd::http: call failed request_id=6afde90d-00011f code="worker_error"
+2026-11-18T18:11:47.993581Z  INFO docketd::http: request request_id=6afde90d-00011f method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:11:49.993563Z  INFO docketd::http: request request_id=6afde90d-000120 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:11:49.994450Z  WARN docketd::http: call failed request_id=6afde90d-000121 code="worker_error"
+2026-11-18T18:11:49.994531Z  INFO docketd::http: request request_id=6afde90d-000121 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:11:51.994645Z  INFO docketd::http: request request_id=6afde90d-000122 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:11:51.995708Z  WARN docketd::http: call failed request_id=6afde90d-000123 code="worker_error"
+2026-11-18T18:11:51.995804Z  INFO docketd::http: request request_id=6afde90d-000123 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:11:53.995789Z  INFO docketd::http: request request_id=6afde90d-000124 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:11:53.996890Z  WARN docketd::http: call failed request_id=6afde90d-000125 code="worker_error"
+2026-11-18T18:11:53.996979Z  INFO docketd::http: request request_id=6afde90d-000125 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:11:55.997008Z  INFO docketd::http: request request_id=6afde90d-000126 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:11:55.997950Z  WARN docketd::http: call failed request_id=6afde90d-000127 code="worker_error"
+2026-11-18T18:11:55.998031Z  INFO docketd::http: request request_id=6afde90d-000127 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:11:57.997971Z  INFO docketd::http: request request_id=6afde90d-000128 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:11:57.998968Z  WARN docketd::http: call failed request_id=6afde90d-000129 code="worker_error"
+2026-11-18T18:11:57.999070Z  INFO docketd::http: request request_id=6afde90d-000129 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:11:59.998933Z  INFO docketd::http: request request_id=6afde90d-00012a method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:11:59.999734Z  WARN docketd::http: call failed request_id=6afde90d-00012b code="worker_error"
+2026-11-18T18:11:59.999793Z  INFO docketd::http: request request_id=6afde90d-00012b method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:12:01.999886Z  INFO docketd::http: request request_id=6afde90d-00012c method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:12:02.000758Z  WARN docketd::http: call failed request_id=6afde90d-00012d code="worker_error"
+2026-11-18T18:12:02.000837Z  INFO docketd::http: request request_id=6afde90d-00012d method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:12:04.001040Z  INFO docketd::http: request request_id=6afde90d-00012e method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:12:04.001960Z  WARN docketd::http: call failed request_id=6afde90d-00012f code="worker_error"
+2026-11-18T18:12:04.002017Z  INFO docketd::http: request request_id=6afde90d-00012f method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:12:06.002117Z  INFO docketd::http: request request_id=6afde90d-000130 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:12:06.003121Z  WARN docketd::http: call failed request_id=6afde90d-000131 code="worker_error"
+2026-11-18T18:12:06.003223Z  INFO docketd::http: request request_id=6afde90d-000131 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:12:08.003130Z  INFO docketd::http: request request_id=6afde90d-000132 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:12:08.003983Z  WARN docketd::http: call failed request_id=6afde90d-000133 code="worker_error"
+2026-11-18T18:12:08.004031Z  INFO docketd::http: request request_id=6afde90d-000133 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:12:10.004319Z  INFO docketd::http: request request_id=6afde90d-000134 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:12:10.005582Z  WARN docketd::http: call failed request_id=6afde90d-000135 code="worker_error"
+2026-11-18T18:12:10.005685Z  INFO docketd::http: request request_id=6afde90d-000135 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:12:12.005555Z  INFO docketd::http: request request_id=6afde90d-000136 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:12:12.006231Z  WARN docketd::http: call failed request_id=6afde90d-000137 code="worker_error"
+2026-11-18T18:12:12.006287Z  INFO docketd::http: request request_id=6afde90d-000137 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:12:14.006596Z  INFO docketd::http: request request_id=6afde90d-000138 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:12:14.007496Z  WARN docketd::http: call failed request_id=6afde90d-000139 code="worker_error"
+2026-11-18T18:12:14.007589Z  INFO docketd::http: request request_id=6afde90d-000139 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:12:16.007800Z  INFO docketd::http: request request_id=6afde90d-00013a method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:12:16.008781Z  WARN docketd::http: call failed request_id=6afde90d-00013b code="worker_error"
+2026-11-18T18:12:16.008839Z  INFO docketd::http: request request_id=6afde90d-00013b method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:12:18.009033Z  INFO docketd::http: request request_id=6afde90d-00013c method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:12:18.009915Z  WARN docketd::http: call failed request_id=6afde90d-00013d code="worker_error"
+2026-11-18T18:12:18.010007Z  INFO docketd::http: request request_id=6afde90d-00013d method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:12:20.009948Z  INFO docketd::http: request request_id=6afde90d-00013e method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:12:20.010830Z  WARN docketd::http: call failed request_id=6afde90d-00013f code="worker_error"
+2026-11-18T18:12:20.010913Z  INFO docketd::http: request request_id=6afde90d-00013f method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:12:22.010917Z  INFO docketd::http: request request_id=6afde90d-000140 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:12:22.011843Z  WARN docketd::http: call failed request_id=6afde90d-000141 code="worker_error"
+2026-11-18T18:12:22.011937Z  INFO docketd::http: request request_id=6afde90d-000141 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:12:24.011960Z  INFO docketd::http: request request_id=6afde90d-000142 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:12:24.013065Z  WARN docketd::http: call failed request_id=6afde90d-000143 code="worker_error"
+2026-11-18T18:12:24.013153Z  INFO docketd::http: request request_id=6afde90d-000143 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:12:26.013171Z  INFO docketd::http: request request_id=6afde90d-000144 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:12:26.014107Z  WARN docketd::http: call failed request_id=6afde90d-000145 code="worker_error"
+2026-11-18T18:12:26.014157Z  INFO docketd::http: request request_id=6afde90d-000145 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:12:28.014165Z  INFO docketd::http: request request_id=6afde90d-000146 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:12:28.014990Z  WARN docketd::http: call failed request_id=6afde90d-000147 code="worker_error"
+2026-11-18T18:12:28.015050Z  INFO docketd::http: request request_id=6afde90d-000147 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:12:30.015062Z  INFO docketd::http: request request_id=6afde90d-000148 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:12:30.015883Z  WARN docketd::http: call failed request_id=6afde90d-000149 code="worker_error"
+2026-11-18T18:12:30.015942Z  INFO docketd::http: request request_id=6afde90d-000149 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:12:32.016540Z  INFO docketd::http: request request_id=6afde90d-00014a method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:12:32.018349Z  WARN docketd::http: call failed request_id=6afde90d-00014b code="worker_error"
+2026-11-18T18:12:32.018405Z  INFO docketd::http: request request_id=6afde90d-00014b method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:12:34.017527Z  INFO docketd::http: request request_id=6afde90d-00014c method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:12:34.018628Z  WARN docketd::http: call failed request_id=6afde90d-00014d code="worker_error"
+2026-11-18T18:12:34.018707Z  INFO docketd::http: request request_id=6afde90d-00014d method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:12:36.018460Z  INFO docketd::http: request request_id=6afde90d-00014e method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:12:36.019289Z  WARN docketd::http: call failed request_id=6afde90d-00014f code="worker_error"
+2026-11-18T18:12:36.019344Z  INFO docketd::http: request request_id=6afde90d-00014f method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:12:38.019897Z  INFO docketd::http: request request_id=6afde90d-000150 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:12:38.021666Z  WARN docketd::http: call failed request_id=6afde90d-000151 code="worker_error"
+2026-11-18T18:12:38.021732Z  INFO docketd::http: request request_id=6afde90d-000151 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:12:40.021440Z  INFO docketd::http: request request_id=6afde90d-000152 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:12:40.022940Z  WARN docketd::http: call failed request_id=6afde90d-000153 code="worker_error"
+2026-11-18T18:12:40.022994Z  INFO docketd::http: request request_id=6afde90d-000153 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:12:42.022504Z  INFO docketd::http: request request_id=6afde90d-000154 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:12:42.023229Z  WARN docketd::http: call failed request_id=6afde90d-000155 code="worker_error"
+2026-11-18T18:12:42.023312Z  INFO docketd::http: request request_id=6afde90d-000155 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:12:44.023207Z  INFO docketd::http: request request_id=6afde90d-000156 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:12:44.023916Z  WARN docketd::http: call failed request_id=6afde90d-000157 code="worker_error"
+2026-11-18T18:12:44.023985Z  INFO docketd::http: request request_id=6afde90d-000157 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:12:46.023847Z  INFO docketd::http: request request_id=6afde90d-000158 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:12:46.024487Z  WARN docketd::http: call failed request_id=6afde90d-000159 code="worker_error"
+2026-11-18T18:12:46.024539Z  INFO docketd::http: request request_id=6afde90d-000159 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:12:48.024566Z  INFO docketd::http: request request_id=6afde90d-00015a method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:12:48.025411Z  WARN docketd::http: call failed request_id=6afde90d-00015b code="worker_error"
+2026-11-18T18:12:48.025521Z  INFO docketd::http: request request_id=6afde90d-00015b method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:12:50.025214Z  INFO docketd::http: request request_id=6afde90d-00015c method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:12:50.025726Z  WARN docketd::http: call failed request_id=6afde90d-00015d code="worker_error"
+2026-11-18T18:12:50.025770Z  INFO docketd::http: request request_id=6afde90d-00015d method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:12:52.025899Z  INFO docketd::http: request request_id=6afde90d-00015e method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:12:52.026612Z  WARN docketd::http: call failed request_id=6afde90d-00015f code="worker_error"
+2026-11-18T18:12:52.026660Z  INFO docketd::http: request request_id=6afde90d-00015f method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:12:54.026787Z  INFO docketd::http: request request_id=6afde90d-000160 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:12:54.027491Z  WARN docketd::http: call failed request_id=6afde90d-000161 code="worker_error"
+2026-11-18T18:12:54.027532Z  INFO docketd::http: request request_id=6afde90d-000161 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:12:56.027585Z  INFO docketd::http: request request_id=6afde90d-000162 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:12:56.028331Z  WARN docketd::http: call failed request_id=6afde90d-000163 code="worker_error"
+2026-11-18T18:12:56.028407Z  INFO docketd::http: request request_id=6afde90d-000163 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:12:58.028837Z  INFO docketd::http: request request_id=6afde90d-000164 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:12:58.029945Z  WARN docketd::http: call failed request_id=6afde90d-000165 code="worker_error"
+2026-11-18T18:12:58.030035Z  INFO docketd::http: request request_id=6afde90d-000165 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:13:00.029993Z  INFO docketd::http: request request_id=6afde90d-000166 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:13:00.030970Z  WARN docketd::http: call failed request_id=6afde90d-000167 code="worker_error"
+2026-11-18T18:13:00.031019Z  INFO docketd::http: request request_id=6afde90d-000167 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:13:02.031235Z  INFO docketd::http: request request_id=6afde90d-000168 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:13:02.032333Z  WARN docketd::http: call failed request_id=6afde90d-000169 code="worker_error"
+2026-11-18T18:13:02.032399Z  INFO docketd::http: request request_id=6afde90d-000169 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:13:04.032521Z  INFO docketd::http: request request_id=6afde90d-00016a method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:13:04.033768Z  WARN docketd::http: call failed request_id=6afde90d-00016b code="worker_error"
+2026-11-18T18:13:04.033855Z  INFO docketd::http: request request_id=6afde90d-00016b method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:13:06.033724Z  INFO docketd::http: request request_id=6afde90d-00016c method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:13:06.034722Z  WARN docketd::http: call failed request_id=6afde90d-00016d code="worker_error"
+2026-11-18T18:13:06.034772Z  INFO docketd::http: request request_id=6afde90d-00016d method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:13:08.034829Z  INFO docketd::http: request request_id=6afde90d-00016e method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:13:08.035884Z  WARN docketd::http: call failed request_id=6afde90d-00016f code="worker_error"
+2026-11-18T18:13:08.035959Z  INFO docketd::http: request request_id=6afde90d-00016f method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:13:10.036004Z  INFO docketd::http: request request_id=6afde90d-000170 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:13:10.037100Z  WARN docketd::http: call failed request_id=6afde90d-000171 code="worker_error"
+2026-11-18T18:13:10.037169Z  INFO docketd::http: request request_id=6afde90d-000171 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:13:12.037378Z  INFO docketd::http: request request_id=6afde90d-000172 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:13:12.038429Z  WARN docketd::http: call failed request_id=6afde90d-000173 code="worker_error"
+2026-11-18T18:13:12.038516Z  INFO docketd::http: request request_id=6afde90d-000173 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:13:14.038459Z  INFO docketd::http: request request_id=6afde90d-000174 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:13:14.039436Z  WARN docketd::http: call failed request_id=6afde90d-000175 code="worker_error"
+2026-11-18T18:13:14.039529Z  INFO docketd::http: request request_id=6afde90d-000175 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:13:16.039563Z  INFO docketd::http: request request_id=6afde90d-000176 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:13:16.040610Z  WARN docketd::http: call failed request_id=6afde90d-000177 code="worker_error"
+2026-11-18T18:13:16.040699Z  INFO docketd::http: request request_id=6afde90d-000177 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:13:18.040622Z  INFO docketd::http: request request_id=6afde90d-000178 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:13:18.041460Z  WARN docketd::http: call failed request_id=6afde90d-000179 code="worker_error"
+2026-11-18T18:13:18.041507Z  INFO docketd::http: request request_id=6afde90d-000179 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:13:20.041619Z  INFO docketd::http: request request_id=6afde90d-00017a method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:13:20.042371Z  WARN docketd::http: call failed request_id=6afde90d-00017b code="worker_error"
+2026-11-18T18:13:20.042420Z  INFO docketd::http: request request_id=6afde90d-00017b method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:13:22.042778Z  INFO docketd::http: request request_id=6afde90d-00017c method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:13:22.043693Z  WARN docketd::http: call failed request_id=6afde90d-00017d code="worker_error"
+2026-11-18T18:13:22.043764Z  INFO docketd::http: request request_id=6afde90d-00017d method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:13:24.043690Z  INFO docketd::http: request request_id=6afde90d-00017e method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:13:24.044571Z  WARN docketd::http: call failed request_id=6afde90d-00017f code="worker_error"
+2026-11-18T18:13:24.044660Z  INFO docketd::http: request request_id=6afde90d-00017f method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:13:26.044584Z  INFO docketd::http: request request_id=6afde90d-000180 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:13:26.045503Z  WARN docketd::http: call failed request_id=6afde90d-000181 code="worker_error"
+2026-11-18T18:13:26.045568Z  INFO docketd::http: request request_id=6afde90d-000181 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:13:28.045769Z  INFO docketd::http: request request_id=6afde90d-000182 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:13:28.046847Z  WARN docketd::http: call failed request_id=6afde90d-000183 code="worker_error"
+2026-11-18T18:13:28.046936Z  INFO docketd::http: request request_id=6afde90d-000183 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:13:30.046835Z  INFO docketd::http: request request_id=6afde90d-000184 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:13:30.047833Z  WARN docketd::http: call failed request_id=6afde90d-000185 code="worker_error"
+2026-11-18T18:13:30.047870Z  INFO docketd::http: request request_id=6afde90d-000185 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:13:32.048010Z  INFO docketd::http: request request_id=6afde90d-000186 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:13:32.049116Z  WARN docketd::http: call failed request_id=6afde90d-000187 code="worker_error"
+2026-11-18T18:13:32.049222Z  INFO docketd::http: request request_id=6afde90d-000187 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:13:34.049229Z  INFO docketd::http: request request_id=6afde90d-000188 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:13:34.050363Z  WARN docketd::http: call failed request_id=6afde90d-000189 code="worker_error"
+2026-11-18T18:13:34.050460Z  INFO docketd::http: request request_id=6afde90d-000189 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:13:36.050348Z  INFO docketd::http: request request_id=6afde90d-00018a method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:13:36.051126Z  WARN docketd::http: call failed request_id=6afde90d-00018b code="worker_error"
+2026-11-18T18:13:36.051184Z  INFO docketd::http: request request_id=6afde90d-00018b method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:13:38.051461Z  INFO docketd::http: request request_id=6afde90d-00018c method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:13:38.052465Z  WARN docketd::http: call failed request_id=6afde90d-00018d code="worker_error"
+2026-11-18T18:13:38.052515Z  INFO docketd::http: request request_id=6afde90d-00018d method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:13:40.052493Z  INFO docketd::http: request request_id=6afde90d-00018e method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:13:40.053611Z  WARN docketd::http: call failed request_id=6afde90d-00018f code="worker_error"
+2026-11-18T18:13:40.053702Z  INFO docketd::http: request request_id=6afde90d-00018f method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:13:42.053660Z  INFO docketd::http: request request_id=6afde90d-000190 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:13:42.054859Z  WARN docketd::http: call failed request_id=6afde90d-000191 code="worker_error"
+2026-11-18T18:13:42.054951Z  INFO docketd::http: request request_id=6afde90d-000191 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:13:44.055096Z  INFO docketd::http: request request_id=6afde90d-000192 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:13:44.056056Z  WARN docketd::http: call failed request_id=6afde90d-000193 code="worker_error"
+2026-11-18T18:13:44.056149Z  INFO docketd::http: request request_id=6afde90d-000193 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:13:46.056450Z  INFO docketd::http: request request_id=6afde90d-000194 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:13:46.057630Z  WARN docketd::http: call failed request_id=6afde90d-000195 code="worker_error"
+2026-11-18T18:13:46.057721Z  INFO docketd::http: request request_id=6afde90d-000195 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:13:48.057737Z  INFO docketd::http: request request_id=6afde90d-000196 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:13:48.058873Z  WARN docketd::http: call failed request_id=6afde90d-000197 code="worker_error"
+2026-11-18T18:13:48.058919Z  INFO docketd::http: request request_id=6afde90d-000197 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:13:50.058854Z  INFO docketd::http: request request_id=6afde90d-000198 method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:13:50.059970Z  WARN docketd::http: call failed request_id=6afde90d-000199 code="worker_error"
+2026-11-18T18:13:50.060085Z  INFO docketd::http: request request_id=6afde90d-000199 method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:13:52.060186Z  INFO docketd::http: request request_id=6afde90d-00019a method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:13:52.061181Z  WARN docketd::http: call failed request_id=6afde90d-00019b code="worker_error"
+2026-11-18T18:13:52.061284Z  INFO docketd::http: request request_id=6afde90d-00019b method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:13:54.061335Z  INFO docketd::http: request request_id=6afde90d-00019c method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:13:54.062691Z  WARN docketd::http: call failed request_id=6afde90d-00019d code="worker_error"
+2026-11-18T18:13:54.062782Z  INFO docketd::http: request request_id=6afde90d-00019d method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:13:56.062625Z  INFO docketd::http: request request_id=6afde90d-00019e method=GET path=/v1/status status=200 ms=0
+2026-11-18T18:13:56.063539Z  WARN docketd::http: call failed request_id=6afde90d-00019f code="worker_error"
+2026-11-18T18:13:56.063582Z  INFO docketd::http: request request_id=6afde90d-00019f method=GET path=/v1/sources status=502 ms=0
+2026-11-18T18:13:56.673033Z  INFO docketd: stopped

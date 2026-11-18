@@ -1,0 +1,71 @@
+--- C2/shell.rs
++++ C3/shell.rs
+@@ -322,7 +322,7 @@
+                         ui.add_space(12.0);
+                         caption(ui, "Theme applies to this window. It is not saved after restart.", t);
+                         ui.separator();
+-                        caption(ui, "Ctrl K · Commands\nCtrl 1 / Ctrl 2 · Assistant / Library\nCtrl Shift T · Switch theme\nCtrl Shift X · Stop (when supported)\nEnter · Ask from the existing composer\nEsc · Close dialog", t);
++                        caption(ui, "Ctrl K · Commands\nCtrl 1 / Ctrl 2 · Assistant / Library\nCtrl Shift T · Switch theme\nCtrl Shift X · Stop (when supported)\nEnter · New line\nCtrl Enter · Ask from composer\nEsc · Close dialog", t);
+                     });
+                     if ui.button("Done").clicked() { self.close(ctx); }
+                 });
+@@ -509,6 +509,59 @@
+         .inner_margin(24)
+ }
+ 
++pub fn prose(ui: &mut egui::Ui, text: &str, t: Tokens) {
++    let mut job = egui::text::LayoutJob::default();
++    job.append(
++        text,
++        0.0,
++        egui::TextFormat {
++            font_id: egui::FontId::proportional(16.0),
++            color: t.text,
++            line_height: Some(25.0),
++            ..Default::default()
++        },
++    );
++    ui.add(egui::Label::new(job).selectable(true).wrap());
++}
++
++pub fn citation_link(
++    ui: &mut egui::Ui,
++    number: usize,
++    title: &str,
++    selected: bool,
++    t: Tokens,
++) -> egui::Response {
++    ui.scope(|ui| {
++        ui.visuals_mut().widgets.inactive.weak_bg_fill = t.surface_secondary;
++        ui.add_sized(
++            [ui.available_width(), 42.0],
++            egui::Button::new(RichText::new(format!("[{number}]  {title}")).color(t.accent))
++                .right_text(
++                    RichText::new(if selected {
++                        "Viewing passage"
++                    } else {
++                        "Open passage"
++                    })
++                    .size(12.0)
++                    .color(t.accent),
++                )
++                .selected(selected)
++                .wrap(),
++        )
++    })
++    .inner
++}
++
++pub fn response_heading(ui: &mut egui::Ui, status: &str, t: Tokens) {
++    ui.horizontal(|ui| {
++        let (r, _) = ui.allocate_exact_size(egui::vec2(26.0, 26.0), egui::Sense::hover());
++        ui.painter().rect_filled(r, 6, t.selection);
++        icon(ui.painter(), r.center(), Icon::Assistant, t.accent);
++        ui.label(RichText::new("Docket").size(16.0).strong());
++        caption(ui, status, t);
++    });
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;

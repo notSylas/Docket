@@ -1,0 +1,17 @@
+--- C2/model.rs
++++ C3/model.rs
+@@ -187,8 +187,13 @@
+ 
+ pub enum Message {
+     Cancelled,
++    /// Local Stop intent won presentation, but server cancellation was not confirmed.
++    Discarded,
+     User(String),
+-    Answer { result: AskResult, wall_s: f64 },
++    Answer {
++        result: AskResult,
++        wall_s: f64,
++    },
+     Error(String),
+ }
+ 

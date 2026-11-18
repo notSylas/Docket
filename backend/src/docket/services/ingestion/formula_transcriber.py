@@ -2,7 +2,7 @@
 `settings.formula_transcription_enabled` is on, VLM-transcribes each
 above-threshold region into an UNVERIFIED
 `EvidenceVersion.formula_transcriptions_json`, never promoted into
-searchable/citable evidence (see `Docs/accuracy-evaluation.md`'s "Formula
+searchable/citable evidence (see `docs/architecture/accuracy-evaluation.md`'s "Formula
 evidence and experiments" section). Extracted from `IngestionPipeline`
 (Phase 3 of the restructuring) purely to shrink that file and make this
 slice of the formula-transcription pass independently testable; no behavior
@@ -54,7 +54,7 @@ class FormulaTranscriber:
         `formula_crop.MIN_FORMULA_REGION_AREA_PT2`, storing the result on
         `EvidenceVersion.formula_transcriptions_json` -- an UNVERIFIED
         experiment, never promoted into searchable/citable evidence (see
-        `Docs/accuracy-evaluation.md`'s "Formula evidence and experiments"
+        `docs/architecture/accuracy-evaluation.md`'s "Formula evidence and experiments"
         section). Only ever called when
         `settings.formula_transcription_enabled` is True (callers check
         that, not this method) -- `self._gateway` is required at that

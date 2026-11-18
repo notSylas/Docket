@@ -60,7 +60,7 @@ class StopRun(Exception):
 def sets() -> list[dict]:
     pub = EVAL_PUBLIC
     out = [
-        {"name": "orig", "gold": pub / "gold.yaml", "kind": "cli", "corpus": REPO / "Docs", "repeats": 3},
+        {"name": "orig", "gold": pub / "gold.yaml", "kind": "cli", "corpus": pub / "corpus-design-docs", "repeats": 3},
         {"name": "g6", "gold": pub / "gold-g6.yaml", "kind": "cli", "corpus": pub / "corpus-synthetic-g6", "repeats": 3},
     ]
     for size in (12, 50, 200):

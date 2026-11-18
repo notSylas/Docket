@@ -1,0 +1,26 @@
+{
+  "synthetic": true,
+  "fixture_path": "/tmp/docket-c3-review",
+  "normal_socket": "/tmp/docket-c3-review/docketd.sock",
+  "legacy_socket": "/tmp/docket-c3-legacy/docketd.sock",
+  "health_template_sha256": "92b57e2f744930de965187d574295a8cf677c4fba583f768538d7c629a53dcfd",
+  "renderer": {
+    "LIBGL_ALWAYS_SOFTWARE": "1",
+    "GALLIUM_DRIVER": "llvmpipe"
+  },
+  "review_daemon_overrides": {
+    "DOCKET_ASK_TIMEOUT_MS": 12000,
+    "DOCKET_HEALTH_INTERVAL_MS": 2000
+  },
+  "legacy_review_override": {
+    "DOCKET_TASKS": "off"
+  },
+  "modes": [
+    "answer",
+    "hang",
+    "error",
+    "abstain"
+  ],
+  "real_daemon_and_desktop_backend": true,
+  "production_demo_imports": false
+}

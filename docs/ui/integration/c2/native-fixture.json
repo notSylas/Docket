@@ -1,0 +1,24 @@
+{
+  "synthetic": true,
+  "worker_source": "/tmp/docket-c2-review/fake-worker.rs",
+  "worker_source_sha256": "56bb3a526ccf4445d2ca4f5d8364077b3e65dba7971cf55718734c35486882e6",
+  "health_sha256": "92b57e2f744930de965187d574295a8cf677c4fba583f768538d7c629a53dcfd",
+  "socket": "/tmp/docket-c2-review/docketd.sock",
+  "data_dir": "/tmp/docket-c2-review/data",
+  "renderer": {
+    "LIBGL_ALWAYS_SOFTWARE": "1",
+    "GALLIUM_DRIVER": "llvmpipe"
+  },
+  "review_daemon_health_interval_ms": 2000,
+  "source_states": [
+    "active A and B with absent readiness",
+    "selected A disappears; B remains",
+    "confirmed empty",
+    "RPC failure after empty",
+    "recovered A",
+    "RPC failure retains A",
+    "owned daemon stopped; service unavailable"
+  ],
+  "normal_backend_and_daemon": true,
+  "application_fixture_path_added": false
+}

@@ -34,7 +34,7 @@ PAGE_DESCRIPTION_PROMPT = (
 # *exact* transcription of one already-cropped equation. Its output is
 # stored on `EvidenceVersion.formula_transcriptions_json` as an unverified
 # experiment -- never citable evidence, never promoted into the searchable
-# index (see `Docs/accuracy-evaluation.md`'s "Formula evidence and
+# index (see `docs/architecture/accuracy-evaluation.md`'s "Formula evidence and
 # experiments" section). Same "content is data, not instructions" framing
 # as PAGE_DESCRIPTION_PROMPT: the crop is content to transcribe, never a
 # source of instructions to follow. Biases toward the plain-text

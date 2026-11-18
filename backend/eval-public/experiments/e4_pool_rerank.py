@@ -20,7 +20,7 @@ EVAL = Path(__file__).resolve().parent.parent
 SETS = {
     "g1": ("gold-g1.yaml", EVAL / "corpus-synthetic-g1"),
     "ext": ("gold-extended.yaml", EVAL / "corpus-synthetic"),
-    "orig": ("gold.yaml", EVAL.parent.parent / "Docs"),
+    "orig": ("gold.yaml", EVAL / "corpus-design-docs"),
 }
 POOLS = (8, 30)
 KS = (8, 12, 20)
@@ -148,7 +148,7 @@ def pct(a, n):
 
 def report(data: dict, models: list[str]) -> str:
     L = []
-    names = {"g1": "G1 (hard numeric)", "ext": "Extended", "orig": "Original gold.yaml (../Docs)"}
+    names = {"g1": "G1 (hard numeric)", "ext": "Extended", "orig": "Original gold.yaml (corpus-design-docs)"}
     for s, d in data.items():
         qs = d["questions"]
         if not qs:

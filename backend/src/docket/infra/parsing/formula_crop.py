@@ -10,7 +10,7 @@ ever touches `Chunk.text`, the FTS/vector indexes, `EvidenceResolver`, or
 citation validation -- transcriptions produced from these crops are stored
 unverified (`EvidenceVersion.formula_transcriptions_json`) and are never
 promoted into searchable/citable evidence (see
-`Docs/accuracy-evaluation.md`'s "Formula evidence and experiments" section).
+`docs/architecture/accuracy-evaluation.md`'s "Formula evidence and experiments" section).
 """
 
 from __future__ import annotations

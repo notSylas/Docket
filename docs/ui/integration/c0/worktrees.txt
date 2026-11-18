@@ -1,0 +1,122 @@
+worktree /home/pc/Desktop/Rajdeep_Dev/Local_Agent
+HEAD eb00abc76d770472627e24d7b629b7f0c7a07d82
+branch refs/heads/main
+
+worktree /home/pc/Desktop/Rajdeep_Dev/Local_Agent-absent
+HEAD 301d3957e509a0f4a7d215f4b15e9c85cd92883f
+branch refs/heads/absent-scoring
+
+worktree /home/pc/Desktop/Rajdeep_Dev/Local_Agent-acc3
+HEAD cfb7c844a84a196818d87fe00e1d06b6a287f42e
+branch refs/heads/acc-step3
+
+worktree /home/pc/Desktop/Rajdeep_Dev/Local_Agent-baseline
+HEAD 00b1032aa324066c1cd3a586427d410d01273396
+detached
+
+worktree /home/pc/Desktop/Rajdeep_Dev/Local_Agent-doclayer
+HEAD e96ed885b49a2c59be9900fdfea143661455aed0
+branch refs/heads/doc-layer
+
+worktree /home/pc/Desktop/Rajdeep_Dev/Local_Agent-docsnap
+HEAD e96ed885b49a2c59be9900fdfea143661455aed0
+detached
+
+worktree /home/pc/Desktop/Rajdeep_Dev/Local_Agent-docsnap2
+HEAD 22018a4e848c3e7cd5352dddbcdd89bec725b469
+detached
+
+worktree /home/pc/Desktop/Rajdeep_Dev/Local_Agent-e2e
+HEAD 1a150b466e1579bf9c3731ffa17bae298f4e7ae0
+branch refs/heads/e2e-fixes
+
+worktree /home/pc/Desktop/Rajdeep_Dev/Local_Agent-kag
+HEAD 2a4ab454207df9a7cf624f1a6054eb4e5983001e
+branch refs/heads/kag-lite
+
+worktree /home/pc/Desktop/Rajdeep_Dev/Local_Agent-kag2
+HEAD 2a870a4d3bb684056e26712dbccd5d23a5bff15a
+branch refs/heads/kag-lite-2
+
+worktree /home/pc/Desktop/Rajdeep_Dev/Local_Agent-kit
+HEAD aa4c6955b2b368746eb4bf2261174befaf4fcab8
+branch refs/heads/private-eval-kit
+
+worktree /home/pc/Desktop/Rajdeep_Dev/Local_Agent-legacy
+HEAD c29a7ed82e3b183a0da90eea62a66bce277954b9
+branch refs/heads/legacy-formats
+
+worktree /home/pc/Desktop/Rajdeep_Dev/Local_Agent-m0
+HEAD 3653795c7c271f25a18e0a25e379a149a0ecf519
+branch refs/heads/m0-baseline
+
+worktree /home/pc/Desktop/Rajdeep_Dev/Local_Agent-m3
+HEAD 6868dc11e774f47277dfb7030a9fb97908a47943
+branch refs/heads/m3-1-orphan-entities
+
+worktree /home/pc/Desktop/Rajdeep_Dev/Local_Agent-m3-2
+HEAD 3a6a4ca2d9e809c15551623428626c724283c810
+branch refs/heads/m3-2-exact-provenance
+
+worktree /home/pc/Desktop/Rajdeep_Dev/Local_Agent-poolfix
+HEAD 3c38abf9cb114defb1062eaaff872c015cb7ee99
+branch refs/heads/fix-pool-idle
+
+worktree /home/pc/Desktop/Rajdeep_Dev/Local_Agent-r1
+HEAD d9a3bb22909ade90fa39189b400791464dc07d10
+branch refs/heads/r1-tasks
+
+worktree /home/pc/Desktop/Rajdeep_Dev/Local_Agent-r2a
+HEAD 24fb22628169d03ae2878b8dca26b6efcb8e28a3
+branch refs/heads/r2a-status
+
+worktree /home/pc/Desktop/Rajdeep_Dev/Local_Agent-r2a3
+HEAD 1471c0f6bb93fec5d6c14a3c69e78035ba2e7f7a
+branch refs/heads/r2a3-ui
+
+worktree /home/pc/Desktop/Rajdeep_Dev/Local_Agent-ref
+HEAD d838e360262d88556e95c8e00419ef63e6c34965
+branch refs/heads/reference-mode
+
+worktree /home/pc/Desktop/Rajdeep_Dev/Local_Agent-rust
+HEAD 3a6a4ca2d9e809c15551623428626c724283c810
+branch refs/heads/rust-app
+
+worktree /home/pc/Desktop/Rajdeep_Dev/Local_Agent-scale
+HEAD 4e4148f18747623057735f37d52ffed53b1024b9
+branch refs/heads/scale-step1
+
+worktree /home/pc/Desktop/Rajdeep_Dev/Local_Agent-scale1b
+HEAD 53ec3ea362863a2b5f6e139bd8656e610c32f181
+branch refs/heads/scale-step1b
+
+worktree /home/pc/Desktop/Rajdeep_Dev/Local_Agent-stream
+HEAD 7670dbeb335e2c05fa1c4212310f2ac474635072
+branch refs/heads/rust-streaming
+
+worktree /home/pc/Desktop/Rajdeep_Dev/Local_Agent-tiered
+HEAD be70c8be07358efca5603739157fb089c4414fa4
+branch refs/heads/scale-tiered
+
+worktree /home/pc/Desktop/Rajdeep_Dev/Local_Agent/.claude/worktrees/agent-ad319012718d58430
+HEAD c7bbeb34bbe0235d4c745ab50fdc93eca659cb64
+branch refs/heads/worktree-agent-ad319012718d58430
+
+worktree /home/pc/Desktop/Rajdeep_Dev/Local_Agent/.worktrees/ui-integration
+HEAD 3a6a4ca2d9e809c15551623428626c724283c810
+branch refs/heads/codex/ui-integration
+
+worktree /home/pc/Desktop/Rajdeep_Dev/Local_Agent/.worktrees/ui-prototype
+HEAD 599748ae40d438a7186a7437a8e7d16e073dee05
+branch refs/heads/codex/ui-prototype
+
+worktree /tmp/docket-parallel-4
+HEAD 3448c08408eb84b08ce250afac0b244f25d59e8e
+branch refs/heads/parallel/email-and-mcp
+prunable gitdir file points to non-existent location
+
+worktree /tmp/docket-parallel-5
+HEAD 3448c08408eb84b08ce250afac0b244f25d59e8e
+branch refs/heads/parallel/docs-and-readiness
+prunable gitdir file points to non-existent location
+

@@ -88,7 +88,7 @@ CP8 brief to be documented in code, not just in a report):
    and `settings.formula_transcription_enabled` (VLM-transcribes each
    above-threshold detected formula region into an UNVERIFIED
    `EvidenceVersion.formula_transcriptions_json`, never promoted into
-   searchable/citable evidence; see `Docs/accuracy-evaluation.md`'s "Formula
+   searchable/citable evidence; see `docs/architecture/accuracy-evaluation.md`'s "Formula
    evidence and experiments" section -- `FormulaTranscriber.transcribe`).
    Both flags default to False and are independent of each other. Formula
    regions and page images themselves

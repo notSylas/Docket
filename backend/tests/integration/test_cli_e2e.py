@@ -23,12 +23,12 @@ from docket.interfaces.cli.main import app
 pytestmark = pytest.mark.integration
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SAMPLE_DOCX = REPO_ROOT / "Docs" / "01_Work_Intelligence_PRD_v1.0.docx"
+SAMPLE_DOCX = REPO_ROOT / "docs" / "product" / "01_Work_Intelligence_PRD_v1.0.docx"
 
 runner = CliRunner()
 
 
-@pytest.mark.skipif(not SAMPLE_DOCX.exists(), reason="sample docx not present in Docs/")
+@pytest.mark.skipif(not SAMPLE_DOCX.exists(), reason="sample docx not present in docs/product/")
 def test_cli_add_ingest_query_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     data_dir = tmp_path / "docket_data"
     monkeypatch.setenv("DOCKET_DATA_DIR", str(data_dir))
