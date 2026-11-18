@@ -192,8 +192,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--backend-root",
         type=Path,
-        default=Path(__file__).resolve().parent.parent,
-        help="path to the backend/ directory (default: parent of scripts/)",
+        default=Path(__file__).resolve().parent.parent / "backend",
+        help="path to the backend/ directory (default: <repo>/backend)",
     )
     parser.add_argument(
         "--roots",

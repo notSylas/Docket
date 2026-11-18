@@ -18,6 +18,7 @@ Many documents were written when the repository had a different layout and descr
 | Old path | Current path |
 | --- | --- |
 | `Docs/*.docx` | `docs/product/` |
+| `ci-local.sh` (repo root), `backend/scripts/` | `scripts/` |
 | `Docs/accuracy-evaluation.md`, `Docs/interaction-flow.md` | `docs/architecture/` |
 | `Docs/R2b-evidence-api-contract.md` | `docs/api/evidence-api-contract.md` |
 | `Upgrade/` | `docs/research/upgrade/` |

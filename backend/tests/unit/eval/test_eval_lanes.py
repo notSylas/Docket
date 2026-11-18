@@ -29,7 +29,7 @@ def test_ci_workflow_is_valid_yaml_with_cpu_only_commands():
 
 
 def test_local_script_caps_memory_and_deselects_gpu():
-    script = (REPO / "ci-local.sh").read_text()
+    script = (REPO / "scripts" / "ci-local.sh").read_text()
     assert "systemd-run --user --scope -q -p MemoryMax=6G" in script
     assert 'not gpu' in script and "cargo test --workspace" in script
     assert "python -I" not in script.replace("never `python -I`", "")

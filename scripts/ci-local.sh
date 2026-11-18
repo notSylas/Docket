@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # Local equivalent of .github/workflows/ci.yml, capped at 6 GB via systemd-run.
-#   ./ci-local.sh          CPU lane: python unit suite (-m "not gpu and not integration") + cargo fmt --check, clippy -D warnings, test --workspace (all --locked)
-#   ./ci-local.sh --gpu    GPU lane: tests marked `gpu` (needs Ollama + ROCm; opt-in via DOCKET_GPU_LANE=1)
+#   scripts/ci-local.sh          CPU lane: python unit suite (-m "not gpu and not integration") + cargo fmt --check, clippy -D warnings, test --workspace (all --locked)
+#   scripts/ci-local.sh --gpu    GPU lane: tests marked `gpu` (needs Ollama + ROCm; opt-in via DOCKET_GPU_LANE=1)
 #                          The full GPU evaluation (answers + judges) is evals/suites/m0/run_lane_b.sh.
-#   ./ci-local.sh --python-only | --rust-only
-#   ./ci-local.sh --kag-eval   OPTIONAL, non-GPU: print the Lane A KAG metrics table for a scratch library
+#   scripts/ci-local.sh --python-only | --rust-only
+#   scripts/ci-local.sh --kag-eval   OPTIONAL, non-GPU: print the Lane A KAG metrics table for a scratch library
 #                              (DOCKET_KAG_EVAL_DB=<scratch docket.sqlite3>; build one with `docket eval kag library`).
 #                              Prints a skip notice when unset; never touches ~/.local/share/docket. Silver labels only.
 # Python: $DOCKET_CI_PYTHON, else backend/.venv, else python3. PYTHONPATH is pinned to THIS checkout's
 # backend/src (never `python -I`). Scratch data lives under a temp dir, never ~/.local/share/docket.
 set -euo pipefail
-here="$(cd "$(dirname "$0")" && pwd)"
+here="$(cd "$(dirname "$0")/.." && pwd)"   # repository root (this script lives in scripts/)
 
 if [ -z "${DOCKET_CI_INNER:-}" ]; then
   export DOCKET_CI_INNER=1
